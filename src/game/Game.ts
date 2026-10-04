@@ -33,8 +33,30 @@ import { buildProps, buildTrees, updateProps, type WorldProps } from '../world/p
 import { createScene, type SceneBundle } from '../world/scene';
 import { TruckMesh, TruckSim } from '../world/truck';
 import { BASE, RUNWAY, gridRef } from '../world/worldData';
-
-type Mode = 'title' | 'flight' | 'intel' | 'paused';
+import { DESTINATION, MISSION_01, RETURNS, SECTOR_7, TARGET_SPEED_TO_DESTINATION, type ReturnId } from '../mission/mission01';
+import {
+  buildDebrief,
+  describeReturn,
+  destinationRoute,
+  fail as failMission,
+  identify,
+  inSector,
+  isActive,
+  land as landMission,
+  MARK_RANGE,
+  MISSION_RATE,
+  newMission,
+  objectiveFor,
+  RETURN_BY_ID,
+  scanReturn,
+  TARGET,
+  updateDestination,
+  type MissionEvent,
+  type MissionState,
+} from '../mission/mission';
+import { MissionScene } from '../mission/missionScene';
+import { RouteMover } from '../mission/vehicles';
+import { pauseTransition, type Mode } from './modes';
 
 const SORTIE_FUEL = 330; // seconds of flight on the standard fit
 
@@ -81,6 +103,11 @@ export class Game {
   private raf = 0;
   private intelMode: 'debrief' | 'planning' | 'inflight' = 'planning';
   private prefs: Prefs;
+  /** Which game is being played: the short, objective-led Mission 01, or the open Varrow Basin case. */
+  private play: 'mission' | 'case' = 'mission';
+  private mission: MissionState = newMission();
+  private movers = new Map<ReturnId, RouteMover>();
+  private missionScene: MissionScene;
 
   constructor(root: HTMLElement) {
     const q = (id: string) => {
@@ -88,7 +115,7 @@ export class Game {
       if (!e) throw new Error(`missing #${id}`);
       return e;
     };
-    for (const id of ['gl', 'hud', 'intel', 'title', 'pause', 'hint', 'btn-begin', 'btn-continue', 'btn-newcase-title', 'stick-zone', 'stick-knob', 'throttle', 'btn-scan', 'btn-mark', 'btn-drop', 'btn-map', 'btn-pause', 'btn-rtb', 'btn-resume-pause', 'btn-map-pause', 'btn-end-sortie', 'btn-sound-pause', 'loading']) {
+    for (const id of ['gl', 'hud', 'intel', 'title', 'pause', 'hint', 'btn-begin', 'btn-continue', 'btn-newcase-title', 'stick-zone', 'stick-knob', 'throttle', 'btn-scan', 'btn-mark', 'btn-drop', 'btn-map', 'btn-pause', 'btn-rtb', 'btn-resume-pause', 'btn-map-pause', 'btn-end-sortie', 'btn-sound-pause', 'loading', 'btn-mission', 'btn-open-case', 'btn-case-back', 'mission-card', 'case-card', 'mission-brief', 'debrief', 'btn-fly-again', 'btn-debrief-menu', 'db-headline', 'db-rows', 'db-findings', 'pause-objective']) {
       this.el[id] = q(id);
     }
     const canvas = this.el['gl'] as HTMLCanvasElement;
@@ -99,6 +126,8 @@ export class Game {
     this.bundle.scene.add(buildTrees(hf));
     this.bundle.scene.add(this.truckMesh.group);
     this.bundle.scene.add(this.plane.group);
+    this.missionScene = new MissionScene(SECTOR_7, hf);
+    this.bundle.scene.add(this.missionScene.group);
 
     // radar footprint visual
     this.radarRing = new THREE.Group();
@@ -159,6 +188,11 @@ export class Game {
     this.input.onAction('pause', () => this.togglePause());
     this.input.onAction('rtb', () => this.tryReturn());
 
+    this.el['btn-mission'].addEventListener('click', () => this.startMission());
+    this.el['btn-open-case'].addEventListener('click', () => this.showCaseCard(true));
+    this.el['btn-case-back'].addEventListener('click', () => this.showCaseCard(false));
+    this.el['btn-fly-again'].addEventListener('click', () => this.startMission());
+    this.el['btn-debrief-menu'].addEventListener('click', () => this.showTitle());
     this.el['btn-begin'].addEventListener('click', () => this.begin(false));
     this.el['btn-continue'].addEventListener('click', () => this.begin(true));
     this.el['btn-newcase-title'].addEventListener('click', () => {
@@ -172,7 +206,7 @@ export class Game {
       this.el['pause'].classList.add('hidden');
       this.openIntel('inflight');
     });
-    this.el['btn-end-sortie'].addEventListener('click', () => this.endSortie('recalled'));
+    this.el['btn-end-sortie'].addEventListener('click', () => (this.play === 'mission' ? this.endMission('aborted') : this.endSortie('recalled')));
     this.el['btn-sound-pause'].addEventListener('click', () => {
       this.audio.setMuted(!this.audio.muted);
       this.el['btn-sound-pause'].textContent = this.audio.muted ? 'SOUND OFF' : 'SOUND ON';
@@ -212,6 +246,10 @@ export class Game {
       getTime: () => this.sortieTime,
       getPrefs: () => ({ ...this.prefs }),
       getTruck: () => ({ x: this.truck.x, z: this.truck.z, hidden: this.truck.hidden, moving: this.truck.moving }),
+      getPlay: () => this.play,
+      getMission: () => this.mission,
+      getReturns: () => [...this.movers].map(([id, m]) => ({ id, x: m.x, z: m.z, moving: m.moving, arrived: m.arrived })),
+      getFuel: () => this.fuel,
     };
     this.last = performance.now();
     this.raf = requestAnimationFrame((now) => this.frame(now));
@@ -220,6 +258,18 @@ export class Game {
   // ------------------------------------------------------------------ screens
   private showTitle(): void {
     this.mode = 'title';
+    this.el['debrief'].classList.add('hidden');
+    this.el['pause'].classList.add('hidden');
+    this.missionScene.group.visible = false;
+    this.hud.clearBanners();
+    const M = MISSION_01;
+    this.el['mission-brief'].innerHTML =
+      `<h2>${M.code}: ${M.title}</h2>` +
+      `<div class="mb-block"><label>OBJECTIVE</label><p class="mb-objective">${M.objective}</p></div>` +
+      `<div class="mb-block"><label>SUCCESS</label><p>${M.success}</p></div>` +
+      `<div class="mb-block"><label>KNOWN INTEL</label><ul>${M.intel.map((l) => `<li>${l}</li>`).join('')}</ul></div>` +
+      `<p class="mb-controls">${this.input.isTouch ? 'Drag left side to fly · throttle on the right · SCAN searches · MARK identifies' : 'Arrows / WASD fly · Shift / Ctrl throttle · Space scans · M marks · Esc pauses'}</p>`;
+    this.showCaseCard(false);
     const hasSave = this.state.sortie > 0 || this.state.notes.length > 0;
     this.el['btn-continue'].classList.toggle('hidden', !hasSave);
     this.el['btn-newcase-title'].classList.toggle('hidden', !hasSave);
@@ -234,6 +284,11 @@ export class Game {
     this.bundle.camera.position.set(-300, 420, 900);
     this.bundle.camera.up.set(0, 1, 0);
     this.bundle.camera.lookAt(200, 40, -100);
+  }
+
+  private showCaseCard(on: boolean): void {
+    this.el['mission-card'].classList.toggle('hidden', on);
+    this.el['case-card'].classList.toggle('hidden', !on);
   }
 
   private begin(continuing: boolean): void {
@@ -261,7 +316,7 @@ export class Game {
   }
 
   private openIntel(mode: 'debrief' | 'planning' | 'inflight', fresh: string[] = []): void {
-    if (mode === 'inflight' && this.mode !== 'flight') return;
+    if (mode === 'inflight' && (this.mode !== 'flight' || this.play === 'mission')) return;
     this.mode = 'intel';
     this.el['hud'].classList.add('hidden');
     this.intel.open(this.state, mode, fresh);
@@ -304,12 +359,19 @@ export class Game {
   }
 
   private togglePause(): void {
-    if (this.mode === 'flight') {
+    const next = pauseTransition(this.mode);
+    if (next === 'paused') {
       this.mode = 'paused';
+      const mission = this.play === 'mission';
+      const ob = objectiveFor(this.mission, this.movers.get(TARGET.id)?.arrived);
+      this.el['pause-objective'].classList.toggle('hidden', !mission);
+      this.el['pause-objective'].innerHTML = mission ? `<i class="reticle"></i><b>${ob.title}</b><small>${ob.detail}</small>` : '';
+      this.el['btn-map-pause'].classList.toggle('hidden', mission);
+      this.el['btn-end-sortie'].textContent = mission ? 'ABORT MISSION' : 'END SORTIE · RETURN TO BASE';
       this.el['pause'].classList.remove('hidden');
       this.el['btn-sound-pause'].textContent = this.audio.muted ? 'SOUND OFF' : 'SOUND ON';
       this.audio.updateFlight(0, 0, false, false);
-    } else if (this.mode === 'paused') {
+    } else if (next === 'flight') {
       this.mode = 'flight';
       this.el['pause'].classList.add('hidden');
       this.last = performance.now();
@@ -321,6 +383,10 @@ export class Game {
   private startSortie(): void {
     const hf = this.bundle.heightField;
     const cap = capabilities(this.state);
+    this.play = 'case';
+    this.missionScene.group.visible = false;
+    this.el['hud'].classList.remove('mission');
+    this.hud.clearBanners();
     this.a = initialAircraft(RUNWAY.x1 + 16, hf.sample(RUNWAY.x1 + 16, RUNWAY.z) + 2, RUNWAY.z, BASE.heading);
     this.a.speed = 40;
     this.a.throttle = 0.8;
@@ -390,6 +456,10 @@ export class Game {
 
   private tryReturn(): void {
     if (this.mode !== 'flight') return;
+    if (this.play === 'mission') {
+      this.tryMissionLanding();
+      return;
+    }
     const d = Math.hypot(this.a.x - BASE.x, this.a.z - BASE.z);
     if (d < 480) this.endSortie('landed');
     else this.hud.message(`BASE IS ${(d / 1000).toFixed(1)} km AWAY · RETURN WITHIN 480 m TO LAND`, 'warn');
@@ -418,6 +488,10 @@ export class Game {
 
   private doMark(): void {
     if (this.mode !== 'flight') return;
+    if (this.play === 'mission') {
+      this.missionMark();
+      return;
+    }
     const n = this.nearContact();
     if (!n) {
       this.hud.message('NO CONTACT IN RANGE TO MARK', 'warn');
@@ -433,7 +507,7 @@ export class Game {
   }
 
   private doDrop(): void {
-    if (this.mode !== 'flight') return;
+    if (this.mode !== 'flight' || this.play === 'mission') return;
     if (this.sensorsLeft <= 0) {
       this.hud.message('NO SENSOR PACKAGES REMAINING', 'warn');
       return;
@@ -540,6 +614,286 @@ export class Game {
     this.waypointBeam.visible = true;
   }
 
+  // ------------------------------------------------------------------ mission 01
+  private startMission(): void {
+    const hf = this.bundle.heightField;
+    this.audio.unlock();
+    this.play = 'mission';
+    this.mission = newMission();
+    this.movers.clear();
+    for (const r of RETURNS) this.movers.set(r.id, new RouteMover(r.route, r.speed, r.start, true));
+    this.a = initialAircraft(RUNWAY.x1 + 16, hf.sample(RUNWAY.x1 + 16, RUNWAY.z) + 2, RUNWAY.z, BASE.heading);
+    this.a.speed = 40;
+    this.a.throttle = 0.8;
+    this.fuelMax = MISSION_01.fuelSeconds;
+    this.fuel = this.fuelMax;
+    this.scanning = false;
+    this.radarRing.visible = false;
+    this.sortieTime = 0;
+    this.chase.reset();
+    // the open case's world markers and vehicle stay out of the mission
+    for (const p of this.pins.values()) p.visible = false;
+    for (const p of this.packages) this.bundle.scene.remove(p.group);
+    this.packages = [];
+    this.waypointBeam.visible = false;
+    this.truckMesh.group.visible = false;
+    this.missionScene.group.visible = true;
+    this.missionScene.showDestination(DESTINATION.x, DESTINATION.z, false);
+    this.missionScene.sync(this.movers, this.mission, this.t);
+    this.el['title'].classList.add('hidden');
+    this.el['debrief'].classList.add('hidden');
+    this.el['pause'].classList.add('hidden');
+    this.el['hud'].classList.add('mission');
+    this.el['hud'].classList.remove('hidden');
+    this.intel.close();
+    this.hud.clearBanners();
+    this.hud.banner(`${MISSION_01.code} · OBJECTIVE`, 'LOCATE THE SUPPLY TRUCK', 'obj', 3.4);
+    this.mode = 'flight';
+    this.last = performance.now();
+  }
+
+  private missionEvents(events: MissionEvent[]): void {
+    for (const e of events) {
+      switch (e.type) {
+        case 'detected':
+          this.hud.message(e.text, '');
+          this.audio.contact();
+          break;
+        case 'resolved':
+          this.hud.message(e.text, 'good');
+          this.audio.resolved();
+          break;
+        case 'wrong':
+          this.hud.banner(e.title, e.text, 'bad', 2.6);
+          this.audio.warn();
+          break;
+        case 'objective-complete':
+          this.hud.banner(e.title, e.text, 'done', 2.6);
+          this.audio.unlockSound();
+          break;
+        case 'new-objective':
+        case 'final-objective':
+          this.hud.banner(e.title, e.text, 'obj', 3.4);
+          break;
+        default:
+          break;
+      }
+    }
+  }
+
+  private nearestReturn(): { id: ReturnId; dist: number } | null {
+    let best: { id: ReturnId; dist: number } | null = null;
+    for (const [id, mv] of this.movers) {
+      if (!this.mission.returns[id].detected) continue;
+      const d = Math.hypot(mv.x - this.a.x, mv.z - this.a.z);
+      if (d < MARK_RANGE && (!best || d < best.dist)) best = { id, dist: d };
+    }
+    return best;
+  }
+
+  private missionMark(): void {
+    const n = this.nearestReturn();
+    if (!n) {
+      this.hud.message(this.mission.phase === 'locate' ? 'NO RETURN IN RANGE · SCAN AND FLY CLOSER' : 'NOTHING TO MARK', 'warn');
+      return;
+    }
+    const { result, events } = identify(this.mission, n.id);
+    if (result === 'already') this.hud.message(`RETURN ${n.id} ALREADY MARKED`, 'sys');
+    else if (result === 'inactive') this.hud.message('TRUCK ALREADY IDENTIFIED', 'sys');
+    if (result === 'correct') {
+      this.audio.mark();
+      const mv = this.movers.get(n.id)!;
+      mv.setRoute(destinationRoute(mv.x, mv.z, mv.segment), false);
+      mv.speed = TARGET_SPEED_TO_DESTINATION;
+    }
+    this.missionEvents(events);
+  }
+
+  private tryMissionLanding(): void {
+    const d = Math.hypot(this.a.x - BASE.x, this.a.z - BASE.z);
+    if (this.mission.phase !== 'rtb') {
+      this.hud.message(`OBJECTIVE FIRST: ${objectiveFor(this.mission).title}`, 'warn');
+      return;
+    }
+    if (d < 480) this.endMission('landed');
+    else this.hud.message(`BASE IS ${(d / 1000).toFixed(1)} km AWAY · RETURN WITHIN 480 m TO LAND`, 'warn');
+  }
+
+  private endMission(reason: 'landed' | 'fuel' | 'aborted'): void {
+    if (this.mode !== 'flight' && this.mode !== 'paused') return;
+    if (reason === 'landed') this.missionEvents(landMission(this.mission).events);
+    else failMission(this.mission, reason);
+    this.mode = 'debrief';
+    this.scanning = false;
+    this.radarRing.visible = false;
+    this.audio.updateFlight(0, 0, false, false);
+    this.audio.land();
+    this.el['pause'].classList.add('hidden');
+    this.el['hud'].classList.add('hidden');
+    this.hud.clearBanners();
+    const d = buildDebrief(this.mission, this.fuel / this.fuelMax);
+    this.el['db-headline'].textContent = d.headline;
+    this.el['db-headline'].className = d.success ? 'good' : 'bad';
+    this.el['db-rows'].innerHTML = d.rows.map((r) => `<dt>${r.label}</dt><dd class="${r.tone ?? ''}">${r.value}</dd>`).join('');
+    this.el['db-findings'].innerHTML = d.findings.length ? `<h3>RECON FINDINGS</h3><ul>${d.findings.map((f) => `<li>${f}</li>`).join('')}</ul>` : '';
+    this.el['debrief'].classList.remove('hidden');
+  }
+
+  private updateRadarVisual(dt: number, radius: number, quality: number): void {
+    const hf = this.bundle.heightField;
+    this.sweep += dt * 2.3;
+    if (this.sweep > Math.PI * 2) {
+      this.sweep -= Math.PI * 2;
+      this.sweepTicks++;
+      this.audio.sweepTick();
+    }
+    this.radarRing.position.set(this.a.x, hf.sample(this.a.x, this.a.z) + 2.5, this.a.z);
+    this.radarRing.scale.set(radius, 1, radius);
+    this.radarWedge.rotation.z = -this.sweep + Math.PI / 2;
+    (this.radarDisc.material as THREE.MeshBasicMaterial).opacity = 0.04 + quality * 0.06;
+  }
+
+  private updateMission(dt: number): void {
+    const m = this.mission;
+    const hf = this.bundle.heightField;
+    m.time += dt;
+    if (this.fuel <= 0) {
+      this.endMission('fuel');
+      return;
+    }
+    // ---- world
+    for (const mv of this.movers.values()) mv.step(dt);
+    this.plane.sync(this.a, this.t);
+    const target = this.movers.get(TARGET.id)!;
+
+    // ---- radar
+    const params = radarParams(this.a.agl, 1);
+    if (this.scanning) {
+      this.updateRadarVisual(dt, params.radius, params.quality);
+      this.blipTimer -= dt;
+      const events: MissionEvent[] = [];
+      for (const [id, mv] of this.movers) {
+        const def = RETURN_BY_ID[id];
+        const dist = Math.hypot(mv.x - this.a.x, mv.z - this.a.z);
+        const gain = detectionGain(dt, params, dist, def, false, MISSION_RATE);
+        if (gain <= 0) continue;
+        if (this.blipTimer <= 0) {
+          const unc = uncertaintyFor(params, def.concealment);
+          this.hud.blip(mv.x + (Math.random() - 0.5) * unc * 0.5, mv.z + (Math.random() - 0.5) * unc * 0.5);
+        }
+        events.push(...scanReturn(m, id, gain, canResolve(params, def), mv.x, mv.z));
+      }
+      if (this.blipTimer <= 0) this.blipTimer = 0.35;
+      if (events.length) this.missionEvents(events);
+    }
+    // a detected return is tracked while it is in the footprint or in plain sight
+    for (const [id, mv] of this.movers) {
+      const st = m.returns[id];
+      if (!st.detected) continue;
+      const dist = Math.hypot(mv.x - this.a.x, mv.z - this.a.z);
+      if ((this.scanning && dist <= params.radius) || (dist < 260 && this.a.agl < 320)) st.lastKnown = { x: mv.x, z: mv.z };
+    }
+
+    // ---- destination
+    if (m.phase === 'destination') {
+      const ev = updateDestination(m, dt, target.arrived, Math.hypot(target.x - this.a.x, target.z - this.a.z));
+      this.missionScene.showDestination(DESTINATION.x, DESTINATION.z, target.arrived);
+      if (ev.length) this.missionEvents(ev);
+    }
+    this.missionScene.sync(this.movers, m, this.t);
+
+    // ---- landing
+    const dBase = Math.hypot(this.a.x - BASE.x, this.a.z - BASE.z);
+    if (m.phase === 'rtb' && dBase < 150 && this.a.agl < 45) {
+      this.endMission('landed');
+      return;
+    }
+
+    // ---- contact card
+    const near = this.nearestReturn();
+    let nearCard: HudFrame['nearContact'] = null;
+    if (near) {
+      const mv = this.movers.get(near.id)!;
+      const st = m.returns[near.id];
+      const d = describeReturn(m, near.id, mv.x, mv.z, mv.moving);
+      const markKey = this.input.isTouch ? 'TAP MARK' : 'PRESS M';
+      nearCard = {
+        codename: d.head,
+        label: st.verdict === 'correct' ? 'SUPPLY TRUCK' : st.verdict === 'wrong' ? 'NOT THE TRUCK' : 'VEHICLE RETURN',
+        grid: gridRef(mv.x, mv.z),
+        confidence: st.resolved ? 1 : clamp(st.detection / RESOLVE_THRESHOLD, 0.2, 0.95),
+        canMark: m.phase === 'locate' && st.verdict === 'none',
+        status: st.verdict === 'correct' ? 'TARGET' : st.verdict === 'wrong' ? 'REJECTED' : st.resolved ? 'RESOLVED' : 'DETECTED',
+        traits: d.traits,
+        action: m.phase === 'locate' && st.verdict === 'none' ? `${markKey} IF THIS IS THE TRUCK` : '',
+      };
+    }
+
+    // ---- navigation target
+    let waypoint: HudFrame['waypoint'] = null;
+    if (m.phase === 'locate' && !inSector(this.a.x, this.a.z)) waypoint = { x: (SECTOR_7.x0 + SECTOR_7.x1) / 2, z: (SECTOR_7.z0 + SECTOR_7.z1) / 2, label: 'SECTOR 7' };
+    else if (m.phase === 'destination') {
+      const p = m.returns[TARGET.id].lastKnown ?? target;
+      waypoint = { x: p.x, z: p.z, label: target.arrived ? 'TRUCK STOPPED' : 'TRUCK' };
+    }
+
+    // ---- contextual hint: always says what to do next
+    const touch = this.input.isTouch;
+    let hint = '';
+    if (this.sortieTime < 7) hint = touch ? 'DRAG LEFT SIDE TO STEER · SLIDE THROTTLE ON THE RIGHT' : 'ARROWS / WASD STEER · SHIFT / CTRL THROTTLE';
+    else if (m.phase === 'locate') {
+      const anyUnresolved = RETURNS.some((r) => m.returns[r.id].detected && !m.returns[r.id].resolved);
+      if (near && nearCard?.canMark) hint = `DOES RETURN ${near.id} MATCH EVERY POINT OF THE INTEL?`;
+      else if (!this.scanning) hint = touch ? 'TAP SCAN TO SEARCH FOR VEHICLE RETURNS' : 'PRESS SPACE TO SCAN FOR VEHICLE RETURNS';
+      else if (!inSector(this.a.x, this.a.z)) hint = 'HEAD FOR SECTOR 7 · OUTLINED IN AMBER';
+      else if (anyUnresolved) hint = 'FLY UNDER 300 m OVER A RETURN TO RESOLVE ITS SIZE';
+      else hint = 'SWEEP THE ROADS IN SECTOR 7 WITH THE RADAR';
+    } else if (m.phase === 'destination') hint = target.arrived ? 'FLY OVER THE STOPPED TRUCK TO CONFIRM' : 'STAY WITH THE TRUCK UNTIL IT STOPS';
+    else if (m.phase === 'rtb') hint = touch ? 'FOLLOW BASE · FLY LOW OVER THE RUNWAY OR TAP LAND' : 'FOLLOW BASE · FLY LOW OVER THE RUNWAY OR PRESS R';
+    this.el['hint'].textContent = hint;
+
+    // ---- camera, audio, HUD
+    this.chase.update(this.bundle.camera, this.a, dt, this.scanning, (x, z) => hf.sample(x, z));
+    this.audio.updateFlight(this.a.throttle, this.a.speed, true, this.scanning);
+    const contacts: ScopeContact[] = [];
+    for (const r of RETURNS) {
+      const st = m.returns[r.id];
+      if (!st.detected || !st.lastKnown) continue;
+      contacts.push({
+        x: st.lastKnown.x,
+        z: st.lastKnown.z,
+        r: 30,
+        kind: st.verdict === 'correct' ? 'sensor' : st.resolved || st.verdict === 'wrong' ? 'resolved' : 'detected',
+        label: st.verdict === 'correct' ? `${r.id} TRUCK` : st.verdict === 'wrong' ? `${r.id} \u2715` : r.id,
+        marked: st.verdict === 'wrong',
+      });
+    }
+    const ob = objectiveFor(m, target.arrived);
+    this.hud.update(
+      {
+        a: this.a,
+        scanning: this.scanning,
+        footprint: params.radius,
+        quality: params.quality,
+        fuel: this.fuel / this.fuelMax,
+        fuelSeconds: this.fuel,
+        sensorsLeft: 0,
+        sortie: 1,
+        sortieLabel: MISSION_01.code,
+        contacts,
+        sensors: [],
+        waypoint,
+        nearBase: dBase < 480 && m.phase === 'rtb',
+        signal: null,
+        nearContact: nearCard,
+        sweepAngle: this.sweep,
+        objective: isActive(m) ? { title: ob.title, detail: ob.detail, progress: m.phase === 'destination' && target.arrived ? m.confirm : null, done: ob.done } : null,
+        sector: SECTOR_7,
+      },
+      dt,
+    );
+  }
+
   // ------------------------------------------------------------------ loop
   private resize(): void {
     const w = window.innerWidth;
@@ -590,6 +944,10 @@ export class Game {
     this.a = stepAircraft(this.a, inp, dt, (x, z) => hf.sample(x, z));
     this.input.syncThrottle(this.a.throttle);
     this.fuel -= dt;
+    if (this.play === 'mission') {
+      this.updateMission(dt);
+      return;
+    }
     if (this.fuel <= 0) {
       this.endSortie('fuel');
       return;
@@ -604,12 +962,7 @@ export class Game {
     const params = radarParams(this.a.agl, cap.radarMult);
     const fresh: ScopeContact[] = [];
     if (this.scanning) {
-      this.sweep += dt * 2.3;
-      if (this.sweep > Math.PI * 2) {
-        this.sweep -= Math.PI * 2;
-        this.sweepTicks++;
-        this.audio.sweepTick();
-      }
+      this.updateRadarVisual(dt, params.radius, params.quality);
       addCoverage(s, this.a.x, this.a.z, params.radius, dt * params.quality * 0.35);
       this.blipTimer -= dt;
       this.mobileUpdateTimer -= dt;
@@ -644,11 +997,6 @@ export class Game {
       if (this.blipTimer <= 0) this.blipTimer = 0.35;
       if (this.mobileUpdateTimer <= 0) this.mobileUpdateTimer = 2.5;
       if (events.length) this.handleEvents(events);
-      // footprint visual
-      this.radarRing.position.set(this.a.x, hf.sample(this.a.x, this.a.z) + 2.5, this.a.z);
-      this.radarRing.scale.set(params.radius, 1, params.radius);
-      this.radarWedge.rotation.z = -this.sweep + Math.PI / 2;
-      (this.radarDisc.material as THREE.MeshBasicMaterial).opacity = 0.04 + params.quality * 0.06;
     }
 
     // ---- visual observation
@@ -782,6 +1130,8 @@ export class Game {
         signal,
         nearContact: nearCard,
         sweepAngle: this.sweep,
+        objective: null,
+        sector: null,
       },
       dt,
     );
