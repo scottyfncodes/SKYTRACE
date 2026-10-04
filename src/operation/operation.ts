@@ -9,7 +9,8 @@
  * events. The recon objectives themselves live in the mission's rules.
  */
 import type { MissionDef } from '../mission/missionDef';
-import { currentGate, inHazard, legComplete, newLeg, passLanding, tickLeg, type AircraftFix, type LegEvent, type LegState } from './gates';
+import { currentGate, inHazard, joinRing, legComplete, newLeg, passLanding, placeRoute, ringOrdinal, tickLeg, type AircraftFix, type LegEvent, type LegState, type Route } from './gates';
+import { BASE } from '../world/worldData';
 import type { Capabilities, Loadout } from './loadout';
 
 export type Stage = 'preflight' | 'outbound' | 'recon' | 'return' | 'debrief';
@@ -25,6 +26,8 @@ export const STAGES: readonly { id: Stage; label: string }[] = [
 export interface OperationState {
   stage: Stage;
   loadout: Loadout;
+  /** The two legs, placed in the world (the way home is re-placed when recon ends). */
+  routes: { outbound: Route; return: Route };
   outbound: LegState;
   ret: LegState;
   /** Seconds since arriving on station (the recon window runs from here). */
@@ -37,8 +40,13 @@ export interface OperationState {
   time: number;
 }
 
-export function newOperation(def: MissionDef, loadout: Loadout): OperationState {
-  return { stage: 'preflight', loadout, outbound: newLeg(def.outbound), ret: newLeg(def.return), reconElapsed: 0, frontArrived: false, damage: 0, outcome: null, time: 0 };
+type Ground = (x: number, z: number) => number;
+const flat: Ground = () => 0;
+
+export function newOperation(def: MissionDef, loadout: Loadout, ground: Ground = flat): OperationState {
+  const outbound = placeRoute(def.outbound, ground, BASE);
+  const ret = placeRoute(def.return, ground, { x: (def.operations.area.x0 + def.operations.area.x1) / 2, z: (def.operations.area.z0 + def.operations.area.z1) / 2 });
+  return { stage: 'preflight', loadout, routes: { outbound, return: ret }, outbound: newLeg(outbound), ret: newLeg(ret), reconElapsed: 0, frontArrived: false, damage: 0, outcome: null, time: 0 };
 }
 
 export function launch(op: OperationState): void {
@@ -50,9 +58,9 @@ export function isFlying(op: OperationState): boolean {
 }
 
 /** The leg the pilot is flying right now (null on station). */
-export function activeLeg(op: OperationState, def: MissionDef): { def: MissionDef['outbound']; state: LegState } | null {
-  if (op.stage === 'outbound') return { def: def.outbound, state: op.outbound };
-  if (op.stage === 'return') return { def: def.return, state: op.ret };
+export function activeLeg(op: OperationState, _def?: MissionDef): { def: Route; state: LegState } | null {
+  if (op.stage === 'outbound') return { def: op.routes.outbound, state: op.outbound };
+  if (op.stage === 'return') return { def: op.routes.return, state: op.ret };
   return null;
 }
 
@@ -65,7 +73,7 @@ export function tickOperation(op: OperationState, def: MissionDef, a: AircraftFi
   if (leg) {
     events.push(...tickLeg(leg.state, leg.def, a, dt, cap.stealthCeiling));
     for (const h of leg.def.hazards) if (h.kind === 'storm' && inHazard(h, a)) op.damage = Math.min(1, op.damage + dt * 0.03 * cap.weatherExposure);
-    if (op.stage === 'outbound' && legComplete(op.outbound, def.outbound)) op.stage = 'recon';
+    if (op.stage === 'outbound' && legComplete(op.outbound, op.routes.outbound)) op.stage = 'recon';
   }
   let front = false;
   if (op.stage === 'recon') {
@@ -78,20 +86,34 @@ export function tickOperation(op: OperationState, def: MissionDef, a: AircraftFi
   return { events, frontArrived: front };
 }
 
-/** Recon is over (objectives done, extracted by choice, weather or fuel): fly home. */
-export function beginReturn(op: OperationState): void {
-  if (op.stage === 'recon' || op.stage === 'outbound') op.stage = 'return';
+/**
+ * Recon is over (objectives done, extracted by choice, weather or fuel): fly
+ * home. Given the aircraft's pose, the way home starts with a ring right
+ * ahead of it. Spotted on the way in, the radar has you from the first ring.
+ */
+export function beginReturn(op: OperationState, def?: MissionDef, pose?: { x: number; y: number; z: number; yaw: number }, ground: Ground = flat): void {
+  if (op.stage !== 'recon' && op.stage !== 'outbound') return;
+  op.stage = 'return';
+  if (def && pose) {
+    const first = def.return.gates.find((g) => g.kind === 'ring');
+    const deck = def.return.hazards.find((h) => h.kind === 'ceiling');
+    const join = joinRing(pose, first && first.kind === 'ring' ? first : BASE, ground, deck && deck.kind === 'ceiling' ? deck.y : Infinity);
+    op.routes.return = placeRoute(def.return, ground, pose, join);
+  }
+  op.ret = newLeg(op.routes.return, op.outbound.detected);
 }
 
 /** Touch-down at base. Only the return leg ends with a landing. */
 export function landAtBase(op: OperationState, def: MissionDef): LegEvent[] {
   if (op.stage !== 'return') return [];
-  const ev = passLanding(op.ret, def.return);
+  void def;
+  const route = op.routes.return;
+  const ev = passLanding(op.ret, route);
   if (!ev.length) {
-    // came home without flying the planned route: the remaining gates are missed
-    for (const g of def.return.gates) if (op.ret.status[g.id] === 'pending' && g.kind !== 'land') op.ret.status[g.id] = 'missed';
+    // came home without flying the planned route: the remaining rings are missed
+    for (const g of route.gates) if (op.ret.status[g.id] === 'pending' && g.kind !== 'land') op.ret.status[g.id] = 'missed';
     op.ret.status.land = 'passed';
-    op.ret.index = def.return.gates.length;
+    op.ret.index = route.gates.length;
   }
   op.stage = 'debrief';
   op.outcome = 'landed';
@@ -114,16 +136,19 @@ export function windowLeft(op: OperationState, def: MissionDef): number {
   return Math.max(0, def.reconWindow - op.reconElapsed);
 }
 
-/** The pilot's objective on a flying leg: the current gate. */
+/** The pilot's objective on a flying leg: the next ring (the ring itself is the instruction). */
 export function flightObjective(op: OperationState, def: MissionDef, cap: Capabilities): { kicker: string; title: string; detail: string } | null {
-  const leg = activeLeg(op, def);
+  void def;
+  const leg = activeLeg(op);
   if (!leg) return null;
   const g = currentGate(leg.state, leg.def);
   if (!g) return null;
-  const n = leg.def.gates.length;
-  const kicker = `${op.stage === 'outbound' ? 'OUTBOUND' : 'RETURN'} ${leg.state.index + 1}/${n}`;
-  const detail = g.kind === 'enterArea' && g.stealth ? `BELOW ${cap.stealthCeiling} m · ${g.detail}` : g.detail;
-  return { kicker, title: g.objective, detail };
+  const stage = op.stage === 'outbound' ? 'OUTBOUND' : 'RETURN';
+  if (g.kind === 'land') return { kicker: stage, title: g.objective, detail: g.detail };
+  const kicker = `${stage} ${ringOrdinal(leg.def, g.id)}`;
+  const title = leg.state.contact ? 'RADAR CONTACT' : leg.def.title;
+  const detail = g.cue === 'LOW' ? `BELOW ${cap.stealthCeiling} m` : (g.cue ?? (leg.state.contact ? 'BEAT THE CLOCK' : ''));
+  return { kicker, title, detail };
 }
 
 export function damageGrade(d: number): 'NONE' | 'MINOR' | 'MODERATE' | 'HEAVY' {

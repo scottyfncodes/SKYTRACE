@@ -80,7 +80,7 @@ button { font-family: var(--mono); cursor: pointer; }
 button.icon { width: 38px; height: 38px; border-radius: 8px; background: var(--glass); border: 1px solid var(--ph-faint); color: var(--ph); font-size: 13px; letter-spacing: 0.1em; }
 
 .nav { position: absolute; top: calc(var(--sat) + 64px); left: 50%; transform: translateX(-50%); display: flex; gap: 10px; font-size: 12px; letter-spacing: 0.12em; pointer-events: none; }
-.nav span { background: var(--glass); border: 1px solid var(--ph-faint); border-radius: 6px; padding: 5px 10px; color: var(--ph); }
+.nav span { white-space: nowrap; background: var(--glass); border: 1px solid var(--ph-faint); border-radius: 6px; padding: 5px 10px; color: var(--ph); }
 .nav span.wp { color: var(--amber); border-color: rgba(242, 169, 59, 0.4); }
 .signal { position: absolute; top: calc(var(--sat) + 100px); left: 50%; transform: translateX(-50%); display: none; align-items: center; gap: 6px; font-size: 11px; letter-spacing: 0.12em; color: var(--ice); background: var(--glass); border: 1px solid rgba(143, 208, 255, 0.35); border-radius: 6px; padding: 4px 10px; pointer-events: none; }
 .signal.on { display: flex; }
@@ -621,7 +621,7 @@ ul.evidence li.unmarked { color: #9a4a12; }
 .obj-kicker:empty { display: none; }
 .chips { position: absolute; top: calc(var(--sat) + 152px); left: 50%; transform: translateX(-50%); display: flex; gap: 6px; pointer-events: none; flex-wrap: wrap; justify-content: center; max-width: 92vw; }
 .chips .chip { font-size: 10px; letter-spacing: 0.14em; padding: 3px 8px; border-radius: 10px; background: rgba(8, 18, 12, 0.72); border: 1px solid var(--ph-faint); color: #e8f3ea; }
-.chips .chip.warn { border-color: rgba(242, 169, 59, 0.6); color: var(--amber); }
+.chips .chip.caution { border-color: rgba(242, 169, 59, 0.6); color: var(--amber); }
 .chips .chip.bad { border-color: var(--warn); color: var(--warn); }
 #hud.mission .hint { top: calc(var(--sat) + 180px); }
 #hud.mission .msgs { top: calc(var(--sat) + 210px); }

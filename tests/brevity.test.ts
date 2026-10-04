@@ -21,6 +21,8 @@ import { buildHandover } from '../src/mission/crew';
 import { CREW, EQUIPMENT, AIRCRAFT } from '../src/operation/catalog';
 import { capabilities, defaultLoadout, withAircraft } from '../src/operation/loadout';
 import { beginReturn, flightObjective, landAtBase, launch, newOperation, tickOperation, endOperation } from '../src/operation/operation';
+import { rings, type LegDef } from '../src/operation/gates';
+import { threadRings } from './helpers';
 import { stageResults } from '../src/operation/score';
 import { aircraftBars } from '../src/ui/preflight';
 
@@ -38,8 +40,14 @@ describe('word budgets', () => {
         within(o.kicker, 8);
       }
     }
-    for (const leg of [MISSION_01.outbound, MISSION_01.return]) {
+    for (const leg of [MISSION_01.outbound, MISSION_01.return] as LegDef[]) {
+      within(leg.title, 16);
       for (const g of leg.gates) {
+        if (g.kind === 'ring') {
+          // the ring is the instruction: at most a word or two beside it
+          if (g.cue) within(g.cue, 18);
+          continue;
+        }
         within(g.objective, 20);
         within(g.detail, 36);
         within(g.label, 10);
@@ -49,12 +57,26 @@ describe('word budgets', () => {
       const cap = capabilities(withAircraft(defaultLoadout(), id));
       const op = newOperation(MISSION_01, defaultLoadout());
       launch(op);
-      for (let i = 0; i < 2; i++) {
-        const fo = flightObjective(op, MISSION_01, cap)!;
-        within(fo.detail, 40);
+      const check = () => {
+        const fo = flightObjective(op, MISSION_01, cap);
+        if (!fo) return;
+        within(fo.title, 16);
+        within(fo.detail, 24);
         within(fo.kicker, 14);
-        tickOperation(op, MISSION_01, { x: -280, z: 200, y: 200, agl: 150 }, 0.1, cap);
+      };
+      for (const r of rings(op.routes.outbound)) {
+        check();
+        tickOperation(op, MISSION_01, { x: r.x - r.nx * 10, y: r.y, z: r.z - r.nz * 10, agl: r.agl }, 0.1, cap);
+        tickOperation(op, MISSION_01, { x: r.x + r.nx * 10, y: r.y, z: r.z + r.nz * 10, agl: r.agl }, 0.1, cap);
       }
+      op.outbound.detected = true;
+      beginReturn(op);
+      for (const r of rings(op.routes.return)) {
+        check();
+        tickOperation(op, MISSION_01, { x: r.x - r.nx * 10, y: r.y, z: r.z - r.nz * 10, agl: r.agl }, 0.1, cap);
+        tickOperation(op, MISSION_01, { x: r.x + r.nx * 10, y: r.y, z: r.z + r.nz * 10, agl: r.agl }, 0.1, cap);
+      }
+      check();
     }
   });
 
@@ -116,9 +138,10 @@ describe('stage scorecard (debrief)', () => {
     const op = newOperation(def, defaultLoadout());
     launch(op);
     for (let t = 0; t < (opts.storm ?? 0); t += 1) tickOperation(op, def, { x: -80, z: 480, y: 200, agl: 150 }, 1, cap);
-    tickOperation(op, def, { x: -280, z: 200, y: 200, agl: 150 }, 0.1, cap);
-    tickOperation(op, def, { x: 700, z: 100, y: opts.detected ? 700 : 280, agl: opts.detected ? 600 : 200 }, 0.1, cap);
+    if (opts.detected) tickOperation(op, def, { x: 700, z: 100, y: 700, agl: 600 }, 0.1, cap);
+    threadRings(op, cap);
     beginReturn(op);
+    threadRings(op, cap);
     if (opts.landed === false) endOperation(op, 'fuel');
     else landAtBase(op, def);
     return stageResults(m, op, def);

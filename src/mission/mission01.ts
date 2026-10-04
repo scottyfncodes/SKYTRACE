@@ -190,31 +190,50 @@ export const MISSION_01 = {
     weather: 'Clear at take-off. A storm cell sits over the main road between base and the sector.',
     conditions: 'A front arrives from the west about 5 minutes after you reach the sector: haze first, then a cloud deck at 300 m and a new storm cell across the direct route home.',
     targetArea: 'Sector 7: the eastern roads, outlined in amber. Grid I–K / 5–9.',
-    constraints: ['Route north of the storm via Waypoint ALPHA', 'Enter Sector 7 low: the ridge radar sees anything above your stealth ceiling', 'Land at base before fuel runs out'],
+    constraints: ['Fly the ring route north of the storm', 'Enter Sector 7 low: the ridge radar sees anything above your stealth ceiling', 'Land at base before fuel runs out'],
     window: '5:00 on station before the front forces extraction',
     threats: ['Ridge radar watching the sector', 'Storm cell over the main road', 'Our own scout patrol is in the sector: do not misidentify it'],
   },
   clues: ['LARGE', 'MOVING', 'ON A ROAD', 'RADIO DEAD', 'IN SECTOR 7'],
   risks: [
-    { icon: '⛈', text: 'Storm on the direct route · go via ALPHA' },
-    { icon: '📡', text: 'Ridge radar · enter the sector low' },
+    { icon: '◯', text: 'Fly the rings · around the storm' },
+    { icon: '📡', text: 'Ridge radar · rings take you in low' },
     { icon: '⏱', text: '5 min on station before the weather turns' },
   ],
   operations: { area: SECTOR_7 },
   reconWindow: 300,
   reconVisibilityEnd: 0.55,
+  // Out: climb away from the runway, swing north around the storm, cross the
+  // high ground, then drop under the ridge radar into the sector.
   outbound: {
     id: 'outbound',
+    title: 'FLY THE RINGS',
     gates: [
-      { kind: 'waypoint', id: 'alpha', label: 'ALPHA', x: -280, z: 200, r: 150, objective: 'FLY TO ALPHA', detail: 'GO AROUND THE STORM' },
-      { kind: 'enterArea', id: 'sector', label: 'SECTOR 7', area: SECTOR_7, stealth: true, objective: 'ENTER SECTOR 7 LOW', detail: 'UNDER THE RADAR' },
+      { kind: 'ring', id: 'o1', x: -560, z: 760, agl: 120, r: 44 },
+      { kind: 'ring', id: 'o2', x: -370, z: 610, agl: 140, r: 40 },
+      { kind: 'ring', id: 'o3', x: -300, z: 340, agl: 200, r: 38, cue: 'AROUND THE STORM' },
+      { kind: 'ring', id: 'o4', x: -80, z: 160, agl: 240, r: 38 },
+      { kind: 'ring', id: 'o5', x: 170, z: 60, agl: 200, r: 36 },
+      { kind: 'ring', id: 'o6', x: 330, z: 170, agl: 130, r: 36, cue: 'LOW' },
+      { kind: 'ring', id: 'o7', x: 500, z: 220, agl: 90, r: 34, cue: 'LOW' },
+      { kind: 'ring', id: 'o8', x: 660, z: 150, agl: 80, r: 38, cue: 'LOW' },
     ],
     hazards: [{ kind: 'storm', id: 'storm1', label: 'STORM CELL', x: -80, z: 480, r: 230 }],
+    radar: SECTOR_7,
   },
+  // Home: lower, tighter, a slalom between the new storm and the river under
+  // the cloud deck. Leaving the sector raises RADAR CONTACT: every ring is on a clock.
   return: {
     id: 'return',
+    title: 'RETURN TO BASE',
     gates: [
-      { kind: 'waypoint', id: 'bravo', label: 'BRAVO', x: -140, z: 650, r: 160, objective: 'FLY TO BRAVO', detail: 'UNDER THE CLOUDS · AROUND THE STORM' },
+      { kind: 'ring', id: 'r1', x: 430, z: 470, agl: 90, r: 34, alert: true },
+      { kind: 'ring', id: 'r2', x: 270, z: 610, agl: 70, r: 32 },
+      { kind: 'ring', id: 'r3', x: 90, z: 560, agl: 90, r: 32 },
+      { kind: 'ring', id: 'r4', x: -110, z: 660, agl: 60, r: 30 },
+      { kind: 'ring', id: 'r5', x: -290, z: 600, agl: 90, r: 30 },
+      { kind: 'ring', id: 'r6', x: -450, z: 690, agl: 60, r: 30 },
+      { kind: 'ring', id: 'r7', x: -600, z: 760, agl: 35, r: 34, cue: 'LINE UP · RUNWAY' },
       { kind: 'land', id: 'land', label: 'LANDING', objective: 'LAND AT BASE', detail: 'LOW OVER THE RUNWAY' },
     ],
     hazards: [
@@ -222,6 +241,6 @@ export const MISSION_01 = {
       { kind: 'ceiling', id: 'deck', label: 'CLOUD DECK', y: 300 },
     ],
     visibility: 0.45,
-    notices: ['CLOUDS AT 300 m · STAY BELOW', 'NEW STORM ON THE DIRECT ROUTE'],
+    notices: ['CLOUDS AT 300 m · STAY BELOW', 'STORM ON THE DIRECT ROUTE'],
   },
 } as const satisfies MissionDef;

@@ -72,7 +72,7 @@ import { RouteMover } from '../mission/vehicles';
 import { CREW_BY_ID } from '../operation/catalog';
 import { capabilities as loadoutCapabilities, checkLoadout, defaultLoadout, seatCrew, toggleEquipment, withAircraft, type Capabilities, type Loadout } from '../operation/loadout';
 import { activeLeg, beginReturn, endOperation, flightObjective, landAtBase, launch, newOperation, reconVisibility, tickOperation, windowLeft, type OperationState } from '../operation/operation';
-import { currentGate, inHazard, type LegEvent } from '../operation/gates';
+import { currentGate, inHazard, ringScale, type LegEvent } from '../operation/gates';
 import { buildReport, type Report } from '../operation/score';
 import { isUnlocked, loadCareer, recordOperation, saveCareer, type Career, type UnlockDef } from '../operation/career';
 import { pauseTransition, type Mode } from './modes';
@@ -134,6 +134,10 @@ export class Game {
   private opsSelected: ReturnId | null = null;
   private camSettle = 0;
   private handbackTimer = -1;
+  /** Seconds until Mission Control opens itself after arriving on station (0: off). */
+  private autoOps = 0;
+  /** RETURN TO BASE is waiting for the hand-back card to clear. */
+  private returnCue = false;
   private visibility = 1;
   private sensorCam = new THREE.PerspectiveCamera(20, 1, 1, 4200);
   /** The operation plan and its derived rules. */
@@ -302,7 +306,23 @@ export class Game {
         this.a.y = this.bundle.heightField.sample(x, z) + agl;
         if (headingDeg !== undefined) this.a.yaw = (-headingDeg * Math.PI) / 180;
         this.sortieTime = Math.max(this.sortieTime, 5);
+        // a jump is not a flight path: no ring crossing between the two points
+        const leg = activeLeg(this.op);
+        if (leg) leg.state.prev = null;
       },
+      teleportTo: (x: number, y: number, z: number, headingDeg: number) => {
+        this.a.x = x;
+        this.a.y = y;
+        this.a.z = z;
+        this.a.yaw = (-headingDeg * Math.PI) / 180;
+        this.a.pitch = 0;
+        this.a.roll = 0;
+        this.sortieTime = Math.max(this.sortieTime, 5);
+        // a jump is not a flight path: no ring crossing between the two points
+        const leg = activeLeg(this.op);
+        if (leg) leg.state.prev = null;
+      },
+      getRoute: () => activeLeg(this.op)?.def ?? null,
       getState: () => this.state,
       getAircraft: () => this.a,
       getMode: () => this.mode,
@@ -741,7 +761,9 @@ export class Game {
     this.audio.unlock();
     this.play = 'mission';
     this.cap = loadoutCapabilities(this.loadout);
-    this.op = newOperation(def, this.loadout);
+    this.op = newOperation(def, this.loadout, (x, z) => this.bundle.heightField.sample(x, z));
+    this.autoOps = 0;
+    this.returnCue = false;
     launch(this.op);
     this.mission = newMission();
     this.crew = newCrew();
@@ -773,6 +795,8 @@ export class Game {
     this.truckMesh.group.visible = false;
     this.missionScene.group.visible = true;
     this.missionScene.setHazards(def.outbound.hazards);
+    this.missionScene.setRoute(this.op.routes.outbound);
+    this.missionScene.setWaypoint(null);
     this.missionScene.showDestination(DESTINATION.x, DESTINATION.z, false);
     this.missionScene.sync(this.movers, this.mission, this.t);
     for (const id of ['title', 'debrief', 'pause', 'preflight']) this.el[id].classList.add('hidden');
@@ -824,21 +848,27 @@ export class Game {
     }
   }
 
-  /** Gate and hazard events from the flying legs: each cleared gate is stamped. */
+  /** Ring and hazard events from the flying legs: every ring flown through is stamped. */
   private legEvents(events: LegEvent[]): void {
     for (const e of events) {
       switch (e.type) {
         case 'gate-passed': {
-          if (e.id === 'land' || e.id === 'sector') break;
+          if (e.id === 'land') break;
           this.audio.mark();
-          this.hud.banner('GATE CLEARED', e.text.replace(' ✓', ''), 'done', 1.8);
+          this.hud.banner('GATE CLEARED', `RING ${e.text}`, 'done', 1.4);
           break;
         }
         case 'gate-missed':
-          this.hud.message(`${e.text} · OFF ROUTE`, 'warn');
+          this.audio.warn();
+          this.hud.banner('MISSED', `RING ${e.text}`, 'bad', 1.2);
           break;
         case 'detected':
           this.audio.warn();
+          this.hud.banner('SPOTTED', 'TOO HIGH OVER THE SECTOR', 'bad', 2);
+          break;
+        case 'contact':
+          this.audio.warn();
+          this.hud.banner('RADAR CONTACT', 'THE RINGS ARE CLOSING', 'bad', 2.4);
           break;
         case 'hazard-enter':
           this.audio.warn();
@@ -847,6 +877,8 @@ export class Game {
           if (e.id === 'outbound') {
             this.audio.unlockSound();
             this.hud.banner('ON STATION', this.op.outbound.detected ? 'SPOTTED BY RADAR' : 'UNDETECTED', this.op.outbound.detected ? 'bad' : 'done', 2.4);
+            // stop flying: Mission Control takes over once the stamp has landed
+            if (this.crew.station === 'pilot') this.autoOps = 2.2;
           }
           break;
         default:
@@ -889,7 +921,7 @@ export class Game {
       areaLabel: MISSION_01.operations.area.label,
     });
     if (!av.ok) {
-      this.hud.message(this.op.stage === 'outbound' && this.inOpsArea() === false ? `${av.reason} · FLY THE GATES FIRST` : av.reason, 'warn');
+      this.hud.message(this.op.stage === 'outbound' && this.inOpsArea() === false ? `${av.reason} · FLY THE RINGS FIRST` : av.reason, 'warn');
       return;
     }
     const o = this.cap.orbit;
@@ -907,9 +939,13 @@ export class Game {
   /** Recon is over: the return leg begins, in the weather the front brought. */
   private startReturnLeg(): void {
     if (this.op.stage !== 'recon' && this.op.stage !== 'outbound') return;
-    beginReturn(this.op);
+    beginReturn(this.op, MISSION_01, { x: this.a.x, y: this.a.y, z: this.a.z, yaw: this.a.yaw }, (x, z) => this.bundle.heightField.sample(x, z));
+    this.autoOps = 0;
     this.setVisibility(MISSION_01.return.visibility);
     this.missionScene.setHazards(MISSION_01.return.hazards);
+    this.missionScene.setRoute(this.op.routes.return);
+    // suddenly flying again: the first ring is already right ahead (the call goes up once the hand-back card clears)
+    this.returnCue = true;
   }
 
   /** Hand the aircraft back to the pilot. The hand-back is a gameplay event. */
@@ -1153,10 +1189,19 @@ export class Game {
       this.handoffTimer -= dt;
       if (this.handoffTimer <= 0) this.el['handoff'].classList.remove('on');
     }
+    if (this.returnCue && this.handoffTimer <= 0.4) {
+      this.returnCue = false;
+      this.hud.banner('RETURN TO BASE', 'FLY THE RINGS HOME', 'obj', 2.2);
+      if (this.op.ret.contact) this.hud.banner('RADAR CONTACT', 'THE RINGS ARE CLOSING', 'bad', 2.4);
+    }
 
     // ---- the operation: gates, weather, the recon window
     const { events, frontArrived } = tickOperation(this.op, def, { x: this.a.x, z: this.a.z, y: this.a.y, agl: this.a.agl }, dt, this.cap);
     if (events.length) this.legEvents(events);
+    const flying = activeLeg(this.op);
+    const legView = flying ?? { def: this.op.routes.outbound, state: this.op.outbound };
+    const urgency = legView.state.contact && legView.state.clock !== null ? 1 - Math.max(0, Math.min(1, legView.state.clock / Math.max(0.01, legView.state.clockMax))) : 0;
+    this.missionScene.updateRoute(legView.state.index, legView.state.status, ringScale(legView.state), urgency, dt, this.t);
     if (this.op.stage === 'recon') this.setVisibility(reconVisibility(this.op, def));
     if (frontArrived && m.phase !== 'extract') {
       this.missionEvents(extractMission(m, 'weather'));
@@ -1169,7 +1214,6 @@ export class Game {
     }
     if (this.crew.station === 'pilot' && m.phase === 'extract' && this.op.stage === 'recon') {
       this.startReturnLeg();
-      this.hud.banner('HEAD HOME', flightObjective(this.op, def, this.cap)?.title ?? 'FLY HOME', 'obj', 3);
     }
 
     if (this.crew.station === 'operator') this.updateOperator(dt);
@@ -1402,9 +1446,18 @@ export class Game {
     const gate = leg ? currentGate(leg.state, leg.def) : null;
     let waypoint: HudFrame['waypoint'] = null;
     const A = def.operations.area;
-    if (gate?.kind === 'waypoint') waypoint = { x: gate.x, z: gate.z, label: gate.label };
-    else if (gate?.kind === 'enterArea' || (this.op.stage === 'recon' && !area)) waypoint = { x: (A.x0 + A.x1) / 2, z: (A.z0 + A.z1) / 2, label: A.label };
-    this.missionScene.setWaypoint(gate?.kind === 'waypoint' ? gate : null);
+    if (gate?.kind === 'ring') waypoint = { x: gate.x, z: gate.z, label: 'RING' };
+    else if (this.op.stage === 'recon' && !area) waypoint = { x: (A.x0 + A.x1) / 2, z: (A.z0 + A.z1) / 2, label: A.label };
+
+    // ---- arrived: stop flying, Mission Control takes over
+    if (this.autoOps > 0) {
+      this.autoOps -= dt;
+      if (this.autoOps <= 0) {
+        this.autoOps = 0;
+        this.opsAction();
+        if (this.crew.station === 'operator') return;
+      }
+    }
 
     // ---- weather and constraints the pilot has to see
     const chips: { text: string; cls?: string }[] = [];
@@ -1416,15 +1469,17 @@ export class Game {
         const d = Math.hypot(this.a.x - h.x, this.a.z - h.z) - h.r;
         if (this.cap.routeAware || d < 900) storms.push({ x: h.x, z: h.z, r: h.r });
         if (d < 0) warning = 'TURBULENCE';
-        else if (d < 400) chips.push({ text: `STORM ${(d / 1000).toFixed(1)} km`, cls: d < 200 ? 'bad' : 'warn' });
+        else if (d < 400) chips.push({ text: `STORM ${(d / 1000).toFixed(1)} km`, cls: d < 200 ? 'bad' : 'caution' });
       } else {
         const clear = Math.round(h.y - this.a.y);
         if (clear < 0) warning = 'IN CLOUD · DESCEND';
-        if (clear < 120) chips.push({ text: clear < 0 ? 'IN CLOUD' : `CLOUDS +${clear} m`, cls: clear < 40 ? 'bad' : 'warn' });
+        if (clear < 120) chips.push({ text: clear < 0 ? 'IN CLOUD' : `CLOUDS +${clear} m`, cls: clear < 40 ? 'bad' : 'caution' });
       }
     }
-    if (gate?.kind === 'enterArea' && gate.stealth && this.a.agl > this.cap.stealthCeiling - 40) chips.push({ text: `TOO HIGH · BELOW ${this.cap.stealthCeiling} m`, cls: 'bad' });
-    if (this.op.stage === 'recon') chips.push({ text: `FRONT ${formatTime(windowLeft(this.op, def))}`, cls: windowLeft(this.op, def) < 60 ? 'bad' : 'warn' });
+    const R = leg?.def.radar;
+    if (R && !leg!.state.detected && this.a.agl > this.cap.stealthCeiling - 40 && this.a.x > R.x0 - 300 && this.a.x < R.x1 + 300 && this.a.z > R.z0 - 300 && this.a.z < R.z1 + 300) chips.push({ text: `TOO HIGH · BELOW ${this.cap.stealthCeiling} m`, cls: 'bad' });
+    if (leg?.state.contact && leg.state.clock !== null && gate?.kind === 'ring') chips.push({ text: `⏱ ${Math.max(0, Math.ceil(leg.state.clock))} s`, cls: leg.state.clock < 3 ? 'bad' : 'caution' });
+    if (this.op.stage === 'recon') chips.push({ text: `FRONT ${formatTime(windowLeft(this.op, def))}`, cls: windowLeft(this.op, def) < 60 ? 'bad' : 'caution' });
 
     // ---- contextual hint: always says what to do next
     const touch = this.input.isTouch;
