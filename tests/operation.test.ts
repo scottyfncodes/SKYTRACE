@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { AIRCRAFT, AIRCRAFT_BY_ID, CREW, EQUIPMENT } from '../src/operation/catalog';
 import { capabilities, checkLoadout, defaultLoadout, seatCrew, toggleEquipment, withAircraft, type Loadout } from '../src/operation/loadout';
-import { currentGate, legComplete, missedCount, newLeg, passLanding, tickLeg, totalExposure, type LegDef } from '../src/operation/gates';
+import { currentGate, legComplete, missedCount, newLeg, passLanding, placeRoute, rings, tickLeg, totalExposure, type LegDef } from '../src/operation/gates';
+import { threadRings } from './helpers';
 import { activeLeg, beginReturn, endOperation, flightObjective, landAtBase, launch, newOperation, reconVisibility, tickOperation, windowLeft } from '../src/operation/operation';
 import { buildReport, disciplineScore, gradeFor } from '../src/operation/score';
 import { CAREER_KEY, isUnlocked, loadCareer, newCareer, nextUnlock, recordOperation, saveCareer, UNLOCKS } from '../src/operation/career';
@@ -77,80 +78,54 @@ describe('preflight: aircraft, crew, equipment', () => {
   });
 });
 
-describe('mission gates and weather', () => {
+describe('flight legs: hazards and the Mission 01 routes', () => {
   const leg: LegDef = {
     id: 'outbound',
-    gates: [
-      { kind: 'waypoint', id: 'a', label: 'ALPHA', x: 0, z: 0, r: 100, objective: 'FLY TO ALPHA', detail: '' },
-      { kind: 'enterArea', id: 's', label: 'SECTOR', area: { id: 's', label: 'SECTOR 7', x0: 500, z0: -100, x1: 900, z1: 100 }, stealth: true, objective: 'ENTER LOW', detail: '' },
-    ],
+    title: 'FLY THE RINGS',
+    gates: [{ kind: 'ring', id: 'a', x: 0, z: 0, agl: 100, r: 40 }],
     hazards: [
       { kind: 'storm', id: 'st', label: 'STORM CELL', x: 300, z: 0, r: 100 },
       { kind: 'ceiling', id: 'deck', label: 'DECK', y: 300 },
     ],
   };
-
-  it('takes gates in order', () => {
-    const s = newLeg(leg);
-    expect(currentGate(s, leg)!.id).toBe('a');
-    expect(tickLeg(s, leg, fix(-500, 0), 0.1, 400)).toEqual([]);
-    const ev = tickLeg(s, leg, fix(20, 0), 0.1, 400);
-    expect(ev.map((e) => e.type)).toEqual(['gate-passed']);
-    expect(currentGate(s, leg)!.id).toBe('s');
-    const ev2 = tickLeg(s, leg, fix(600, 0, 200, 150), 0.1, 400);
-    expect(ev2.map((e) => e.type)).toEqual(['gate-passed', 'leg-complete']);
-    expect(legComplete(s, leg)).toBe(true);
-    expect(s.detected).toBe(false);
-  });
-
-  it('skipping a gate marks it missed; entering high is detected', () => {
-    const s = newLeg(leg);
-    const ev = tickLeg(s, leg, fix(600, 0, 600, 500), 0.1, 400);
-    expect(ev.map((e) => e.type)).toEqual(['hazard-enter', 'gate-missed', 'detected', 'gate-passed', 'leg-complete']);
-    expect(missedCount(s)).toBe(1);
-    expect(s.detected).toBe(true);
-  });
+  const route = placeRoute(leg, () => 0, { x: -500, z: 0 });
 
   it('counts time inside storm cells and above the cloud deck', () => {
-    const s = newLeg(leg);
-    expect(tickLeg(s, leg, fix(300, 0, 200), 1, 400).map((e) => e.type)).toEqual(['hazard-enter']);
-    tickLeg(s, leg, fix(300, 10, 350), 1, 400);
-    tickLeg(s, leg, fix(-900, 0, 200), 1, 400);
-    expect(totalExposure(s, leg, 'storm')).toBe(2);
-    expect(totalExposure(s, leg, 'ceiling')).toBe(1);
+    const s = newLeg(route);
+    expect(tickLeg(s, route, fix(300, 0, 200), 1, 400).map((e) => e.type)).toEqual(['hazard-enter']);
+    tickLeg(s, route, fix(300, 10, 350), 1, 400);
+    tickLeg(s, route, fix(-900, 0, 200), 1, 400);
+    expect(totalExposure(s, route, 'storm')).toBe(2);
+    expect(totalExposure(s, route, 'ceiling')).toBe(1);
   });
 
   it('the landing gate is passed by touching down', () => {
-    const ret: LegDef = { id: 'return', gates: [{ kind: 'land', id: 'land', label: 'LANDING', objective: 'LAND', detail: '' }], hazards: [] };
+    const ret = placeRoute({ id: 'return', title: 'RETURN TO BASE', gates: [{ kind: 'land', id: 'land', label: 'LANDING', objective: 'LAND', detail: '' }], hazards: [] }, () => 0, { x: 0, z: 0 });
     const s = newLeg(ret);
     expect(tickLeg(s, ret, fix(0, 0), 1, 400)).toEqual([]);
+    expect(currentGate(s, ret)!.kind).toBe('land');
     expect(passLanding(s, ret).map((e) => e.type)).toEqual(['gate-passed', 'leg-complete']);
+    expect(legComplete(s, ret)).toBe(true);
+    expect(missedCount(s)).toBe(0);
   });
 
-  it('Mission 01: the direct route crosses the storm; the gate route does not', () => {
-    const storm = MISSION_01.outbound.hazards[0];
-    const along = (ax: number, az: number, bx: number, bz: number) => {
+  it('Mission 01: the direct routes cross the storms; the ring routes go round them', () => {
+    const along = (st: { x: number; z: number }, pts: { x: number; z: number }[]) => {
       let min = Infinity;
-      for (let t = 0; t <= 1; t += 0.01) min = Math.min(min, Math.hypot(ax + (bx - ax) * t - storm.x, az + (bz - az) * t - storm.z));
+      for (let i = 1; i < pts.length; i++)
+        for (let t = 0; t <= 1; t += 0.01) min = Math.min(min, Math.hypot(pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t - st.x, pts[i - 1].z + (pts[i].z - pts[i - 1].z) * t - st.z));
       return min;
     };
     const A = MISSION_01.operations.area;
-    const sx = (A.x0 + A.x1) / 2;
-    const sz = (A.z0 + A.z1) / 2;
-    const alpha = MISSION_01.outbound.gates[0] as { x: number; z: number };
-    expect(along(-820, 760, sx, sz)).toBeLessThan(storm.r);
-    expect(along(-820, 760, alpha.x, alpha.z)).toBeGreaterThan(storm.r);
-    expect(along(alpha.x, alpha.z, sx, sz)).toBeGreaterThan(storm.r);
-    // the return: the new storm blocks the direct route home; Bravo goes round it
+    const sector = { x: (A.x0 + A.x1) / 2, z: (A.z0 + A.z1) / 2 };
+    const base = { x: -820, z: 760 };
+    const { routes } = newOperation(MISSION_01, defaultLoadout());
+    const s1 = MISSION_01.outbound.hazards[0] as { x: number; z: number; r: number };
+    expect(along(s1, [base, sector])).toBeLessThan(s1.r);
+    expect(along(s1, [base, ...rings(routes.outbound)])).toBeGreaterThan(s1.r);
     const s2 = MISSION_01.return.hazards.find((h) => h.kind === 'storm') as { x: number; z: number; r: number };
-    const bravo = MISSION_01.return.gates[0] as { x: number; z: number };
-    const d = (ax: number, az: number, bx: number, bz: number) => {
-      let min = Infinity;
-      for (let t = 0; t <= 1; t += 0.01) min = Math.min(min, Math.hypot(ax + (bx - ax) * t - s2.x, az + (bz - az) * t - s2.z));
-      return min;
-    };
-    expect(d(sx, sz, -820, 760)).toBeLessThan(s2.r);
-    expect(d(sx, sz, bravo.x, bravo.z)).toBeGreaterThan(s2.r);
+    expect(along(s2, [sector, base])).toBeLessThan(s2.r);
+    expect(along(s2, [...rings(routes.return), base])).toBeGreaterThan(s2.r);
   });
 });
 
@@ -164,17 +139,15 @@ describe('operation stages', () => {
     expect(tickOperation(op, def, fix(0, 0), 1, cap).events).toEqual([]);
     launch(op);
     expect(op.stage).toBe('outbound');
-    expect(flightObjective(op, def, cap)).toEqual({ kicker: 'OUTBOUND 1/2', title: 'FLY TO ALPHA', detail: 'GO AROUND THE STORM' });
-    tickOperation(op, def, fix(-280, 200), 0.1, cap);
-    expect(flightObjective(op, def, cap)!.detail).toBe('BELOW 450 m · UNDER THE RADAR');
-    tickOperation(op, def, fix(700, 100, 300, 200), 0.1, cap);
+    expect(flightObjective(op, def, cap)).toEqual({ kicker: 'OUTBOUND 1/8', title: 'FLY THE RINGS', detail: '' });
+    threadRings(op, cap);
     expect(op.stage).toBe('recon');
     expect(activeLeg(op, def)).toBeNull();
     expect(flightObjective(op, def, cap)).toBeNull();
     beginReturn(op);
     expect(op.stage).toBe('return');
-    expect(flightObjective(op, def, cap)!.title).toBe('FLY TO BRAVO');
-    tickOperation(op, def, fix(-140, 650, 200), 0.1, cap);
+    expect(flightObjective(op, def, cap)!.title).toBe('RETURN TO BASE');
+    threadRings(op, cap);
     expect(flightObjective(op, def, cap)!.title).toBe('LAND AT BASE');
     landAtBase(op, def);
     expect(op.stage).toBe('debrief');
@@ -184,9 +157,8 @@ describe('operation stages', () => {
   it('the weather front closes the recon window and haze builds toward it', () => {
     const op = newOperation(def, defaultLoadout());
     launch(op);
-    tickOperation(op, def, fix(-280, 200), 0.1, cap);
-    tickOperation(op, def, fix(700, 100, 300, 200), 0.1, cap);
-    expect(reconVisibility(op, def)).toBeCloseTo(1, 2);
+    threadRings(op, cap);
+    expect(reconVisibility(op, def)).toBeCloseTo(1, 1);
     let arrived = 0;
     for (let t = 0; t < def.reconWindow + 5; t += 1) if (tickOperation(op, def, fix(700, 100), 1, cap).frontArrived) arrived++;
     expect(arrived).toBe(1);
@@ -207,12 +179,13 @@ describe('operation stages', () => {
     expect(hd).toBeLessThan(kd / 2);
   });
 
-  it('landing home early off-route misses the remaining gates; fuel ends the operation', () => {
+  it('landing home early off-route misses the remaining rings; fuel ends the operation', () => {
     const op = newOperation(def, defaultLoadout());
     launch(op);
     beginReturn(op);
     landAtBase(op, def);
-    expect(op.ret.status.bravo).toBe('missed');
+    expect(op.ret.status.r1).toBe('missed');
+    expect(op.ret.status.land).toBe('passed');
     const op2 = newOperation(def, defaultLoadout());
     launch(op2);
     endOperation(op2, 'fuel');
@@ -240,10 +213,11 @@ describe('report, rewards and career', () => {
     }
     const op = newOperation(def, defaultLoadout());
     launch(op);
-    tickOperation(op, def, fix(-280, 200), 0.1, capabilities(defaultLoadout()));
-    tickOperation(op, def, fix(700, 100, opts.detected ? 700 : 300, opts.detected ? 600 : 200), 0.1, capabilities(defaultLoadout()));
+    const cap = capabilities(defaultLoadout());
+    if (opts.detected) tickOperation(op, def, fix(700, 100, 700, 600), 0.1, cap);
+    threadRings(op, cap);
     beginReturn(op);
-    tickOperation(op, def, fix(-140, 650, 200), 0.1, capabilities(defaultLoadout()));
+    threadRings(op, cap);
     landAtBase(op, def);
     return { m, op };
   };

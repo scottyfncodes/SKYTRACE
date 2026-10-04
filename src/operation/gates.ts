@@ -1,16 +1,50 @@
 /**
- * Mission gates: the flying half of an operation. A leg is an ordered list
- * of gates (the current one is the pilot's objective) plus hazards that are
- * live for the whole leg (storm cells, a cloud deck). Pure and testable.
+ * Flight routes: the flying half of an operation. A leg is an ordered line
+ * of rings the pilot has to fly through (the next ring is the objective),
+ * plus hazards that are live for the whole leg (storm cells, a cloud deck,
+ * a radar-watched area). Pure and testable.
+ *
+ * A ring is a vertical hoop facing along the route. It is passed by
+ * crossing its plane inside the hoop, and missed by crossing the plane
+ * outside it: the route moves on either way, so a mistake costs points,
+ * never a loop back. On the way home a RADAR CONTACT puts each ring on a
+ * clock: the hoop shrinks while it runs and closes when it runs out.
  */
 import type { OperationsArea } from '../mission/missionDef';
 
-export type GateDef =
-  | { kind: 'waypoint'; id: string; label: string; x: number; z: number; r: number; objective: string; detail: string }
-  /** Enter a defended area; above the aircraft's stealth ceiling the ridge radar sees you. */
-  | { kind: 'enterArea'; id: string; label: string; area: OperationsArea; stealth: boolean; objective: string; detail: string }
-  /** Passed by the landing itself (Game decides when the aircraft is down). */
-  | { kind: 'land'; id: string; label: string; objective: string; detail: string };
+/** As authored: where the ring stands, how high above the ground, how wide. */
+export interface RingSpec {
+  kind: 'ring';
+  id: string;
+  x: number;
+  z: number;
+  agl: number;
+  r: number;
+  /** A word or two for the objective line (optional: the ring says it all). */
+  cue?: string;
+  /** Passing this ring raises RADAR CONTACT (the clock starts on the next one). */
+  alert?: boolean;
+}
+
+/** Passed by the landing itself (Game decides when the aircraft is down). */
+export interface LandSpec {
+  kind: 'land';
+  id: string;
+  label: string;
+  objective: string;
+  detail: string;
+}
+
+export type GateSpec = RingSpec | LandSpec;
+
+/** A placed ring: centre height above sea level and the horizontal facing (unit normal). */
+export interface Ring extends RingSpec {
+  y: number;
+  nx: number;
+  nz: number;
+}
+
+export type Gate = Ring | LandSpec;
 
 export type HazardDef =
   | { kind: 'storm'; id: string; label: string; x: number; z: number; r: number }
@@ -19,8 +53,21 @@ export type HazardDef =
 
 export interface LegDef {
   id: 'outbound' | 'return';
-  gates: GateDef[];
-  hazards: HazardDef[];
+  /** The pilot's objective while flying the rings. */
+  title: string;
+  gates: readonly GateSpec[];
+  hazards: readonly HazardDef[];
+  /** Above the aircraft's stealth ceiling inside this area, the radar sees you. */
+  radar?: OperationsArea;
+}
+
+/** A leg with its rings placed in the world. */
+export interface Route {
+  id: LegDef['id'];
+  title: string;
+  gates: Gate[];
+  hazards: readonly HazardDef[];
+  radar?: OperationsArea;
 }
 
 export type GateStatus = 'pending' | 'passed' | 'missed';
@@ -31,12 +78,19 @@ export interface LegState {
   inside: Record<string, boolean>;
   /** Seconds spent inside each hazard. */
   exposure: Record<string, number>;
-  /** Seen by the defended area's radar on entry. */
+  /** Seen by the radar. */
   detected: boolean;
+  /** Last position, for plane crossings. */
+  prev: { x: number; y: number; z: number } | null;
+  /** RADAR CONTACT: the current ring is on a clock. */
+  contact: boolean;
+  /** Seconds left on the current ring (null: starts next tick). */
+  clock: number | null;
+  clockMax: number;
 }
 
 export interface LegEvent {
-  type: 'gate-passed' | 'gate-missed' | 'leg-complete' | 'detected' | 'hazard-enter' | 'hazard-exit';
+  type: 'gate-passed' | 'gate-missed' | 'leg-complete' | 'detected' | 'contact' | 'hazard-enter' | 'hazard-exit';
   id: string;
   text: string;
 }
@@ -49,24 +103,107 @@ export interface AircraftFix {
   agl: number;
 }
 
-export function newLeg(def: LegDef): LegState {
+/** Hidden forgiveness: the hoop you see is a little smaller than the one that counts. */
+export const RING_GRACE = 1.25;
+/** Crossing the plane this many radii from the centre is a miss; further out it is ignored. */
+export const MISS_BAND = 5;
+/** Under contact each ring gets distance / pace + slack seconds. */
+export const CONTACT_PACE = 40;
+export const CONTACT_SLACK = 6;
+/** The hoop closes to this fraction of its size as the clock runs out. */
+export const CLOSED_SCALE = 0.55;
+
+type Ground = (x: number, z: number) => number;
+type Pt = { x: number; z: number };
+
+const unit = (dx: number, dz: number): [number, number] => {
+  const l = Math.hypot(dx, dz) || 1;
+  return [dx / l, dz / l];
+};
+
+/**
+ * Place a leg in the world: ring heights over the terrain and each ring
+ * facing along the route (the average of the way in and the way out).
+ */
+export function placeRoute(leg: LegDef, ground: Ground, from: Pt, join?: Ring): Route {
+  const gates: Gate[] = join ? [join] : [];
+  const specs = leg.gates;
+  let prev: Pt = join ?? from;
+  for (let i = 0; i < specs.length; i++) {
+    const g = specs[i];
+    if (g.kind !== 'ring') {
+      gates.push(g);
+      continue;
+    }
+    const [ix, iz] = unit(g.x - prev.x, g.z - prev.z);
+    const next = specs.slice(i + 1).find((s): s is RingSpec => s.kind === 'ring');
+    let [nx, nz] = [ix, iz];
+    if (next) [nx, nz] = unit(ix + unit(next.x - g.x, next.z - g.z)[0], iz + unit(next.x - g.x, next.z - g.z)[1]);
+    gates.push({ ...g, y: ground(g.x, g.z) + g.agl, nx, nz });
+    prev = g;
+  }
+  return { id: leg.id, title: leg.title, gates, hazards: leg.hazards, radar: leg.radar };
+}
+
+/**
+ * The first ring of the way home, placed where the pilot can take it the
+ * moment they have the controls: ahead of the aircraft, turned part of the
+ * way toward the route, below any cloud deck.
+ */
+export function joinRing(pose: { x: number; y: number; z: number; yaw: number }, toward: Pt, ground: Ground, ceilingY = Infinity, dist = 380): Ring {
+  const fx = -Math.sin(pose.yaw);
+  const fz = -Math.cos(pose.yaw);
+  const [tx, tz] = unit(toward.x - pose.x, toward.z - pose.z);
+  // turn from the heading toward the route, at most 45 degrees
+  const cross = fx * tz - fz * tx;
+  const dot = fx * tx + fz * tz;
+  const ang = Math.max(-Math.PI / 4, Math.min(Math.PI / 4, Math.atan2(cross, dot)));
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+  const nx = fx * c - fz * s;
+  const nz = fx * s + fz * c;
+  const lim = 1100;
+  const x = Math.max(-lim, Math.min(lim, pose.x + nx * dist));
+  const z = Math.max(-lim, Math.min(lim, pose.z + nz * dist));
+  const g = ground(x, z);
+  const y = Math.max(g + 70, Math.min(pose.y, ceilingY - 60, g + 200));
+  return { kind: 'ring', id: 'join', x, z, agl: y - g, r: 40, y, nx, nz };
+}
+
+export function newLeg(route: Route, contact = false): LegState {
   const status: Record<string, GateStatus> = {};
-  for (const g of def.gates) status[g.id] = 'pending';
+  for (const g of route.gates) status[g.id] = 'pending';
   const inside: Record<string, boolean> = {};
   const exposure: Record<string, number> = {};
-  for (const h of def.hazards) {
+  for (const h of route.hazards) {
     inside[h.id] = false;
     exposure[h.id] = 0;
   }
-  return { index: 0, status, inside, exposure, detected: false };
+  return { index: 0, status, inside, exposure, detected: false, prev: null, contact, clock: null, clockMax: 0 };
 }
 
-export function currentGate(s: LegState, def: LegDef): GateDef | null {
-  return def.gates[s.index] ?? null;
+export function currentGate(s: LegState, route: Route): Gate | null {
+  return route.gates[s.index] ?? null;
 }
 
-export function legComplete(s: LegState, def: LegDef): boolean {
-  return s.index >= def.gates.length;
+export function legComplete(s: LegState, route: Route): boolean {
+  return s.index >= route.gates.length;
+}
+
+export function rings(route: Route): Ring[] {
+  return route.gates.filter((g): g is Ring => g.kind === 'ring');
+}
+
+/** "3/8": where a ring sits in its route. */
+export function ringOrdinal(route: Route, id: string): string {
+  const rs = rings(route);
+  return `${rs.findIndex((r) => r.id === id) + 1}/${rs.length}`;
+}
+
+/** How open the current ring is (1 = full size; shrinks under contact as the clock runs). */
+export function ringScale(s: LegState): number {
+  if (!s.contact || s.clock === null || s.clockMax <= 0) return 1;
+  return CLOSED_SCALE + (1 - CLOSED_SCALE) * Math.max(0, Math.min(1, s.clock / s.clockMax));
 }
 
 export function inHazard(h: HazardDef, a: AircraftFix): boolean {
@@ -74,59 +211,122 @@ export function inHazard(h: HazardDef, a: AircraftFix): boolean {
   return a.y > h.y;
 }
 
-function gateMet(g: GateDef, a: AircraftFix): boolean {
-  if (g.kind === 'waypoint') return Math.hypot(a.x - g.x, a.z - g.z) < g.r;
-  if (g.kind === 'enterArea') return a.x >= g.area.x0 && a.x <= g.area.x1 && a.z >= g.area.z0 && a.z <= g.area.z1;
-  return false;
+const inside = (A: OperationsArea, x: number, z: number) => x >= A.x0 && x <= A.x1 && z >= A.z0 && z <= A.z1;
+
+/** Where the segment prev→a crosses the ring's plane, and how far from the centre (null: no crossing). */
+function crossing(g: Ring, p: { x: number; y: number; z: number }, a: AircraftFix): { off: number; forward: boolean } | null {
+  const d0 = (p.x - g.x) * g.nx + (p.z - g.z) * g.nz;
+  const d1 = (a.x - g.x) * g.nx + (a.z - g.z) * g.nz;
+  if (d0 === d1 || (d0 > 0 && d1 > 0) || (d0 < 0 && d1 < 0) || d0 === 0) return null;
+  const t = d0 / (d0 - d1);
+  const x = p.x + (a.x - p.x) * t;
+  const y = p.y + (a.y - p.y) * t;
+  const z = p.z + (a.z - p.z) * t;
+  return { off: Math.hypot(x - g.x, y - g.y, z - g.z), forward: d0 < 0 };
+}
+
+function advance(s: LegState, route: Route, to: number, ev: LegEvent[]): void {
+  s.index = to;
+  s.clock = null;
+  if (legComplete(s, route)) ev.push({ type: 'leg-complete', id: route.id, text: route.id === 'outbound' ? 'ON STATION' : 'HOME' });
+}
+
+function raiseContact(s: LegState, ev: LegEvent[], id: string): void {
+  if (s.contact) return;
+  s.contact = true;
+  s.clock = null;
+  ev.push({ type: 'contact', id, text: 'RADAR CONTACT' });
 }
 
 /**
- * Advance a leg. Gates are taken in order; flying straight to a later gate
- * marks the skipped ones missed (the route was not flown as planned).
+ * Advance a leg one frame. Rings are taken in order; flying through a later
+ * ring (up to two ahead) marks the skipped ones missed.
  */
-export function tickLeg(s: LegState, def: LegDef, a: AircraftFix, dt: number, stealthCeiling: number): LegEvent[] {
+export function tickLeg(s: LegState, route: Route, a: AircraftFix, dt: number, stealthCeiling: number): LegEvent[] {
   const ev: LegEvent[] = [];
-  for (const h of def.hazards) {
+  for (const h of route.hazards) {
     const now = inHazard(h, a);
     if (now) s.exposure[h.id] += dt;
     if (now !== s.inside[h.id]) {
       s.inside[h.id] = now;
-      ev.push({ type: now ? 'hazard-enter' : 'hazard-exit', id: h.id, text: now ? (h.kind === 'storm' ? `TURBULENCE · INSIDE THE ${h.label}` : `IN CLOUD · DESCEND BELOW ${Math.round(h.y)} m`) : h.kind === 'storm' ? `CLEAR OF THE ${h.label}` : 'BELOW THE CLOUD DECK' });
+      ev.push({ type: now ? 'hazard-enter' : 'hazard-exit', id: h.id, text: now ? (h.kind === 'storm' ? 'TURBULENCE' : 'IN CLOUD') : h.kind === 'storm' ? 'CLEAR OF THE STORM' : 'BELOW THE CLOUDS' });
     }
   }
-  for (let j = s.index; j < def.gates.length; j++) {
-    const g = def.gates[j];
-    if (!gateMet(g, a)) continue;
-    for (let k = s.index; k < j; k++) {
-      s.status[def.gates[k].id] = 'missed';
-      ev.push({ type: 'gate-missed', id: def.gates[k].id, text: `${def.gates[k].label} MISSED` });
-    }
-    s.status[g.id] = 'passed';
-    if (g.kind === 'enterArea' && g.stealth && a.agl > stealthCeiling) {
-      s.detected = true;
-      ev.push({ type: 'detected', id: g.id, text: `DETECTED · ENTERED ${g.area.label} AT ${Math.round(a.agl)} m` });
-    }
-    ev.push({ type: 'gate-passed', id: g.id, text: `${g.label} ✓` });
-    s.index = j + 1;
-    if (legComplete(s, def)) ev.push({ type: 'leg-complete', id: def.id, text: def.id === 'outbound' ? 'ON STATION' : 'HOME' });
-    break;
+  if (route.radar && !s.detected && a.agl > stealthCeiling && inside(route.radar, a.x, a.z)) {
+    s.detected = true;
+    ev.push({ type: 'detected', id: route.radar.id, text: 'SPOTTED BY RADAR' });
   }
+
+  const g = currentGate(s, route);
+  if (g?.kind === 'ring') {
+    // ---- the clock (under contact)
+    if (s.contact) {
+      if (s.clock === null) {
+        s.clockMax = Math.hypot(g.x - a.x, g.y - a.y, g.z - a.z) / CONTACT_PACE + CONTACT_SLACK;
+        s.clock = s.clockMax;
+      } else s.clock -= dt;
+    }
+    // ---- through the hoop?
+    let done = false;
+    if (s.prev) {
+      for (let j = s.index; j < Math.min(route.gates.length, s.index + 3); j++) {
+        const r = route.gates[j];
+        if (r.kind !== 'ring') break;
+        const c = crossing(r, s.prev, a);
+        if (!c) continue;
+        const hit = r.r * RING_GRACE * (j === s.index ? ringScale(s) : 1);
+        if (c.off <= hit) {
+          for (let k = s.index; k < j; k++) {
+            s.status[route.gates[k].id] = 'missed';
+            ev.push({ type: 'gate-missed', id: route.gates[k].id, text: ringOrdinal(route, route.gates[k].id) });
+          }
+          s.status[r.id] = 'passed';
+          ev.push({ type: 'gate-passed', id: r.id, text: ringOrdinal(route, r.id) });
+          if (r.alert) raiseContact(s, ev, r.id);
+          advance(s, route, j + 1, ev);
+          done = true;
+          break;
+        }
+        if (j === s.index && c.forward && c.off < r.r * MISS_BAND) {
+          s.status[r.id] = 'missed';
+          ev.push({ type: 'gate-missed', id: r.id, text: ringOrdinal(route, r.id) });
+          if (r.alert) raiseContact(s, ev, r.id);
+          advance(s, route, j + 1, ev);
+          done = true;
+          break;
+        }
+      }
+    }
+    // ---- the hoop closes
+    if (!done && s.contact && s.clock !== null && s.clock <= 0) {
+      s.status[g.id] = 'missed';
+      ev.push({ type: 'gate-missed', id: g.id, text: ringOrdinal(route, g.id) });
+      advance(s, route, s.index + 1, ev);
+    }
+  }
+  s.prev = { x: a.x, y: a.y, z: a.z };
   return ev;
 }
 
 /** The landing gate is passed by the Game when the aircraft is down at base. */
-export function passLanding(s: LegState, def: LegDef): LegEvent[] {
-  const g = currentGate(s, def);
+export function passLanding(s: LegState, route: Route): LegEvent[] {
+  const g = currentGate(s, route);
   if (!g || g.kind !== 'land') return [];
   s.status[g.id] = 'passed';
   s.index += 1;
-  return [{ type: 'gate-passed', id: g.id, text: `${g.label} ✓` }, { type: 'leg-complete', id: def.id, text: 'HOME' }];
+  return [{ type: 'gate-passed', id: g.id, text: g.label }, { type: 'leg-complete', id: route.id, text: 'HOME' }];
 }
 
 export function missedCount(s: LegState): number {
   return Object.values(s.status).filter((v) => v === 'missed').length;
 }
 
-export function totalExposure(s: LegState, def: LegDef, kind: HazardDef['kind']): number {
-  return def.hazards.filter((h) => h.kind === kind).reduce((t, h) => t + s.exposure[h.id], 0);
+/** Rings flown through / rings in the route. */
+export function ringTally(s: LegState, route: Route): { hit: number; total: number } {
+  const rs = rings(route);
+  return { hit: rs.filter((r) => s.status[r.id] === 'passed').length, total: rs.length };
+}
+
+export function totalExposure(s: LegState, route: Route, kind: HazardDef['kind']): number {
+  return route.hazards.filter((h) => h.kind === kind).reduce((t, h) => t + s.exposure[h.id], 0);
 }

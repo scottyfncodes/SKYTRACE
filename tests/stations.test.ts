@@ -40,6 +40,7 @@ import { AIRCRAFT_BY_ID } from '../src/operation/catalog';
 import { RouteMover } from '../src/mission/vehicles';
 import { detectionGain, radarParams } from '../src/sensors/radar';
 import { BASE } from '../src/world/worldData';
+import { threadRings } from './helpers';
 
 const hf = getHeightField();
 const ground = (x: number, z: number) => hf.sample(x, z);
@@ -184,7 +185,7 @@ describe('the whole operation: PREFLIGHT → OUTBOUND → RECON → RETURN → D
     expect(checkLoadout(l, () => true).ok).toBe(true);
     const cap = capabilities(l);
     const def = MISSION_01;
-    const op = newOperation(def, l);
+    const op = newOperation(def, l, ground);
     launch(op);
     const m = newMission();
     const crew = newCrew();
@@ -195,11 +196,8 @@ describe('the whole operation: PREFLIGHT → OUTBOUND → RECON → RETURN → D
     // OUTBOUND: Mission Control is closed until the gates are flown
     let a = initialAircraft(BASE.x, ground(BASE.x, BASE.z) + 200, BASE.z, -Math.PI / 2);
     expect(operatorAvailability(crew, { inArea: inArea(A, a.x, a.z), operatorWork: op.stage === 'recon', fuelFraction: 1, areaLabel: A.label }).ok).toBe(false);
-    a = { ...a, x: -280, z: 200 };
-    tickOperation(op, def, fixOf(a), 0.1, cap);
-    a = { ...a, x: 700, z: 130, y: ground(700, 130) + 220 };
-    a.agl = 220;
-    tickOperation(op, def, fixOf(a), 0.1, cap);
+    const end = threadRings(op, cap);
+    a = { ...a, x: end.x, z: end.z, y: end.y, agl: end.agl };
     expect(op.stage).toBe('recon');
     expect(op.outbound.detected).toBe(false); // under the HERON's 300 m stealth ceiling
 
@@ -258,9 +256,10 @@ describe('the whole operation: PREFLIGHT → OUTBOUND → RECON → RETURN → D
     // EXTRACTION: Mission Control hands back; the return leg brings the weather
     expect(forcedHandback(crew, { fuelFraction: 0.5, operatorWork: operatorWork(m) })).toBe('complete');
     handBack(crew);
-    beginReturn(op);
+    beginReturn(op, def, { x: a.x, y: a.y, z: a.z, yaw: a.yaw }, ground);
     expect(op.stage).toBe('return');
-    expect(flightObjective(op, def, cap)!.title).toBe('FLY TO BRAVO');
+    expect(flightObjective(op, def, cap)!.title).toBe('RETURN TO BASE');
+    expect(op.routes.return.gates[0].id).toBe('join');
     const deck = def.return.hazards.find((h) => h.kind === 'ceiling')!;
     // the copilot flies low: this crew comes back under the new cloud deck (the KESTREL's autopilot does not)
     expect(a.y).toBeLessThan(deck.y);
@@ -270,9 +269,9 @@ describe('the whole operation: PREFLIGHT → OUTBOUND → RECON → RETURN → D
     expect(ho.title).toBe('YOU HAVE CONTROL');
     expect(ho.warnings).toEqual([...def.return.notices]);
 
-    // RETURN: under the deck, round the storm via Bravo, land
-    a = { ...a, x: -140, z: 650, y: ground(-140, 650) + 150 };
-    tickOperation(op, def, fixOf(a), 0.1, cap);
+    // RETURN: through the rings under the deck, round the storm, land
+    threadRings(op, cap);
+    expect(op.ret.contact).toBe(true);
     expect(flightObjective(op, def, cap)!.title).toBe('LAND AT BASE');
     landAtBase(op, def);
     expect(op.stage).toBe('debrief');

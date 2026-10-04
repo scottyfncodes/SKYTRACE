@@ -14,11 +14,11 @@ Every mission is a reconnaissance operation in five stages:
 
 1. **Preflight.** The briefing puts the objective first (primary, secondaries, intel, target area, weather, expected conditions, window, constraints, threats). Then plan the job:
    - **Aircraft:** KESTREL (single seat, fast, quiet, short legs, fragile in weather), HERON (two crew, long range, weather-tolerant, louder), ALBATROSS (full crew, four bays; unlocked by experience).
-   - **Crew:** a copilot flies the recon orbit for you, tighter than the autopilot. A sensor operator identifies faster or takes better photographs. A navigator puts gates and weather on the scope from take-off.
+   - **Crew:** a copilot flies the recon orbit for you, tighter than the autopilot. A sensor operator identifies faster or takes better photographs. A navigator puts storm cells on the scope from take-off.
    - **Equipment:** search radar, optical camera, thermal imager, SIGINT (unlocked). Each answers a different question. A checklist shows whether the plan can do the primary objective.
-2. **Outbound (you fly).** Mission gates: fly to Waypoint ALPHA north of a storm cell, then enter Sector 7 below your aircraft's stealth ceiling. Storm cells shake the aircraft, burn fuel and damage light airframes; skipped gates and detection count against flight discipline.
+2. **Outbound (you fly).** A route of eight rings: the take-off flies the first, then climb north around a storm cell, cross the high ground and drop under the ridge radar into Sector 7. The next ring glows amber, the two after it show the way. Through a ring: GATE CLEARED. Wide of it: MISSED, and the route moves on. Climbing over the sector above your stealth ceiling gets you spotted. The last ring puts you ON STATION and Mission Control takes over.
 3. **Recon (Mission Control).** The autopilot or your copilot flies an orbit. You run the sensors, against a weather-front clock: haze builds and slows the optical camera. Objectives change as you discover things: locate the truck, photograph it, then *objective updated* (track it to its stop), then a barge is revealed (photograph the transfer). Extract any time once the primary is done.
-4. **Return (you fly again).** The front has arrived: a cloud deck at 300 m (the KESTREL's autopilot orbit is above it), a new storm cell across the direct route home, and haze. Fly via Waypoint BRAVO under the deck, then land.
+4. **Return (you fly again).** The controls come back with a ring already ahead of you. The front has arrived (a cloud deck at 300 m, a new storm cell, haze), and the route home is a lower, tighter slalom. Leaving the sector raises RADAR CONTACT: every ring is now on a clock and shrinks as it runs, closing if you are too slow. If you were spotted on the way in, the clock starts at the first ring. The last ring lines you up on the runway.
 5. **Debrief.** A recon report: primary, secondaries, identification, evidence quality, flight discipline, fuel, damage, a grade, credits and XP, unlocks, and the intelligence the recon established.
 
 Progression (credits, XP, unlocks, best grade, last loadout) is saved in the browser, separately from the open case.
@@ -96,7 +96,7 @@ Plain TypeScript + Vite + Three.js, no backend.
 | `src/mission/mission01.ts` | Mission 01 content: sector, vehicle returns, destination, briefing text |
 | `src/operation/catalog.ts` | Aircraft, crew and equipment definitions |
 | `src/operation/loadout.ts` | Loadout validation and the capabilities a plan gives you (pure, tested) |
-| `src/operation/gates.ts` | Mission gates and weather hazards for the flying legs (pure, tested) |
+| `src/operation/gates.ts` | Ring routes (plane-crossing, misses, RADAR CONTACT clock) and weather hazards for the flying legs (pure, tested) |
 | `src/operation/operation.ts` | Stage machine: preflight, outbound, recon, return, debrief (pure, tested) |
 | `src/operation/score.ts`, `career.ts` | Recon report, grade, rewards; progression and unlocks (pure, tested) |
 | `src/ui/preflight.ts` | Briefing and loadout screen |

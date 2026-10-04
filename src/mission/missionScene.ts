@@ -3,7 +3,7 @@ import { box } from '../world/props';
 import type { HeightField } from '../world/terrain';
 import { TruckMesh } from '../world/truck';
 import { WATER_LEVEL } from '../world/worldData';
-import type { HazardDef } from '../operation/gates';
+import type { GateStatus, HazardDef, Ring, Route } from '../operation/gates';
 import { RETURNS, type ReturnId, type Sector } from './mission01';
 import type { MissionState } from './mission';
 import type { RouteMover } from './vehicles';
@@ -128,6 +128,38 @@ function stormMesh(r: number): THREE.Group {
   return g;
 }
 
+const RING_RED = new THREE.Color(0xff5a3c);
+const RING_AMBER = new THREE.Color(AMBER);
+const RING_DIM = new THREE.Color(0xf4f1e8);
+
+/** One hoop of the route: a bright tube, a soft halo, a faint fill so it reads as a doorway. */
+class RingMesh {
+  readonly group = new THREE.Group();
+  readonly tube: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>;
+  readonly halo: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>;
+  readonly fill: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
+  /** Seconds since it was passed or missed (animates the pop / the fade). */
+  fx = -1;
+  constructor(readonly ring: Ring) {
+    const r = ring.r;
+    const mat = (o: number, add = false) => new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: o, depthWrite: false, fog: false, side: THREE.DoubleSide, blending: add ? THREE.AdditiveBlending : THREE.NormalBlending });
+    this.tube = new THREE.Mesh(new THREE.TorusGeometry(r, Math.max(1.4, r * 0.06), 8, 48), mat(1));
+    this.halo = new THREE.Mesh(new THREE.TorusGeometry(r, r * 0.16, 6, 48), mat(0.25, true));
+    this.fill = new THREE.Mesh(new THREE.CircleGeometry(r, 40), mat(0.06, true));
+    this.group.add(this.tube, this.halo, this.fill);
+    this.group.position.set(ring.x, ring.y, ring.z);
+    // the hoop faces along the route
+    this.group.rotation.y = Math.atan2(ring.nx, ring.nz);
+    this.group.renderOrder = 2;
+  }
+  dispose(): void {
+    for (const m of [this.tube, this.halo, this.fill]) {
+      m.geometry.dispose();
+      m.material.dispose();
+    }
+  }
+}
+
 interface Pose {
   setPose(x: number, z: number, heading: number, hf: HeightField): void;
   group: THREE.Group;
@@ -142,6 +174,8 @@ export class MissionScene {
   private storms = new Map<string, THREE.Group>();
   private deck: THREE.Mesh;
   private waypoint: THREE.Mesh;
+  private rings: RingMesh[] = [];
+  private routeLine: THREE.Line<THREE.BufferGeometry, THREE.LineDashedMaterial> | null = null;
 
   constructor(sector: Sector, private hf: HeightField) {
     this.group.add(sectorCurtain(sector, hf));
@@ -202,6 +236,98 @@ export class MissionScene {
   setWaypoint(p: { x: number; z: number } | null): void {
     this.waypoint.visible = !!p;
     if (p) this.waypoint.position.set(p.x, this.hf.sample(p.x, p.z) + 260, p.z);
+  }
+
+  /** Build the hoops for a route (replacing the previous route's). */
+  setRoute(route: Route | null): void {
+    for (const r of this.rings) {
+      this.group.remove(r.group);
+      r.dispose();
+    }
+    this.rings = [];
+    if (this.routeLine) {
+      this.group.remove(this.routeLine);
+      this.routeLine.geometry.dispose();
+      this.routeLine.material.dispose();
+      this.routeLine = null;
+    }
+    if (!route) return;
+    for (const g of route.gates) {
+      if (g.kind !== 'ring') continue;
+      const m = new RingMesh(g);
+      this.rings.push(m);
+      this.group.add(m.group);
+    }
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(this.rings.map((r) => new THREE.Vector3(r.ring.x, r.ring.y, r.ring.z))),
+      new THREE.LineDashedMaterial({ color: AMBER, dashSize: 10, gapSize: 9, transparent: true, opacity: 0.45, depthWrite: false, fog: false }),
+    );
+    line.computeLineDistances();
+    this.routeLine = line;
+    this.group.add(line);
+  }
+
+  /**
+   * The route as the pilot sees it: the next ring bright and pulsing, the two
+   * after it fading out ahead, passed rings pop and vanish, missed rings flash
+   * red and drop away. Under contact the next ring shrinks and reddens as its
+   * clock runs.
+   */
+  updateRoute(index: number, status: Record<string, GateStatus>, scale: number, urgency: number, dt: number, t: number): void {
+    let n = 0;
+    for (let i = 0; i < this.rings.length; i++) {
+      const m = this.rings[i];
+      const st = status[m.ring.id];
+      const k = i - this.ringIndex(index);
+      if (st !== 'pending') {
+        if (m.fx < 0) m.fx = 0;
+        m.fx += dt;
+        const f = Math.min(1, m.fx / (st === 'passed' ? 0.45 : 0.9));
+        m.group.visible = f < 1;
+        if (!m.group.visible) continue;
+        m.group.scale.setScalar(st === 'passed' ? 1 + f * 0.7 : 1 - f * 0.3);
+        if (st === 'missed') m.group.position.y = m.ring.y - f * 25;
+        m.tube.material.color.copy(st === 'passed' ? RING_AMBER : RING_RED);
+        m.tube.material.opacity = 1 - f;
+        m.halo.material.opacity = 0.5 * (1 - f);
+        m.fill.material.opacity = st === 'passed' ? 0.25 * (1 - f) : 0;
+        continue;
+      }
+      m.fx = -1;
+      m.group.position.y = m.ring.y;
+      const show = k >= 0 && k <= 2;
+      m.group.visible = show;
+      if (!show) continue;
+      if (k === 0) {
+        const pulse = 0.5 + 0.5 * Math.sin(t * (4 + urgency * 6));
+        m.group.scale.setScalar(scale * (1 + 0.04 * pulse));
+        m.tube.material.color.copy(RING_AMBER).lerp(RING_RED, urgency);
+        m.halo.material.color.copy(m.tube.material.color);
+        m.fill.material.color.copy(m.tube.material.color);
+        m.tube.material.opacity = 1;
+        m.halo.material.opacity = 0.25 + 0.25 * pulse;
+        m.fill.material.opacity = 0.07;
+      } else {
+        m.group.scale.setScalar(1);
+        m.tube.material.color.copy(RING_DIM);
+        m.halo.material.color.copy(RING_DIM);
+        m.tube.material.opacity = k === 1 ? 0.55 : 0.28;
+        m.halo.material.opacity = 0.06;
+        m.fill.material.opacity = 0;
+      }
+      n++;
+    }
+    if (this.routeLine) {
+      // the dashed line runs from the next ring onward: the route ahead, never behind
+      const from = this.ringIndex(index);
+      this.routeLine.visible = n > 1;
+      this.routeLine.geometry.setDrawRange(Math.max(0, from), this.rings.length - Math.max(0, from));
+    }
+  }
+
+  /** Route index (which may count a landing gate) → ring index. */
+  private ringIndex(index: number): number {
+    return Math.min(index, this.rings.length);
   }
 
   animate(t: number): void {
