@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="SKYTRACE" />
+    <meta name="theme-color" content="#0b1410" />
+    <meta name="description" content="SKYTRACE — an aerial reconnaissance mystery. Fly, scan, mark, deploy, connect the dots." />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icon-180.png" />
+    <title>SKYTRACE</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="gl"></canvas>
+
+      <div id="loading">LOADING TERRAIN MODEL…</div>
+
+      <!-- ===== TITLE / BRIEFING ===== -->
+      <section id="title" class="screen hidden">
+        <div class="title-card">
+          <h1>SKYTRACE</h1>
+          <p class="tag">AERIAL RECONNAISSANCE · VARROW BASIN</p>
+          <div id="brief"></div>
+          <div class="title-actions">
+            <button id="btn-begin" class="btn big">TAKE OFF</button>
+            <button id="btn-continue" class="btn big hidden">CONTINUE</button>
+            <button id="btn-newcase-title" class="btn ghost hidden">NEW CASE</button>
+          </div>
+          <p class="controls-hint">Stick or arrows to fly · SCAN for ground radar · MARK a contact · DROP a sensor · MAP for intelligence</p>
+        </div>
+      </section>
+
+      <!-- ===== FLIGHT HUD ===== -->
+      <section id="hud" class="screen hidden">
+        <div class="instr">
+          <div class="inst"><label>ALT</label><b id="alt">0</b><small>m AGL</small></div>
+          <div class="inst"><label>SPD</label><b id="spd">0</b><small>km/h</small></div>
+          <div class="inst"><label>HDG</label><b id="hdg">000</b><small>°</small></div>
+          <div id="compass" class="compass"><div class="tape"><span>N</span><span>NE</span><span>E</span><span>SE</span><span>S</span><span>SW</span><span>W</span><span>NW</span><span>N</span></div><i></i></div>
+        </div>
+        <div class="status">
+          <div id="sortie" class="sortie">SORTIE 1</div>
+          <div class="fuel"><label>FUEL</label><div class="bar"><i id="fuel-fill"></i></div><b id="fuel-txt">5:00</b></div>
+          <div class="pk"><label>SENSOR PKGS</label><b id="sensors">1</b></div>
+          <button id="btn-pause" class="icon" aria-label="Pause">II</button>
+        </div>
+        <div id="nav" class="nav"></div>
+        <div id="signal" class="signal"></div>
+        <div id="msgs" class="msgs"></div>
+        <div id="warn" class="warn"></div>
+        <div id="hint" class="hint"></div>
+        <div id="radar-state" class="radar-state">RADAR STANDBY</div>
+
+        <div class="scope-wrap"><canvas id="scope"></canvas></div>
+
+        <div id="contact-card" class="contact-card">
+          <div class="cc-head"><b id="cc-code">K-1</b><span id="cc-status">DETECTED</span></div>
+          <div id="cc-label" class="cc-label">UNIDENTIFIED RETURN</div>
+          <div class="cc-meta"><span id="cc-grid">F-5</span> · CONFIDENCE <span id="cc-conf">0%</span></div>
+        </div>
+
+        <div id="stick-zone" class="stick-zone"><div id="stick-knob" class="stick-knob"></div></div>
+        <div id="throttle" class="throttle"><div class="thr-track"><i id="thr-fill"></i></div><label>THR</label></div>
+
+        <div class="buttons">
+          <button id="btn-rtb" class="hb rtb">LAND</button>
+          <button id="btn-scan" class="hb scan">SCAN</button>
+          <button id="btn-mark" class="hb mark">MARK</button>
+          <button id="btn-drop" class="hb drop">DROP</button>
+          <button id="btn-map" class="hb map">MAP</button>
+        </div>
+      </section>
+
+      <!-- ===== PAUSE ===== -->
+      <section id="pause" class="screen overlay hidden">
+        <div class="card">
+          <h2>PAUSED</h2>
+          <p class="muted">Keyboard: arrows / WASD fly · Shift / Ctrl throttle · Space radar · M mark · E drop · Tab map · R land · Esc pause</p>
+          <button id="btn-resume-pause" class="btn big">RESUME</button>
+          <button id="btn-map-pause" class="btn">INTELLIGENCE MAP</button>
+          <button id="btn-end-sortie" class="btn ghost">END SORTIE · RETURN TO BASE</button>
+          <button id="btn-sound-pause" class="btn ghost">SOUND ON</button>
+        </div>
+      </section>
+
+      <!-- ===== INTELLIGENCE WORKSPACE ===== -->
+      <section id="intel" class="screen intel hidden">
+        <header>
+          <div id="intel-title">INTELLIGENCE MAP</div>
+          <div class="hdr-actions"><button id="btn-sound" class="mini">SOUND ON</button><button id="btn-newcase" class="mini">NEW CASE</button></div>
+        </header>
+        <div class="intel-body">
+          <div class="map-wrap"><canvas id="map"></canvas></div>
+          <aside class="side">
+            <nav id="tabs"></nav>
+            <div id="panel" class="panel"></div>
+          </aside>
+        </div>
+        <footer><button id="btn-resume" class="btn big">TAKE OFF</button></footer>
+      </section>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
