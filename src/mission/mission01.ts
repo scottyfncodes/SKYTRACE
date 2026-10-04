@@ -185,7 +185,7 @@ export const MISSION_01 = {
   intelShort: 'LARGE · MOVING · ON A ROAD · IN SECTOR 7',
   briefing: {
     headline: 'LOCATE THE MISSING SUPPLY TRUCK',
-    primary: 'Find the supply truck in Sector 7, identify it, and photograph it as evidence.',
+    primary: 'Find the supply truck in Sector 7 and photograph it.',
     secondaries: ['Reach Sector 7 undetected', 'Further tasking may follow once the truck is found'],
     weather: 'Clear at take-off. A storm cell sits over the main road between base and the sector.',
     conditions: 'A front arrives from the west about 5 minutes after you reach the sector: haze first, then a cloud deck at 300 m and a new storm cell across the direct route home.',
@@ -194,28 +194,34 @@ export const MISSION_01 = {
     window: '5:00 on station before the front forces extraction',
     threats: ['Ridge radar watching the sector', 'Storm cell over the main road', 'Our own scout patrol is in the sector: do not misidentify it'],
   },
+  clues: ['LARGE', 'MOVING', 'ON A ROAD', 'RADIO DEAD', 'IN SECTOR 7'],
+  risks: [
+    { icon: '⛈', text: 'Storm on the direct route · go via ALPHA' },
+    { icon: '📡', text: 'Ridge radar · enter the sector low' },
+    { icon: '⏱', text: '5 min on station before the weather turns' },
+  ],
   operations: { area: SECTOR_7 },
   reconWindow: 300,
   reconVisibilityEnd: 0.55,
   outbound: {
     id: 'outbound',
     gates: [
-      { kind: 'waypoint', id: 'alpha', label: 'WAYPOINT ALPHA', x: -280, z: 200, r: 150, objective: 'FLY TO WAYPOINT ALPHA', detail: 'ROUTE NORTH OF THE STORM CELL' },
-      { kind: 'enterArea', id: 'sector', label: 'SECTOR 7 ENTRY', area: SECTOR_7, stealth: true, objective: 'ENTER SECTOR 7 LOW', detail: 'STAY UNDER THE RIDGE RADAR' },
+      { kind: 'waypoint', id: 'alpha', label: 'ALPHA', x: -280, z: 200, r: 150, objective: 'FLY TO ALPHA', detail: 'GO AROUND THE STORM' },
+      { kind: 'enterArea', id: 'sector', label: 'SECTOR 7', area: SECTOR_7, stealth: true, objective: 'ENTER SECTOR 7 LOW', detail: 'UNDER THE RADAR' },
     ],
     hazards: [{ kind: 'storm', id: 'storm1', label: 'STORM CELL', x: -80, z: 480, r: 230 }],
   },
   return: {
     id: 'return',
     gates: [
-      { kind: 'waypoint', id: 'bravo', label: 'WAYPOINT BRAVO', x: -140, z: 650, r: 160, objective: 'FLY TO WAYPOINT BRAVO', detail: 'SOUTH OF THE NEW STORM · UNDER THE CLOUD DECK' },
-      { kind: 'land', id: 'land', label: 'LANDING', objective: 'LAND AT BASE', detail: 'FLY LOW OVER THE RUNWAY' },
+      { kind: 'waypoint', id: 'bravo', label: 'BRAVO', x: -140, z: 650, r: 160, objective: 'FLY TO BRAVO', detail: 'UNDER THE CLOUDS · AROUND THE STORM' },
+      { kind: 'land', id: 'land', label: 'LANDING', objective: 'LAND AT BASE', detail: 'LOW OVER THE RUNWAY' },
     ],
     hazards: [
       { kind: 'storm', id: 'storm2', label: 'STORM CELL', x: 20, z: 260, r: 230 },
       { kind: 'ceiling', id: 'deck', label: 'CLOUD DECK', y: 300 },
     ],
     visibility: 0.45,
-    notices: ['WEATHER FRONT · CLOUD DECK AT 300 m', 'NEW STORM CELL ACROSS THE DIRECT ROUTE'],
+    notices: ['CLOUDS AT 300 m · STAY BELOW', 'NEW STORM ON THE DIRECT ROUTE'],
   },
 } as const satisfies MissionDef;

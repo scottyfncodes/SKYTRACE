@@ -40,6 +40,10 @@ export interface MissionDef {
   intel: readonly string[];
   intelShort: string;
   briefing: Briefing;
+  /** What identifies the target: a handful of tags, read at a glance. */
+  clues: readonly string[];
+  /** The three things that will bite, one line each. */
+  risks: readonly { icon: string; text: string }[];
   /** Where Mission Control is available. The orbit comes from the aircraft and crew. */
   operations: { area: OperationsArea };
   /** Seconds on station before the weather front forces extraction. */

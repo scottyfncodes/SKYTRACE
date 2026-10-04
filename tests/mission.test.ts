@@ -58,7 +58,7 @@ describe('mission 01 content', () => {
     expect(TARGET.id).toBe('C');
     expect(MISSION_01.briefing.headline).toBe('LOCATE THE MISSING SUPPLY TRUCK');
     const ob = reconObjective(m, { station: 'operator' });
-    expect(ob).toEqual({ kicker: 'PRIMARY', title: 'LOCATE THE SUPPLY TRUCK', detail: MISSION_01.intelShort, done: false });
+    expect(ob).toEqual({ kicker: 'PRIMARY', title: 'FIND THE SUPPLY TRUCK', detail: MISSION_01.intelShort, done: false });
     expect(m.returns.E.hidden).toBe(true);
     expect(Object.values(m.returns).every((r) => !r.detected && r.verdict === 'none')).toBe(true);
   });
@@ -110,7 +110,7 @@ describe('sensors', () => {
     const m = newMission();
     scan(m, 'B', 450, 6);
     expect(m.returns.B.detected).toBe(true);
-    expect(describeReturn(m, 'B', 600, 250, true).traits).toEqual(['SIZE ? · USE A CAMERA', 'MOVING', 'IN SECTOR 7']);
+    expect(describeReturn(m, 'B', 600, 250, true).traits).toEqual(['SIZE ?', 'MOVING', 'SECTOR 7']);
   });
 
   it('optical gives size, count and road; thermal gives size, count and engine heat', () => {
@@ -118,9 +118,9 @@ describe('sensors', () => {
     scan(m, 'B', 150, 6);
     scan(m, 'A', 150, 6);
     expect(look(m, 'B', 'optical')[0].text).toBe('OPTICAL · RETURN B IS 3 SMALL VEHICLES');
-    expect(describeReturn(m, 'B', 600, 250, true).traits).toEqual(['3 SMALL VEHICLES', 'MOVING', 'ON ROAD', 'IN SECTOR 7']);
+    expect(describeReturn(m, 'B', 600, 250, true).traits).toEqual(['3 SMALL', 'MOVING', 'ON ROAD', 'SECTOR 7']);
     expect(look(m, 'A', 'thermal')[0].text).toBe('THERMAL · RETURN A IS A LARGE VEHICLE · ENGINE COLD');
-    expect(describeReturn(m, 'A', 612, 452, false).traits).toEqual(['LARGE VEHICLE', 'STATIONARY', 'ENGINE COLD', 'IN SECTOR 7']);
+    expect(describeReturn(m, 'A', 612, 452, false).traits).toEqual(['LARGE', 'PARKED', 'ENGINE COLD', 'SECTOR 7']);
     // a second camera adds its own fact
     expect(look(m, 'A', 'optical')[0].text).toMatch(/OPTICAL/);
     expect(describeReturn(m, 'A', 612, 452, false).traits).toContain('ON ROAD');
@@ -143,7 +143,7 @@ describe('sensors', () => {
     expect(listenReturn(m, 'B', true)[0].text).toBe('SIGINT · RETURN B IS TRANSMITTING');
     expect(listenReturn(m, 'C', false)).toEqual([]);
     expect(listenReturn(m, 'C', true)[0].text).toBe('SIGINT · RETURN C IS RADIO SILENT');
-    expect(describeReturn(m, 'C', 700, 100, true).traits).toContain('RADIO SILENT');
+    expect(describeReturn(m, 'C', 700, 100, true).traits).toContain('RADIO DEAD');
     expect(listenReturn(m, 'C', true)).toEqual([]);
   });
 
@@ -189,8 +189,8 @@ describe('recon objectives and dynamic updates', () => {
     scan(m, 'C', 150, 6);
     const r = identify(m, 'C');
     expect(r.events.map((e) => [e.type, e.text])).toEqual([
-      ['objective-complete', 'Supply truck located.'],
-      ['new-objective', 'Photograph the truck as evidence.'],
+      ['objective-complete', 'SUPPLY TRUCK'],
+      ['new-objective', 'PHOTOGRAPH IT'],
     ]);
     expect(m.phase).toBe('photograph');
     expect(reconObjective(m, { station: 'operator' }).title).toBe('PHOTOGRAPH THE TRUCK');
@@ -205,10 +205,10 @@ describe('recon objectives and dynamic updates', () => {
     const r = photograph(m, 'C', 0.9);
     expect(r.result).toBe('primary');
     expect(r.events.map((e) => e.type)).toEqual(['objective-complete', 'objective-updated']);
-    expect(r.events[0].text).toBe('Truck photographed · evidence EXCELLENT.');
+    expect(r.events[0]).toMatchObject({ title: 'PRIMARY DONE', text: 'EXCELLENT' });
     expect(m.primaryComplete).toBe(true);
     expect(m.phase).toBe('track');
-    expect(reconObjective(m, { station: 'operator' })).toMatchObject({ kicker: 'SECONDARY', title: "CONFIRM THE TRUCK'S DESTINATION" });
+    expect(reconObjective(m, { station: 'operator' })).toMatchObject({ kicker: 'BONUS', title: 'FOLLOW THE TRUCK' });
     expect(canExtract(m)).toBe(true);
     // a better shot later improves the evidence; a worse one keeps the best
     photograph(m, 'C', 0.95);
@@ -233,8 +233,8 @@ describe('recon objectives and dynamic updates', () => {
     const ev = [];
     for (let t = 0; t <= CONFIRM_SECONDS + 0.2; t += 0.1) ev.push(...updateDestination(m, 0.1, true, true));
     expect(ev.map((e) => e.type)).toEqual(['objective-complete', 'objective-updated']);
-    expect(ev[0].text).toContain(DESTINATION.name);
-    expect(ev[1].text).toMatch(/barge/);
+    expect(ev[0].text).toBe(DESTINATION.short);
+    expect(ev[1].title).toMatch(/BARGE/);
     expect(m.phase).toBe('landing');
     expect(m.returns.E.detected && !m.returns.E.hidden).toBe(true);
     expect(reconObjective(m, { station: 'operator' }).title).toBe('PHOTOGRAPH THE BARGE');
@@ -251,7 +251,7 @@ describe('recon objectives and dynamic updates', () => {
     expect(m.phase).toBe('extract');
     expect(m.extractReason).toBe('complete');
     expect(operatorWork(m)).toBe(false);
-    expect(reconObjective(m).kicker).toBe('EXTRACTION');
+    expect(reconObjective(m).kicker).toBe('EXTRACT');
   });
 
   it('extraction: by choice only once the primary is done; forced by weather or fuel any time', () => {
@@ -270,8 +270,8 @@ describe('recon objectives and dynamic updates', () => {
   it('in the pilot seat the objective says how to get back to the recon', () => {
     const m = newMission();
     expect(reconObjective(m, { station: 'pilot', inArea: true }).detail).toBe('OPEN MISSION CONTROL');
-    expect(reconObjective(m, { station: 'pilot', inArea: false }).detail).toMatch(/FLY BACK TO SECTOR 7/);
-    expect(reconObjective(m, { station: 'operator', truckStopped: true }).title).toBe('LOCATE THE SUPPLY TRUCK');
+    expect(reconObjective(m, { station: 'pilot', inArea: false }).detail).toBe('FLY BACK TO SECTOR 7');
+    expect(reconObjective(m, { station: 'operator', truckStopped: true }).title).toBe('FIND THE SUPPLY TRUCK');
   });
 
   it('secondaries are issued in the field as the recon unfolds', () => {

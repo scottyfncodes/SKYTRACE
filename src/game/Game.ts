@@ -41,6 +41,7 @@ import {
   canExtract,
   describeReturn,
   destinationRoute,
+  evidenceGrade,
   extract as extractMission,
   formatTime,
   identify,
@@ -64,11 +65,11 @@ import {
 import { BINGO_FUEL, buildHandover, engageOperator, forcedHandback, handBack, newCrew, operatorAvailability, retaskOrbit, tickCrew, type CrewState, type HandbackReason } from '../mission/crew';
 import { inArea } from '../mission/missionDef';
 import { orbitInput } from '../flight/autopilot';
-import { isCameraTool, OpsConsole, type OpsReturn, type OpsTool } from '../ui/opsConsole';
+import { isCameraTool, OpsConsole, type OpsPhoto, type OpsReturn, type OpsTool } from '../ui/opsConsole';
 import { Preflight } from '../ui/preflight';
 import { MissionScene } from '../mission/missionScene';
 import { RouteMover } from '../mission/vehicles';
-import { CREW_BY_ID, EQUIPMENT_BY_ID } from '../operation/catalog';
+import { CREW_BY_ID } from '../operation/catalog';
 import { capabilities as loadoutCapabilities, checkLoadout, defaultLoadout, seatCrew, toggleEquipment, withAircraft, type Capabilities, type Loadout } from '../operation/loadout';
 import { activeLeg, beginReturn, endOperation, flightObjective, landAtBase, launch, newOperation, reconVisibility, tickOperation, windowLeft, type OperationState } from '../operation/operation';
 import { currentGate, inHazard, type LegEvent } from '../operation/gates';
@@ -142,6 +143,9 @@ export class Game {
   private career: Career;
   private preflight: Preflight;
   private report: Report | null = null;
+  /** Photographs taken this operation (evidence), and one waiting to be captured from the next frame. */
+  private shots: OpsPhoto[] = [];
+  private pendingShot: Omit<OpsPhoto, 'url'> | null = null;
 
   constructor(root: HTMLElement) {
     const q = (id: string) => {
@@ -149,7 +153,7 @@ export class Game {
       if (!e) throw new Error(`missing #${id}`);
       return e;
     };
-    for (const id of ['gl', 'hud', 'intel', 'title', 'pause', 'hint', 'btn-begin', 'btn-continue', 'btn-newcase-title', 'stick-zone', 'stick-knob', 'throttle', 'btn-scan', 'btn-mark', 'btn-drop', 'btn-map', 'btn-pause', 'btn-rtb', 'btn-resume-pause', 'btn-map-pause', 'btn-end-sortie', 'btn-sound-pause', 'loading', 'btn-mission', 'btn-open-case', 'btn-case-back', 'mission-card', 'case-card', 'mission-brief', 'debrief', 'btn-fly-again', 'btn-debrief-menu', 'db-headline', 'db-rows', 'db-findings', 'pause-objective', 'btn-ops', 'handoff', 'ops', 'preflight', 'career-line', 'db-grade', 'db-aircraft', 'db-secondaries', 'db-rewards']) {
+    for (const id of ['gl', 'hud', 'intel', 'title', 'pause', 'hint', 'btn-begin', 'btn-continue', 'btn-newcase-title', 'stick-zone', 'stick-knob', 'throttle', 'btn-scan', 'btn-mark', 'btn-drop', 'btn-map', 'btn-pause', 'btn-rtb', 'btn-resume-pause', 'btn-map-pause', 'btn-end-sortie', 'btn-sound-pause', 'loading', 'btn-mission', 'btn-open-case', 'btn-case-back', 'mission-card', 'case-card', 'mission-brief', 'debrief', 'btn-fly-again', 'btn-debrief-menu', 'db-headline', 'db-rows-more', 'db-stages', 'db-photos', 'db-findings', 'pause-objective', 'btn-ops', 'handoff', 'ops', 'preflight', 'career-line', 'db-grade', 'db-aircraft', 'db-secondaries', 'db-rewards']) {
       this.el[id] = q(id);
     }
     this.el['app'] = root;
@@ -334,11 +338,9 @@ export class Game {
     this.hud.clearBanners();
     const M = MISSION_01;
     this.el['mission-brief'].innerHTML =
-      `<h2>${M.code}: ${M.title}</h2>` +
-      `<div class="mb-block"><label>OBJECTIVE</label><p class="mb-objective">${M.objective}</p></div>` +
-      `<div class="mb-block"><label>SUCCESS</label><p>${M.success}</p></div>` +
-      `<div class="mb-block"><label>KNOWN INTEL</label><ul>${M.intel.map((l) => `<li>${l}</li>`).join('')}</ul></div>` +
-      `<p class="mb-controls">${this.input.isTouch ? 'Drag left side to fly · throttle on the right · SCAN searches · MARK identifies' : 'Arrows / WASD fly · Shift / Ctrl throttle · Space scans · M marks · Esc pauses'}</p>`;
+      `<p class="mb-code">${M.code}</p>` +
+      `<h2 class="mb-head">${M.briefing.headline}</h2>` +
+      `<div class="pf-clues">${M.clues.map((c) => `<span>${c}</span>`).join('')}</div>`;
     this.showCaseCard(false);
     const hasSave = this.state.sortie > 0 || this.state.notes.length > 0;
     this.el['btn-continue'].classList.toggle('hidden', !hasSave);
@@ -744,6 +746,9 @@ export class Game {
     this.mission = newMission();
     this.crew = newCrew();
     this.report = null;
+    this.shots = [];
+    this.pendingShot = null;
+    this.ops.setEvidence([]);
     this.opsTool = 'radar';
     this.opsSelected = null;
     this.camSettle = 0;
@@ -778,7 +783,7 @@ export class Game {
     this.intel.close();
     this.hud.clearBanners();
     const fo = flightObjective(this.op, def, this.cap)!;
-    this.hud.banner(`${def.code} · OUTBOUND`, fo.title, 'obj', 3.4);
+    this.hud.banner('WHEELS UP', fo.title, 'obj', 3);
     this.mode = 'flight';
     this.last = performance.now();
   }
@@ -819,33 +824,30 @@ export class Game {
     }
   }
 
-  /** Gate and hazard events from the flying legs. */
+  /** Gate and hazard events from the flying legs: each cleared gate is stamped. */
   private legEvents(events: LegEvent[]): void {
     for (const e of events) {
       switch (e.type) {
         case 'gate-passed': {
-          const next = flightObjective(this.op, MISSION_01, this.cap);
-          if (e.id === 'land') break;
+          if (e.id === 'land' || e.id === 'sector') break;
           this.audio.mark();
-          this.hud.banner('GATE COMPLETE', next ? `${e.text.replace(' ✓', '')} · NEXT: ${next.title}` : e.text.replace(' ✓', ''), 'done', 2.4);
+          this.hud.banner('GATE CLEARED', e.text.replace(' ✓', ''), 'done', 1.8);
           break;
         }
         case 'gate-missed':
-          this.hud.message(`${e.text} · OFF THE PLANNED ROUTE`, 'warn');
+          this.hud.message(`${e.text} · OFF ROUTE`, 'warn');
           break;
         case 'detected':
-          this.hud.banner('DETECTED', `${e.text} · SECONDARY OBJECTIVE FAILED`, 'bad', 3);
           this.audio.warn();
           break;
         case 'hazard-enter':
-          this.hud.message(e.text, 'warn');
           this.audio.warn();
           break;
-        case 'hazard-exit':
-          this.hud.message(e.text, 'good');
-          break;
         case 'leg-complete':
-          if (e.id === 'outbound') this.hud.banner('ON STATION · SECTOR 7', this.input.isTouch ? 'TAP MISSION CONTROL TO START THE RECON' : 'PRESS O FOR MISSION CONTROL', 'obj', 3.4);
+          if (e.id === 'outbound') {
+            this.audio.unlockSound();
+            this.hud.banner('ON STATION', this.op.outbound.detected ? 'SPOTTED BY RADAR' : 'UNDETECTED', this.op.outbound.detected ? 'bad' : 'done', 2.4);
+          }
           break;
         default:
           break;
@@ -899,14 +901,7 @@ export class Game {
     this.ops.show();
     this.audio.radarOn();
     const crewFlies = this.cap.flightControl.mode === 'crew';
-    this.showHandoff(
-      'enter',
-      crewFlies ? 'HANDING OVER TO THE COPILOT' : 'AUTOPILOT ENGAGED',
-      'YOU ARE THE OPERATOR',
-      [],
-      [crewFlies ? `${this.cap.flightControl.label} · HANDS OFF` : 'THE AIRCRAFT IS FLYING ITSELF · HANDS OFF', `ORBITING ${MISSION_01.operations.area.label} · RECON SYSTEMS ONLINE`],
-      1.9,
-    );
+    this.showHandoff('enter', crewFlies ? this.cap.flightControl.label : 'AUTOPILOT ENGAGED', 'MISSION CONTROL', [], ['HANDS OFF · RUN THE SENSORS'], 1.6);
   }
 
   /** Recon is over: the return leg begins, in the weather the front brought. */
@@ -931,7 +926,7 @@ export class Game {
     if (extracting) {
       this.startReturnLeg();
       const deck = MISSION_01.return.hazards.find((h) => h.kind === 'ceiling');
-      if (deck && this.a.y > deck.y) notices.push(`IN CLOUD · DESCEND BELOW ${deck.y} m`);
+      if (deck && this.a.y > deck.y) notices.push('IN CLOUD · DESCEND');
       notices.push(...MISSION_01.return.notices);
     }
     const ho = buildHandover({ reason: reason === 'weather' ? 'complete' : reason, x: this.a.x, z: this.a.z, agl: this.a.agl, fuelSeconds: this.fuel, sessionTime: session, baseX: BASE.x, baseZ: BASE.z, terrainWarning: this.a.terrainWarning, notices });
@@ -941,7 +936,7 @@ export class Game {
     this.audio.radarOff();
     this.audio.warn();
     const who = this.cap.flightControl.mode === 'crew' ? 'COPILOT' : 'AUTOPILOT';
-    const kicker = reason === 'manual' ? `${who} DISENGAGED` : reason === 'fuel' ? `BINGO FUEL · ${who} DISENGAGED` : reason === 'weather' ? `WEATHER FRONT · EXTRACT · ${who} DISENGAGED` : `RECON COMPLETE · EXTRACT · ${who} DISENGAGED`;
+    const kicker = reason === 'manual' ? `${who} OFF` : reason === 'fuel' ? 'BINGO FUEL' : reason === 'weather' ? 'WEATHER FRONT' : 'RECON COMPLETE';
     this.showHandoff('exit', kicker, ho.title, ho.warnings, ho.status, 4);
     this.last = performance.now();
   }
@@ -1023,6 +1018,7 @@ export class Game {
     const { result, events } = photograph(this.mission, on.id, q);
     this.ops.flash();
     this.audio.click();
+    if (result !== 'unidentified') this.pendingShot = { id: on.id, grade: evidenceGrade(q), sensor: this.opsTool === 'thermal' ? 'thermal' : 'optical' };
     if (result === 'primary') {
       const mv = this.movers.get(TARGET.id)!;
       mv.setRoute(destinationRoute(mv.x, mv.z, mv.segment), false);
@@ -1089,15 +1085,37 @@ export class Game {
     this.el['db-headline'].className = r.success ? 'good' : 'bad';
     this.el['db-grade'].textContent = r.grade;
     this.el['db-grade'].className = `db-grade g-${r.grade}`;
-    this.el['db-aircraft'].textContent = `${this.cap.aircraftName} · ${crewNames.length ? `CREW ${crewNames.join(', ')}` : 'SOLO'} · ${this.loadout.equipment.map((e) => EQUIPMENT_BY_ID[e].name).join(' + ')}`;
-    this.el['db-rows'].innerHTML = r.rows.map((x) => `<dt>${x.label}</dt><dd class="${x.tone ?? ''}">${x.value}</dd>`).join('');
-    this.el['db-secondaries'].innerHTML = `<h3>SECONDARY OBJECTIVES</h3><ul>${r.secondaries
-      .map((s) => `<li class="${s.done ? 'ok' : 'no'}">${s.done ? '✓' : '✕'} ${s.issued ? s.label : 'Not issued: the recon ended first'}</li>`)
-      .join('')}</ul>`;
+    this.el['db-aircraft'].textContent = `${this.cap.aircraftName}${crewNames.length ? ` · ${crewNames.join(', ')}` : ''}`;
+    // the operation, stage by stage
+    this.el['db-stages'].innerHTML = r.stages
+      .map((st, i) => `<div class="st ${st.ok ? 'ok' : 'no'}" style="--i:${i}"><small>${st.label}</small><i>${st.ok ? '✓' : '✕'}</i><b>${st.word}</b></div>`)
+      .join('');
+    // the evidence the crew brought home
+    this.el['db-photos'].innerHTML = this.shots.length
+      ? this.shots.map((p) => `<figure><img src="${p.url}" alt="" class="${p.sensor}" /><figcaption>${p.id === 'C' ? 'THE TRUCK' : p.id === 'E' ? 'THE BARGE' : `RETURN ${p.id}`} · <b class="g-${p.grade}">${p.grade}</b></figcaption></figure>`).join('')
+      : '';
     this.el['db-rewards'].innerHTML =
-      `<div class="rw"><b>+${r.credits}</b><small>CREDITS</small></div><div class="rw"><b>+${r.xp}</b><small>XP</small></div><div class="rw"><b>${r.score}</b><small>SCORE</small></div>` +
-      (unlocks.length ? `<p class="unl">UNLOCKED · ${unlocks.map((u) => u.label).join(' · ')}</p>` : '');
+      `<div class="rw"><b data-count="${r.credits}">+0</b><small>CREDITS</small></div><div class="rw"><b data-count="${r.xp}">+0</b><small>XP</small></div>` +
+      (unlocks.length ? `<p class="unl">🔓 ${unlocks.map((u) => u.label).join(' · ')}</p>` : '');
+    this.countUp(this.el['db-rewards']);
+    // the detail, for whoever wants it
+    this.el['db-rows-more'].innerHTML = r.rows.map((x) => `<dt>${x.label}</dt><dd class="${x.tone ?? ''}">${x.value}</dd>`).join('');
+    this.el['db-secondaries'].innerHTML = `<h3>BONUS OBJECTIVES</h3><ul>${r.secondaries
+      .map((s) => `<li class="${s.done ? 'ok' : 'no'}">${s.done ? '✓' : '✕'} ${s.issued ? s.label : 'Not reached'}</li>`)
+      .join('')}</ul>`;
     this.el['db-findings'].innerHTML = r.intelligence.length ? `<h3>INTELLIGENCE</h3><ul>${r.intelligence.map((f) => `<li>${f}</li>`).join('')}</ul>` : '';
+  }
+
+  /** Rewards tick up rather than appear: a small, satisfying beat. */
+  private countUp(root: HTMLElement): void {
+    const els = [...root.querySelectorAll<HTMLElement>('[data-count]')];
+    const t0 = performance.now();
+    const step = (now: number) => {
+      const k = Math.min(1, (now - t0 - 700) / 900);
+      for (const e of els) e.textContent = `+${Math.round(Number(e.dataset.count) * Math.max(0, k * (2 - k)))}`;
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
   }
 
   private updateRadarVisual(dt: number, radius: number, quality: number): void {
@@ -1151,7 +1169,7 @@ export class Game {
     }
     if (this.crew.station === 'pilot' && m.phase === 'extract' && this.op.stage === 'recon') {
       this.startReturnLeg();
-      this.hud.banner('RETURN TO BASE', `${flightObjective(this.op, def, this.cap)?.title ?? 'FLY HOME'} · CLOUD DECK ${MISSION_01.return.hazards.find((h) => h.kind === 'ceiling')?.y ?? ''} m`, 'obj', 3.4);
+      this.hud.banner('HEAD HOME', flightObjective(this.op, def, this.cap)?.title ?? 'FLY HOME', 'obj', 3);
     }
 
     if (this.crew.station === 'operator') this.updateOperator(dt);
@@ -1244,17 +1262,17 @@ export class Game {
     }
     const selSt = sel ? m.returns[sel] : null;
     const slant = selMover ? this.slant(selMover.x, selMover.z) : Infinity;
-    let camLabel = 'NO TARGET · SELECT A RETURN';
+    let camLabel = 'NO TARGET';
     let acquire: number | null = null;
     if (sel && selSt) {
       const rng = `${Math.round(slant)} m`;
-      if (slant >= CAMERA_RANGE) camLabel = `RETURN ${sel} · ${rng} · OUT OF RANGE · ORBIT MOVING IN`;
-      else if (!selSt.resolved) camLabel = `RETURN ${sel} · ${rng} · IDENTIFYING`;
-      else camLabel = `RETURN ${sel} · ${rng} · ${describeReturn(m, sel, 0, 0, true).traits[0]}`;
+      if (slant >= CAMERA_RANGE) camLabel = `${sel} · ${rng} · MOVING IN`;
+      else if (!selSt.resolved) camLabel = `${sel} · ${rng} · IDENTIFYING`;
+      else camLabel = `${sel} · ${rng} · ${describeReturn(m, sel, 0, 0, true).traits[0]}`;
       if (on && !selSt.resolved) acquire = selSt.look / ((CAMERA_SECONDS * this.cap.identifyTime) / (this.opsTool === 'optical' ? Math.max(0.35, this.visibility) : 1));
       if (m.phase === 'track' && sel === TARGET.id && target.arrived) {
         acquire = m.confirm;
-        camLabel = `RETURN ${sel} · STOPPED AT ${DESTINATION.short} · CONFIRMING`;
+        camLabel = `${sel} · STOPPED · CONFIRMING`;
       }
       if (this.opsTool === 'optical' && this.visibility < 0.8) camLabel += ' · HAZE';
     }
@@ -1263,18 +1281,18 @@ export class Game {
     const hasSigint = this.cap.sensors.has('sigint');
     let hint = '';
     if (m.phase === 'locate') {
-      if (!anyDetected) hint = this.opsTool === 'radar' ? 'The truck was last driving a road in Sector 7. Tap the display to move the orbit over the roads.' : 'Switch to RADAR (1) to find the vehicles first.';
-      else if (!sel) hint = `Radar shows where vehicles are and whether they move, not what they are. Select a return${hasSigint ? ', or listen with SIGINT: the truck\'s radio is dead' : ''}.`;
-      else if (!selSt!.resolved && !cam) hint = `Switch to a camera to see what Return ${sel} is.`;
-      else if (!selSt!.resolved) hint = `Hold the camera on Return ${sel} to identify it.`;
-      else if (selSt!.verdict === 'none') hint = `Does Return ${sel} match every point? ${MISSION_01.intelShort}`;
-      else hint = 'Select another return.';
-    } else if (m.phase === 'photograph') hint = cam ? 'Camera on Return C, then TAKE PHOTO. Closer and clearer is better evidence.' : 'Switch to a camera and photograph the truck.';
-    else if (m.phase === 'track') hint = target.arrived ? 'The truck has stopped. Hold a camera on it to confirm where.' : 'Keep a camera on the truck. The orbit follows it. Or EXTRACT now: the primary is done.';
-    else if (m.phase === 'landing') hint = `Photograph the barge (Return E).${hasThermal ? ' Thermal sees through the haze.' : ''}`;
-    else hint = 'Recon complete. The aircraft is being handed back to you.';
-    if (this.visibility < 0.75 && this.opsTool === 'optical' && hasThermal && m.phase !== 'extract') hint += ' Haze is slowing the optical camera: try THERMAL.';
-    const displayHint = !cam ? (this.opsTool === 'radar' && !anyDetected ? 'TAP THE DISPLAY TO MOVE THE ORBIT' : this.opsTool === 'sigint' ? `SIGINT · ${bearings.length} TRANSMITTER${bearings.length === 1 ? '' : 'S'} HEARD` : '') : sel ? '' : 'SELECT A RETURN TO SLEW THE CAMERA';
+      if (!anyDetected) hint = this.opsTool === 'radar' ? 'Sweep the roads. Tap the map to move.' : 'Switch to RADAR to search.';
+      else if (!sel) hint = 'Pick a return to check.';
+      else if (!selSt!.resolved && !cam) hint = `Use a camera on ${sel}.`;
+      else if (!selSt!.resolved) hint = 'Hold steady…';
+      else if (selSt!.verdict === 'none') hint = `Is ${sel} the truck? Check the clues.`;
+      else hint = 'Try another return.';
+    } else if (m.phase === 'photograph') hint = cam ? 'Take the photo. Closer is better.' : 'Switch to a camera.';
+    else if (m.phase === 'track') hint = target.arrived ? 'It stopped. Hold the camera on it.' : 'Follow it with the camera.';
+    else if (m.phase === 'landing') hint = 'Photograph the barge.';
+    if (this.visibility < 0.75 && this.opsTool === 'optical' && hasThermal && m.phase !== 'extract') hint = 'Haze! THERMAL sees through it.';
+    void hasSigint;
+    const displayHint = !cam ? (this.opsTool === 'radar' && !anyDetected ? 'TAP TO MOVE' : this.opsTool === 'sigint' ? `${bearings.length} RADIO${bearings.length === 1 ? '' : 'S'} HEARD` : '') : sel ? '' : 'PICK A RETURN';
     this.ops.update({
       tool: this.opsTool,
       tools: this.opsTools(),
@@ -1327,6 +1345,37 @@ export class Game {
     rr.setScissorTest(false);
     rr.setViewport(0, 0, window.innerWidth, H);
     this.plane.group.visible = true;
+    // a photograph is the frame just rendered: copy it before the browser clears the buffer
+    if (this.pendingShot) {
+      const url = this.capture(r);
+      if (url) {
+        const shot = { ...this.pendingShot, url };
+        // one print per return: keep the best
+        const old = this.shots.findIndex((p) => p.id === shot.id);
+        const rank = (g: string) => ['NONE', 'POOR', 'FAIR', 'GOOD', 'EXCELLENT'].indexOf(g);
+        if (old < 0) this.shots.push(shot);
+        else if (rank(shot.grade) >= rank(this.shots[old].grade)) this.shots[old] = shot;
+        this.ops.showPhoto(shot);
+        this.ops.setEvidence(this.shots);
+      }
+      this.pendingShot = null;
+    }
+  }
+
+  private capture(r: DOMRect): string | null {
+    try {
+      const src = this.bundle.renderer.domElement;
+      const k = src.width / window.innerWidth;
+      const w = 320;
+      const h = Math.max(1, Math.round((w * r.height) / r.width));
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      c.getContext('2d')!.drawImage(src, r.left * k, r.top * k, r.width * k, r.height * k, 0, 0, w, h);
+      return c.toDataURL('image/jpeg', 0.8);
+    } catch {
+      return null;
+    }
   }
 
   // ---- PILOT: the player flies; the current gate is the objective
@@ -1366,28 +1415,25 @@ export class Game {
       if (h.kind === 'storm') {
         const d = Math.hypot(this.a.x - h.x, this.a.z - h.z) - h.r;
         if (this.cap.routeAware || d < 900) storms.push({ x: h.x, z: h.z, r: h.r });
-        if (d < 0) warning = 'TURBULENCE · LEAVE THE STORM';
-        else if (d < 700) chips.push({ text: `STORM CELL ${(d / 1000).toFixed(1)} km`, cls: d < 250 ? 'bad' : 'warn' });
+        if (d < 0) warning = 'TURBULENCE';
+        else if (d < 400) chips.push({ text: `STORM ${(d / 1000).toFixed(1)} km`, cls: d < 200 ? 'bad' : 'warn' });
       } else {
         const clear = Math.round(h.y - this.a.y);
-        if (clear < 0) warning = `IN CLOUD · DESCEND BELOW ${h.y} m`;
-        chips.push({ text: clear < 0 ? `IN CLOUD · DECK ${h.y} m` : `CLOUD DECK +${clear} m`, cls: clear < 40 ? 'bad' : clear < 100 ? 'warn' : '' });
+        if (clear < 0) warning = 'IN CLOUD · DESCEND';
+        if (clear < 120) chips.push({ text: clear < 0 ? 'IN CLOUD' : `CLOUDS +${clear} m`, cls: clear < 40 ? 'bad' : 'warn' });
       }
     }
-    if (gate?.kind === 'enterArea' && gate.stealth) chips.push({ text: `STEALTH CEILING ${this.cap.stealthCeiling} m`, cls: this.a.agl > this.cap.stealthCeiling ? 'bad' : '' });
+    if (gate?.kind === 'enterArea' && gate.stealth && this.a.agl > this.cap.stealthCeiling - 40) chips.push({ text: `TOO HIGH · BELOW ${this.cap.stealthCeiling} m`, cls: 'bad' });
     if (this.op.stage === 'recon') chips.push({ text: `FRONT ${formatTime(windowLeft(this.op, def))}`, cls: windowLeft(this.op, def) < 60 ? 'bad' : 'warn' });
 
     // ---- contextual hint: always says what to do next
     const touch = this.input.isTouch;
     const who = this.cap.flightControl.mode === 'crew' ? 'YOUR COPILOT' : 'THE AUTOPILOT';
     let hint = '';
-    if (this.sortieTime < 7) hint = touch ? 'DRAG LEFT SIDE TO STEER · SLIDE THROTTLE ON THE RIGHT' : 'ARROWS / WASD STEER · SHIFT / CTRL THROTTLE';
-    else if (warning.startsWith('IN CLOUD')) hint = touch ? 'PUSH THE STICK DOWN TO DESCEND' : 'DESCEND · ARROW DOWN / S';
-    else if (warning.startsWith('TURBULENCE')) hint = 'TURN AWAY FROM THE RED STORM CELL ON THE SCOPE';
-    else if (this.op.stage === 'outbound') hint = gate?.kind === 'enterArea' ? `DESCEND BELOW ${this.cap.stealthCeiling} m BEFORE CROSSING THE AMBER LINE` : 'FOLLOW THE AMBER BEACON · KEEP CLEAR OF THE STORM';
-    else if (this.op.stage === 'recon') hint = area ? `${touch ? 'TAP MISSION CONTROL' : 'PRESS O FOR MISSION CONTROL'} · ${who} WILL FLY` : `FLY BACK TO ${A.label}`;
-    else if (gate?.kind === 'land') hint = touch ? 'FLY LOW OVER THE RUNWAY OR TAP LAND' : 'FLY LOW OVER THE RUNWAY OR PRESS R';
-    else hint = 'STAY UNDER THE CLOUD DECK · KEEP CLEAR OF THE STORM';
+    if (this.sortieTime < 7) hint = touch ? 'DRAG LEFT SIDE TO STEER · THROTTLE ON THE RIGHT' : 'ARROWS / WASD STEER · SHIFT / CTRL THROTTLE';
+    else if (warning.startsWith('IN CLOUD')) hint = touch ? 'PUSH THE STICK DOWN' : 'ARROW DOWN / S TO DESCEND';
+    else if (warning.startsWith('TURBULENCE')) hint = 'TURN AWAY FROM THE RED CIRCLE';
+    void who;
     this.el['hint'].textContent = hint;
 
     // ---- camera, audio, HUD

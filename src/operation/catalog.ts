@@ -97,15 +97,17 @@ export interface CrewDef {
   role: SeatRole;
   skills: CrewSkills;
   note: string;
+  /** Two or three words for the preflight chip. */
+  tag: string;
   unlock?: string;
 }
 
 export const CREW: readonly CrewDef[] = [
-  { id: 'adeyemi', name: 'M. ADEYEMI', role: 'copilot', skills: { piloting: 3, weather: 2 }, note: 'Holds a tight, steady orbit. Eases turbulence.' },
-  { id: 'halvorsen', name: 'R. HALVORSEN', role: 'copilot', skills: { piloting: 1, navigation: 3 }, note: 'Calls the route: gates and storm cells on your scope from take-off.' },
-  { id: 'okafor', name: 'J. OKAFOR', role: 'sensor', skills: { sensors: 3, identification: 1 }, note: 'Fast on the sensors. Identifies returns quicker.' },
-  { id: 'vance', name: 'T. VANCE', role: 'sensor', skills: { sensors: 1, identification: 3 }, note: 'A sharp eye: better evidence photographs.', unlock: 'vance' },
-  { id: 'reyes', name: 'L. REYES', role: 'navigator', skills: { navigation: 3, weather: 2 }, note: 'Plots around weather; storms show on the scope from take-off.', unlock: 'albatross' },
+  { id: 'adeyemi', name: 'M. ADEYEMI', role: 'copilot', skills: { piloting: 3, weather: 2 }, note: 'Holds a tight, steady orbit. Eases turbulence.', tag: 'TIGHT ORBIT' },
+  { id: 'halvorsen', name: 'R. HALVORSEN', role: 'copilot', skills: { piloting: 1, navigation: 3 }, note: 'Calls the route: gates and storm cells on your scope from take-off.', tag: 'SEES THE WEATHER' },
+  { id: 'okafor', name: 'J. OKAFOR', role: 'sensor', skills: { sensors: 3, identification: 1 }, note: 'Fast on the sensors. Identifies returns quicker.', tag: 'FAST ID' },
+  { id: 'vance', name: 'T. VANCE', role: 'sensor', skills: { sensors: 1, identification: 3 }, note: 'A sharp eye: better evidence photographs.', tag: 'SHARP PHOTOS', unlock: 'vance' },
+  { id: 'reyes', name: 'L. REYES', role: 'navigator', skills: { navigation: 3, weather: 2 }, note: 'Plots around weather; storms show on the scope from take-off.', tag: 'SEES THE WEATHER', unlock: 'albatross' },
 ];
 
 export interface EquipmentDef {
@@ -115,14 +117,16 @@ export interface EquipmentDef {
   answers: string;
   /** What it cannot do. */
   limits: string;
+  /** A few words for the preflight toggle. */
+  tag: string;
   unlock?: string;
 }
 
 export const EQUIPMENT: readonly EquipmentDef[] = [
-  { id: 'radar', name: 'SEARCH RADAR', answers: 'Finds vehicles; shows if they move', limits: 'Cannot tell what they are' },
-  { id: 'optical', name: 'OPTICAL CAMERA', answers: 'Size, count, road; best photographs', limits: 'Degraded by haze' },
-  { id: 'thermal', name: 'THERMAL IMAGER', answers: 'Size, count, engine heat; sees through haze', limits: 'Fair photographs; no road detail' },
-  { id: 'sigint', name: 'SIGINT RECEIVER', answers: 'Which vehicles transmit on the radio', limits: 'Bearing only; cannot photograph', unlock: 'sigint' },
+  { id: 'radar', name: 'SEARCH RADAR', answers: 'Finds vehicles; shows if they move', limits: 'Cannot tell what they are', tag: 'FINDS VEHICLES' },
+  { id: 'optical', name: 'OPTICAL CAMERA', answers: 'Size, count, road; best photographs', limits: 'Degraded by haze', tag: 'BEST PHOTOS' },
+  { id: 'thermal', name: 'THERMAL IMAGER', answers: 'Size, count, engine heat; sees through haze', limits: 'Fair photographs; no road detail', tag: 'SEES HEAT · CUTS HAZE' },
+  { id: 'sigint', name: 'SIGINT RECEIVER', answers: 'Which vehicles transmit on the radio', limits: 'Bearing only; cannot photograph', tag: 'HEARS RADIOS', unlock: 'sigint' },
 ];
 
 export const AIRCRAFT_BY_ID = Object.fromEntries(AIRCRAFT.map((a) => [a.id, a])) as Record<string, AircraftDef>;

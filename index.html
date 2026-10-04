@@ -59,8 +59,7 @@
           <div class="pf-load">
             <h3>AIRCRAFT</h3>
             <div id="pf-aircraft" class="pf-cards"></div>
-            <h3>CREW</h3>
-            <div id="pf-crew" class="pf-crew"></div>
+            <div class="pf-crew-wrap"><h3>CREW</h3><div id="pf-crew" class="pf-crew"></div></div>
             <h3>EQUIPMENT <small id="pf-slots"></small></h3>
             <div id="pf-equip" class="pf-cards"></div>
           </div>
@@ -132,6 +131,7 @@
             <canvas id="ops-radar"></canvas>
             <div id="ops-cam" class="ops-cam hidden"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><i class="cross"></i><div id="ops-cam-label" class="ops-cam-label"></div><div class="ops-cam-acq"><i id="ops-cam-acq"></i></div></div>
             <div id="ops-display-hint" class="ops-display-hint"></div>
+            <div id="ops-photo" class="photo-pop hidden"><img alt="" /><b></b></div>
           </div>
           <aside class="ops-panel">
             <div id="ops-tools" class="ops-tools" role="tablist" aria-label="Sensor"></div>
@@ -143,6 +143,7 @@
             </div>
             <button id="btn-ops-extract" class="btn extract hidden">EXTRACT · FLY HOME</button>
             <div id="ops-hint" class="ops-hint"></div>
+            <div id="ops-evidence" class="ops-evidence"></div>
           </aside>
         </div>
       </section>
@@ -182,10 +183,10 @@
             <div><p class="tag">MISSION 01 · RECON REPORT</p><h2 id="db-headline">MISSION COMPLETE</h2><p id="db-aircraft" class="db-aircraft"></p></div>
             <div id="db-grade" class="db-grade">A</div>
           </div>
-          <dl id="db-rows" class="db-rows"></dl>
-          <div id="db-secondaries" class="db-secondaries"></div>
+          <div id="db-stages" class="db-stages"></div>
+          <div id="db-photos" class="db-photos"></div>
           <div id="db-rewards" class="db-rewards"></div>
-          <div id="db-findings" class="db-findings"></div>
+          <details class="db-more"><summary>FULL REPORT</summary><dl id="db-rows-more" class="db-rows"></dl><div id="db-secondaries" class="db-secondaries"></div><div id="db-findings" class="db-findings"></div></details>
           <div class="db-actions">
             <button id="btn-fly-again" class="btn big">PLAN NEXT OPERATION</button>
             <button id="btn-debrief-menu" class="btn ghost">MAIN MENU</button>

@@ -169,8 +169,8 @@ describe('crew stations', () => {
     const h = buildHandover({ reason: 'fuel', x: 700, z: 130, agl: 40, fuelSeconds: 75, sessionTime: 130, baseX: BASE.x, baseZ: BASE.z, terrainWarning: false, notices: ['LOW VISIBILITY · HAZE OVER THE BASIN'] });
     expect(h.title).toBe('YOU HAVE CONTROL');
     expect(h.warnings).toEqual(['BINGO FUEL', 'TERRAIN · CLIMB', 'LOW VISIBILITY · HAZE OVER THE BASIN']);
-    expect(h.status[0]).toMatch(/^RETURN HEADING 2\d\d° · BASE 1\.\d km$/);
-    expect(h.status[1]).toBe('FUEL 1:15 · 2:10 ON STATION');
+    expect(h.status).toHaveLength(1);
+    expect(h.status[0]).toMatch(/^BASE 2\d\d° · 1\.\d km · FUEL 1:15$/);
     expect(buildHandover({ reason: 'manual', x: 0, z: 0, agl: 260, fuelSeconds: 300, sessionTime: 10, baseX: 0, baseZ: -1000, terrainWarning: false, notices: [] }).warnings).toEqual([]);
   });
 });
@@ -260,7 +260,7 @@ describe('the whole operation: PREFLIGHT → OUTBOUND → RECON → RETURN → D
     handBack(crew);
     beginReturn(op);
     expect(op.stage).toBe('return');
-    expect(flightObjective(op, def, cap)!.title).toBe('FLY TO WAYPOINT BRAVO');
+    expect(flightObjective(op, def, cap)!.title).toBe('FLY TO BRAVO');
     const deck = def.return.hazards.find((h) => h.kind === 'ceiling')!;
     // the copilot flies low: this crew comes back under the new cloud deck (the KESTREL's autopilot does not)
     expect(a.y).toBeLessThan(deck.y);

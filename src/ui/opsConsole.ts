@@ -45,6 +45,13 @@ export interface OpsFrame {
   displayHint: string;
 }
 
+export interface OpsPhoto {
+  id: string;
+  url: string;
+  grade: string;
+  sensor: 'optical' | 'thermal';
+}
+
 export interface OpsHandlers {
   onTool(t: OpsTool): void;
   onSelect(id: ReturnId): void;
@@ -82,6 +89,7 @@ export class OpsConsole {
   private last: OpsFrame | null = null;
   private listHtml = '';
   private toolsKey = '';
+  private popTimer = 0;
   private active = false;
 
   constructor(root: HTMLElement, private h: OpsHandlers) {
@@ -123,6 +131,7 @@ export class OpsConsole {
 
   show(): void {
     this.active = true;
+    this.root.querySelector<HTMLElement>('#ops-photo')!.classList.remove('on');
     this.listHtml = '';
     this.root.classList.remove('hidden');
   }
@@ -137,6 +146,29 @@ export class OpsConsole {
     this.display.classList.remove('shutter');
     void this.display.offsetWidth;
     this.display.classList.add('shutter');
+  }
+
+  /** The photograph just taken pops up like a print, graded. */
+  showPhoto(p: OpsPhoto): void {
+    const pop = this.root.querySelector<HTMLElement>('#ops-photo')!;
+    const img = pop.querySelector('img')!;
+    img.src = p.url;
+    img.className = p.sensor;
+    const b = pop.querySelector('b')!;
+    b.textContent = p.grade;
+    b.className = `g-${p.grade}`;
+    pop.className = 'photo-pop';
+    void pop.offsetWidth;
+    pop.classList.add('on');
+    window.clearTimeout(this.popTimer);
+    this.popTimer = window.setTimeout(() => pop.classList.remove('on'), 2200);
+  }
+
+  /** The evidence taken so far, as thumbnails. */
+  setEvidence(list: OpsPhoto[]): void {
+    this.root.querySelector<HTMLElement>('#ops-evidence')!.innerHTML = list
+      .map((p) => `<figure><img src="${p.url}" alt="" class="${p.sensor}" /><figcaption>${p.id} · <b class="g-${p.grade}">${p.grade}</b></figcaption></figure>`)
+      .join('');
   }
 
   /** Screen rectangle of the sensor display, for rendering the camera feed into it. */
