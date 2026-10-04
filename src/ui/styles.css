@@ -621,7 +621,7 @@ ul.evidence li.unmarked { color: #9a4a12; }
 .obj-kicker:empty { display: none; }
 .chips { position: absolute; top: calc(var(--sat) + 152px); left: 50%; transform: translateX(-50%); display: flex; gap: 6px; pointer-events: none; flex-wrap: wrap; justify-content: center; max-width: 92vw; }
 .chips .chip { font-size: 10px; letter-spacing: 0.14em; padding: 3px 8px; border-radius: 10px; background: rgba(8, 18, 12, 0.72); border: 1px solid var(--ph-faint); color: #e8f3ea; }
-.chips .chip.warn { border-color: rgba(242, 169, 59, 0.6); color: var(--amber); }
+.chips .chip.caution { border-color: rgba(242, 169, 59, 0.6); color: var(--amber); }
 .chips .chip.bad { border-color: var(--warn); color: var(--warn); }
 #hud.mission .hint { top: calc(var(--sat) + 180px); }
 #hud.mission .msgs { top: calc(var(--sat) + 210px); }

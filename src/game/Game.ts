@@ -136,6 +136,8 @@ export class Game {
   private handbackTimer = -1;
   /** Seconds until Mission Control opens itself after arriving on station (0: off). */
   private autoOps = 0;
+  /** RETURN TO BASE is waiting for the hand-back card to clear. */
+  private returnCue = false;
   private visibility = 1;
   private sensorCam = new THREE.PerspectiveCamera(20, 1, 1, 4200);
   /** The operation plan and its derived rules. */
@@ -761,6 +763,7 @@ export class Game {
     this.cap = loadoutCapabilities(this.loadout);
     this.op = newOperation(def, this.loadout, (x, z) => this.bundle.heightField.sample(x, z));
     this.autoOps = 0;
+    this.returnCue = false;
     launch(this.op);
     this.mission = newMission();
     this.crew = newCrew();
@@ -941,9 +944,8 @@ export class Game {
     this.setVisibility(MISSION_01.return.visibility);
     this.missionScene.setHazards(MISSION_01.return.hazards);
     this.missionScene.setRoute(this.op.routes.return);
-    // suddenly flying again: the first ring is already right ahead
-    this.hud.banner('RETURN TO BASE', 'FLY THE RINGS HOME', 'obj', 2.4);
-    if (this.op.ret.contact) this.hud.banner('RADAR CONTACT', 'THE RINGS ARE CLOSING', 'bad', 2.4);
+    // suddenly flying again: the first ring is already right ahead (the call goes up once the hand-back card clears)
+    this.returnCue = true;
   }
 
   /** Hand the aircraft back to the pilot. The hand-back is a gameplay event. */
@@ -1186,6 +1188,11 @@ export class Game {
     if (this.handoffTimer > 0) {
       this.handoffTimer -= dt;
       if (this.handoffTimer <= 0) this.el['handoff'].classList.remove('on');
+    }
+    if (this.returnCue && this.handoffTimer <= 0.4) {
+      this.returnCue = false;
+      this.hud.banner('RETURN TO BASE', 'FLY THE RINGS HOME', 'obj', 2.2);
+      if (this.op.ret.contact) this.hud.banner('RADAR CONTACT', 'THE RINGS ARE CLOSING', 'bad', 2.4);
     }
 
     // ---- the operation: gates, weather, the recon window
@@ -1462,17 +1469,17 @@ export class Game {
         const d = Math.hypot(this.a.x - h.x, this.a.z - h.z) - h.r;
         if (this.cap.routeAware || d < 900) storms.push({ x: h.x, z: h.z, r: h.r });
         if (d < 0) warning = 'TURBULENCE';
-        else if (d < 400) chips.push({ text: `STORM ${(d / 1000).toFixed(1)} km`, cls: d < 200 ? 'bad' : 'warn' });
+        else if (d < 400) chips.push({ text: `STORM ${(d / 1000).toFixed(1)} km`, cls: d < 200 ? 'bad' : 'caution' });
       } else {
         const clear = Math.round(h.y - this.a.y);
         if (clear < 0) warning = 'IN CLOUD · DESCEND';
-        if (clear < 120) chips.push({ text: clear < 0 ? 'IN CLOUD' : `CLOUDS +${clear} m`, cls: clear < 40 ? 'bad' : 'warn' });
+        if (clear < 120) chips.push({ text: clear < 0 ? 'IN CLOUD' : `CLOUDS +${clear} m`, cls: clear < 40 ? 'bad' : 'caution' });
       }
     }
     const R = leg?.def.radar;
     if (R && !leg!.state.detected && this.a.agl > this.cap.stealthCeiling - 40 && this.a.x > R.x0 - 300 && this.a.x < R.x1 + 300 && this.a.z > R.z0 - 300 && this.a.z < R.z1 + 300) chips.push({ text: `TOO HIGH · BELOW ${this.cap.stealthCeiling} m`, cls: 'bad' });
-    if (leg?.state.contact && leg.state.clock !== null && gate?.kind === 'ring') chips.push({ text: `⏱ ${Math.max(0, Math.ceil(leg.state.clock))} s`, cls: leg.state.clock < 3 ? 'bad' : 'warn' });
-    if (this.op.stage === 'recon') chips.push({ text: `FRONT ${formatTime(windowLeft(this.op, def))}`, cls: windowLeft(this.op, def) < 60 ? 'bad' : 'warn' });
+    if (leg?.state.contact && leg.state.clock !== null && gate?.kind === 'ring') chips.push({ text: `⏱ ${Math.max(0, Math.ceil(leg.state.clock))} s`, cls: leg.state.clock < 3 ? 'bad' : 'caution' });
+    if (this.op.stage === 'recon') chips.push({ text: `FRONT ${formatTime(windowLeft(this.op, def))}`, cls: windowLeft(this.op, def) < 60 ? 'bad' : 'caution' });
 
     // ---- contextual hint: always says what to do next
     const touch = this.input.isTouch;
