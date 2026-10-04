@@ -23,6 +23,8 @@ export interface ReturnState {
   verdict: 'none' | 'correct' | 'wrong';
   /** Last position the aircraft saw it at. */
   lastKnown: { x: number; z: number } | null;
+  /** Seconds the camera has held it in view (identification). */
+  look: number;
 }
 
 export interface MissionState {
@@ -59,10 +61,21 @@ export const CONFIRM_RANGE = 320;
 /** Mission radar works a little faster than the open case: vehicles move, the sortie is short. */
 export const MISSION_RATE = 2.5;
 export const MARK_RANGE = 340;
+/** Seconds of steady camera time to identify a return's size, count and road. */
+export const CAMERA_SECONDS = 1.6;
+/** Slant range at which the camera can still make out a vehicle. */
+export const CAMERA_RANGE = 600;
+
+/** Where the player is sitting, and whether they can open Mission Control from here. */
+export interface StationContext {
+  station?: 'pilot' | 'operator';
+  inArea?: boolean;
+  truckStopped?: boolean;
+}
 
 export function newMission(): MissionState {
   const returns = {} as Record<ReturnId, ReturnState>;
-  for (const r of RETURNS) returns[r.id] = { id: r.id, detection: 0, detected: false, resolved: false, verdict: 'none', lastKnown: null };
+  for (const r of RETURNS) returns[r.id] = { id: r.id, detection: 0, detected: false, resolved: false, verdict: 'none', lastKnown: null, look: 0 };
   return { phase: 'locate', returns, falsePositives: 0, wrongIds: [], targetIdentified: false, destinationConfirmed: false, confirm: 0, time: 0, failReason: null };
 }
 
@@ -77,14 +90,34 @@ export function isActive(m: MissionState): boolean {
   return m.phase === 'locate' || m.phase === 'destination' || m.phase === 'rtb';
 }
 
-export function objectiveFor(m: MissionState, truckStopped = false): Objective {
+/** Does the current objective need the operator station (recon work), or the pilot? */
+export function operatorWork(m: MissionState): boolean {
+  return m.phase === 'locate' || m.phase === 'destination';
+}
+
+/**
+ * The objective never changes with the station; the supporting line does,
+ * so it always names the next thing to do from where the player is sitting.
+ */
+export function objectiveFor(m: MissionState, ctx: StationContext = {}): Objective {
+  const pilot = ctx.station === 'pilot';
   switch (m.phase) {
     case 'locate':
-      return { title: 'LOCATE THE SUPPLY TRUCK', detail: MISSION_01.intelShort, done: false };
+      return {
+        title: 'LOCATE THE SUPPLY TRUCK',
+        detail: !pilot ? MISSION_01.intelShort : ctx.inArea ? 'IN SECTOR 7 · OPEN MISSION CONTROL' : 'FLY TO SECTOR 7 · THEN OPEN MISSION CONTROL',
+        done: false,
+      };
     case 'destination':
       return {
         title: "CONFIRM THE TRUCK'S DESTINATION",
-        detail: truckStopped ? `TRUCK HAS STOPPED · FLY OVER IT TO CONFIRM` : 'FOLLOW THE TRUCK UNTIL IT STOPS',
+        detail: pilot
+          ? ctx.inArea
+            ? 'OPEN MISSION CONTROL TO TRACK THE TRUCK'
+            : 'FLY BACK TO SECTOR 7 · THEN OPEN MISSION CONTROL'
+          : ctx.truckStopped
+            ? 'TRUCK HAS STOPPED · HOLD THE CAMERA ON IT'
+            : 'TRACK THE TRUCK WITH THE CAMERA UNTIL IT STOPS',
         done: false,
       };
     case 'rtb':
@@ -102,7 +135,7 @@ export function describeReturn(m: MissionState, id: ReturnId, x: number, z: numb
   const def = RETURN_BY_ID[id];
   const traits: string[] = [];
   if (st.resolved) traits.push(def.count > 1 ? `${def.count} ${def.size.toUpperCase()} VEHICLES` : `${def.size.toUpperCase()} VEHICLE`);
-  else traits.push('SIZE ? · FLY LOWER TO RESOLVE');
+  else traits.push('SIZE ? · USE THE CAMERA');
   traits.push(moving ? 'MOVING' : 'STATIONARY');
   if (st.resolved) traits.push(def.onRoad ? 'ON ROAD' : 'OFF ROAD');
   traits.push(inSector(x, z) ? 'IN SECTOR 7' : 'OUTSIDE SECTOR 7');
@@ -140,6 +173,22 @@ export function scanReturn(m: MissionState, id: ReturnId, gain: number, canResol
   return ev;
 }
 
+/**
+ * Camera time on a selected return. Radar finds and tracks; only the camera
+ * shows what a return is (size, count, road). `inView` means selected,
+ * slewed and within camera range.
+ */
+export function inspectReturn(m: MissionState, id: ReturnId, dt: number, inView: boolean): MissionEvent[] {
+  if (!isActive(m) || !inView) return [];
+  const st = m.returns[id];
+  if (!st.detected || st.resolved) return [];
+  st.look += dt;
+  if (st.look < CAMERA_SECONDS) return [];
+  st.resolved = true;
+  const def = RETURN_BY_ID[id];
+  return [{ type: 'resolved', title: `RETURN ${id}`, text: `CAMERA · RETURN ${id} IS ${def.count > 1 ? `${def.count} ${def.size.toUpperCase()} VEHICLES` : `A ${def.size.toUpperCase()} VEHICLE`}`, id }];
+}
+
 /** Player marks a return as "this is the truck". */
 export function identify(m: MissionState, id: ReturnId): { result: 'correct' | 'wrong' | 'already' | 'unknown' | 'inactive'; events: MissionEvent[] } {
   if (m.phase !== 'locate') return { result: 'inactive', events: [] };
@@ -160,7 +209,7 @@ export function identify(m: MissionState, id: ReturnId): { result: 'correct' | '
     result: 'correct',
     events: [
       { type: 'objective-complete', title: 'OBJECTIVE COMPLETE', text: 'Supply truck located.', id },
-      { type: 'new-objective', title: 'NEW OBJECTIVE', text: "Confirm the truck's destination. Follow it until it stops." },
+      { type: 'new-objective', title: 'NEW OBJECTIVE', text: "Confirm the truck's destination. Track it until it stops." },
     ],
   };
 }
@@ -216,7 +265,7 @@ export function formatTime(sec: number): string {
  * Debrief data. `positions` are where each return was when it was last seen,
  * used to explain why a false positive did not match the intel.
  */
-export function buildDebrief(m: MissionState, fuelFraction: number): Debrief {
+export function buildDebrief(m: MissionState, fuelFraction: number, timeOnStation = 0): Debrief {
   const success = m.phase === 'complete';
   const detected = RETURNS.filter((r) => m.returns[r.id].detected);
   const headline = success ? 'MISSION COMPLETE' : m.failReason === 'fuel' ? 'MISSION INCOMPLETE · FUEL EXHAUSTED' : 'MISSION INCOMPLETE · ABORTED';
@@ -226,6 +275,7 @@ export function buildDebrief(m: MissionState, fuelFraction: number): Debrief {
     { label: 'Destination confirmed', value: m.destinationConfirmed ? DESTINATION.name : 'No', tone: m.destinationConfirmed ? 'good' : 'bad' },
     { label: 'False positives', value: String(m.falsePositives), tone: m.falsePositives === 0 ? 'good' : 'bad' },
     { label: 'Time', value: formatTime(m.time) },
+    { label: 'Time in mission control', value: formatTime(timeOnStation) },
     { label: 'Fuel remaining', value: `${Math.round(Math.max(0, Math.min(1, fuelFraction)) * 100)}%` },
     { label: 'Recon findings', value: `${detected.length} of ${RETURNS.length} returns` },
   ];

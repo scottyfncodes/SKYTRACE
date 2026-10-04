@@ -93,6 +93,17 @@ export class Hud {
     this.el['msgs'].style.visibility = '';
   }
 
+  /** Banners outlive the flight HUD: they also announce objectives in Mission Control. */
+  tickBanners(dt: number): void {
+    if (!this.bannerShown) return;
+    this.bannerShown.t -= dt;
+    if (this.bannerShown.t <= 0) this.nextBanner();
+  }
+
+  get bannerActive(): boolean {
+    return this.bannerShown !== null;
+  }
+
   private nextBanner(): void {
     const b = this.banners.shift() ?? null;
     this.bannerShown = b;
@@ -143,11 +154,7 @@ export class Hud {
       this.el['obj-progress'].style.width = `${Math.round((ob.progress ?? 0) * 100)}%`;
     } else this.lastObjective = '';
 
-    // banners
-    if (this.bannerShown) {
-      this.bannerShown.t -= dt;
-      if (this.bannerShown.t <= 0) this.nextBanner();
-    }
+    this.tickBanners(dt);
     this.el['thr-fill'].style.height = `${a.throttle * 100}%`;
 
     // warnings

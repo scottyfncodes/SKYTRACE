@@ -6,18 +6,34 @@ An aerial reconnaissance mystery. Fly a small aircraft over a miniature landscap
 
 The plane gets you there. The sensors show you what you missed. Your deductions reveal what it means.
 
+## Two jobs inside one aircraft
+
+SKYTRACE alternates between two deliberately separate modes:
+
+- **PILOT** — you fly: heading, altitude, throttle, terrain, fuel, landing. The flight HUD says `PILOT · YOU ARE FLYING`.
+- **OPERATOR (Mission Control)** — the autopilot flies an orbit (the real flight model, driven by `src/flight/autopilot.ts`) and you never touch the stick. You run the recon systems: sensors, target selection, marking, re-tasking the orbit.
+
+The grammar every mission is built on:
+
+FLY TO TARGET → MISSION CONTROL → OPERATE → OBJECTIVE → **YOU HAVE CONTROL** → FLY HOME → LAND → DEBRIEF
+
+Mission Control opens only inside the mission's operations area while there is recon work to do (`O` / Enter, or the `MISSION CONTROL` button). `TAKE CONTROLS` hands the aircraft back at any time; Mission Control also hands it back by itself when the recon work is done or at bingo fuel. The hand-back is a gameplay event: time has passed, the aircraft is wherever the orbit left it, and conditions may have changed (Mission 01: haze). A hand-over report lists warnings first, then the return heading and fuel.
+
 ## Mission 01: Find the Truck
 
-The game opens on a short, objective-led sortie (3–5 minutes):
+- **Objective:** locate the missing supply truck inside Sector 7. **Intel:** large, moving, on a road, in Sector 7.
+- **Pilot:** fly to Sector 7 (outlined in amber), open Mission Control.
+- **Operator:** the **radar** finds vehicles and shows whether they move, but cannot say what they are; tap the display to move the orbit. The **camera** shows what a selected return is (size, count, road); the orbit follows it. Each decoy fails the intel on exactly one point. **Mark** the one you believe is the truck (a wrong mark counts a false positive; the mission continues). Then track the truck to its stop and hold the camera on it.
+- **Pilot again:** Mission Control hands back; fly home through the haze and land.
+- **Debrief:** objective, identification, destination, false positives, time, time in Mission Control, fuel, recon findings and what each return really was.
 
-BRIEFING → FLY → SCAN → DISCOVER → MARK → CONFIRM DESTINATION → RETURN TO BASE → DEBRIEF
-
-- **Objective:** locate the missing supply truck inside Sector 7 (outlined in amber on the ground and the scope).
-- **Intel:** large, moving, on a road, in Sector 7, and bigger than the three-vehicle scout patrol.
-- **Recon:** the radar finds four vehicle returns. Movement and sector show at once; size, count and road need a low pass (under ~300 m). Each decoy fails the intel on exactly one point.
-- **Mark** (`MARK` / M) the return you believe is the truck. A wrong mark counts a false positive but the mission carries on.
-- **Next objectives** are always announced: confirm where the truck stops, then return to base.
-- **Debrief:** objective, identification, destination, false positives, time, fuel, recon findings and what each return really was.
+| Mission Control | Touch | Keyboard |
+| --- | --- | --- |
+| Radar / camera | RADAR / CAMERA tabs | 1 / 2 |
+| Select a return | tap it (list or display) | A–D |
+| Move the orbit | tap the radar display | — |
+| Mark as the truck | MARK AS THE TRUCK | M |
+| Take controls | TAKE CONTROLS | O or Enter |
 
 The original open-ended investigation is still available from the title screen as **Open case · Varrow Basin**.
 
@@ -80,6 +96,10 @@ Plain TypeScript + Vite + Three.js, no backend.
 | `src/ui/hud.ts` | Flight instruments and the phosphor radar scope |
 | `src/ui/intelMap.ts` | Paper intelligence map and dossier panel |
 | `src/mission/mission01.ts` | Mission 01 content: sector, vehicle returns, destination, briefing text |
+| `src/mission/missionDef.ts` | What a mission declares: operations area, orbit height, hand-back conditions |
+| `src/mission/crew.ts` | Crew stations (pilot / operator), entry rules, forced hand-back, hand-over report (pure, tested) |
+| `src/flight/autopilot.ts` | Orbit autopilot that drives the unchanged flight model while the player operates (pure, tested) |
+| `src/ui/opsConsole.ts` | Mission Control console: radar display, camera feed frame, returns, mark, take controls |
 | `src/mission/mission.ts` | Mission rules: objective state machine, identification, debrief (pure, tested) |
 | `src/mission/vehicles.ts` | Route-following vehicles (pure, tested); `missionScene.ts` renders sector and vehicles |
 | `src/game/Game.ts` | Orchestration: mission and case sorties, modes, actions, world markers |
