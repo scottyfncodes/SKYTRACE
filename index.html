@@ -27,8 +27,9 @@
           <p class="tag">AERIAL RECONNAISSANCE · VARROW BASIN</p>
           <div id="mission-brief" class="mission-brief"></div>
           <div class="title-actions">
-            <button id="btn-mission" class="btn big">TAKE OFF</button>
+            <button id="btn-mission" class="btn big">PLAN OPERATION</button>
           </div>
+          <p id="career-line" class="career-line"></p>
           <div class="alt-mode">
             <button id="btn-open-case" class="btn ghost">OPEN CASE · VARROW BASIN ›</button>
           </div>
@@ -47,6 +48,29 @@
         </div>
       </section>
 
+      <!-- ===== PREFLIGHT: briefing + aircraft, crew, equipment ===== -->
+      <section id="preflight" class="screen preflight hidden" aria-label="Preflight">
+        <header class="pf-bar">
+          <button id="btn-pf-back" class="btn ghost" aria-label="Back">‹</button>
+          <div class="pf-id"><b>PREFLIGHT</b><span id="pf-career"></span></div>
+        </header>
+        <div class="pf-body">
+          <div id="pf-brief" class="pf-brief"></div>
+          <div class="pf-load">
+            <h3>AIRCRAFT</h3>
+            <div id="pf-aircraft" class="pf-cards"></div>
+            <h3>CREW</h3>
+            <div id="pf-crew" class="pf-crew"></div>
+            <h3>EQUIPMENT <small id="pf-slots"></small></h3>
+            <div id="pf-equip" class="pf-cards"></div>
+          </div>
+        </div>
+        <footer class="pf-foot">
+          <div id="pf-check" class="pf-check"></div>
+          <button id="btn-launch" class="btn big">TAKE OFF</button>
+        </footer>
+      </section>
+
       <!-- ===== FLIGHT HUD ===== -->
       <section id="hud" class="screen hidden">
         <div class="instr">
@@ -61,8 +85,9 @@
           <div class="pk"><label>SENSOR PKGS</label><b id="sensors">1</b></div>
           <button id="btn-pause" class="icon" aria-label="Pause">II</button>
         </div>
-        <div id="objective" class="objective hidden" role="status" aria-live="polite"><div class="obj-title"><i class="reticle"></i><b id="obj-title">LOCATE THE SUPPLY TRUCK</b></div><div id="obj-detail" class="obj-detail"></div><div class="obj-progress"><i id="obj-progress"></i></div></div>
+        <div id="objective" class="objective hidden" role="status" aria-live="polite"><small id="obj-kicker" class="obj-kicker"></small><div class="obj-title"><i class="reticle"></i><b id="obj-title">LOCATE THE SUPPLY TRUCK</b></div><div id="obj-detail" class="obj-detail"></div><div class="obj-progress"><i id="obj-progress"></i></div></div>
         <div id="nav" class="nav"></div>
+        <div id="chips" class="chips"></div>
         <div id="signal" class="signal"></div>
         <div id="msgs" class="msgs"></div>
         <div id="warn" class="warn"></div>
@@ -96,12 +121,12 @@
       <!-- ===== MISSION CONTROL (operator station: the autopilot flies) ===== -->
       <section id="ops" class="screen ops hidden" aria-label="Mission control">
         <header class="ops-bar">
-          <div class="ops-id"><b>MISSION CONTROL</b><span><i></i>AUTOPILOT FLYING · HANDS OFF</span></div>
-          <div class="ops-stats"><span id="ops-orbit">ORBIT</span><span id="ops-fuel">FUEL</span><span id="ops-time">ON STATION</span></div>
+          <div class="ops-id"><b>MISSION CONTROL</b><span><i></i><em id="ops-control">AUTOPILOT FLYING</em> · HANDS OFF</span></div>
+          <div class="ops-stats"><span id="ops-front" class="front">FRONT</span><span id="ops-orbit">ORBIT</span><span id="ops-fuel">FUEL</span><span id="ops-time">ON STATION</span></div>
           <button id="btn-ops-pause" class="icon" aria-label="Pause">II</button>
           <button id="btn-take" class="btn take">TAKE CONTROLS</button>
         </header>
-        <div class="ops-objective"><i class="reticle"></i><div><b id="ops-obj-title"></b><small id="ops-obj-detail"></small><div class="obj-progress"><i id="ops-obj-progress"></i></div></div></div>
+        <div class="ops-objective"><i class="reticle"></i><div><small id="ops-obj-kicker" class="k"></small><b id="ops-obj-title"></b><small id="ops-obj-detail"></small><div class="obj-progress"><i id="ops-obj-progress"></i></div></div></div>
         <div class="ops-body">
           <div id="ops-display" class="ops-display">
             <canvas id="ops-radar"></canvas>
@@ -109,13 +134,14 @@
             <div id="ops-display-hint" class="ops-display-hint"></div>
           </div>
           <aside class="ops-panel">
-            <div class="ops-tools" role="tablist" aria-label="Sensor">
-              <button type="button" role="tab" data-tool="radar" class="on">RADAR<small>1</small></button>
-              <button type="button" role="tab" data-tool="camera">CAMERA<small>2</small></button>
-            </div>
+            <div id="ops-tools" class="ops-tools" role="tablist" aria-label="Sensor"></div>
             <div id="ops-tool-note" class="ops-tool-note"></div>
             <div id="ops-returns" class="ops-returns"></div>
-            <button id="btn-ops-mark" class="btn mark">MARK AS THE TRUCK</button>
+            <div class="ops-actions">
+              <button id="btn-ops-mark" class="btn mark">MARK AS THE TRUCK</button>
+              <button id="btn-ops-photo" class="btn photo">TAKE PHOTO</button>
+            </div>
+            <button id="btn-ops-extract" class="btn extract hidden">EXTRACT · FLY HOME</button>
             <div id="ops-hint" class="ops-hint"></div>
           </aside>
         </div>
@@ -152,12 +178,16 @@
       <!-- ===== MISSION DEBRIEF ===== -->
       <section id="debrief" class="screen overlay hidden">
         <div class="card debrief-card">
-          <p class="tag">MISSION 01 · DEBRIEF</p>
-          <h2 id="db-headline">MISSION COMPLETE</h2>
+          <div class="db-head">
+            <div><p class="tag">MISSION 01 · RECON REPORT</p><h2 id="db-headline">MISSION COMPLETE</h2><p id="db-aircraft" class="db-aircraft"></p></div>
+            <div id="db-grade" class="db-grade">A</div>
+          </div>
           <dl id="db-rows" class="db-rows"></dl>
+          <div id="db-secondaries" class="db-secondaries"></div>
+          <div id="db-rewards" class="db-rewards"></div>
           <div id="db-findings" class="db-findings"></div>
           <div class="db-actions">
-            <button id="btn-fly-again" class="btn big">FLY AGAIN</button>
+            <button id="btn-fly-again" class="btn big">PLAN NEXT OPERATION</button>
             <button id="btn-debrief-menu" class="btn ghost">MAIN MENU</button>
           </div>
         </div>

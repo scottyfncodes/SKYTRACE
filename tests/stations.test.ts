@@ -16,23 +16,27 @@ import {
   tickCrew,
 } from '../src/mission/crew';
 import { inArea } from '../src/mission/missionDef';
-import { DESTINATION, MISSION_01, RETURNS, TARGET_SPEED_TO_DESTINATION } from '../src/mission/mission01';
+import { DESTINATION, MISSION_01, RETURNS, TARGET_SPEED_TO_DESTINATION, type ReturnId } from '../src/mission/mission01';
 import {
-  buildDebrief,
-  CAMERA_SECONDS,
+  CAMERA_RANGE,
   destinationRoute,
   identify,
   inspectReturn,
-  land,
   MISSION_RATE,
   newMission,
-  objectiveFor,
   operatorWork,
+  photograph,
+  photoQuality,
   RETURN_BY_ID,
   scanReturn,
   TARGET,
   updateDestination,
 } from '../src/mission/mission';
+import { capabilities, checkLoadout, defaultLoadout, seatCrew, toggleEquipment, withAircraft } from '../src/operation/loadout';
+import { beginReturn, flightObjective, landAtBase, launch, newOperation, reconVisibility, tickOperation } from '../src/operation/operation';
+import { buildReport } from '../src/operation/score';
+import { newCareer, recordOperation } from '../src/operation/career';
+import { AIRCRAFT_BY_ID } from '../src/operation/catalog';
 import { RouteMover } from '../src/mission/vehicles';
 import { detectionGain, radarParams } from '../src/sensors/radar';
 import { BASE } from '../src/world/worldData';
@@ -48,7 +52,7 @@ const fly = (a: AircraftState, o: Orbit, seconds: number, each?: (a: AircraftSta
 };
 
 describe('autopilot (operator station: the aircraft flies itself)', () => {
-  const orbit = (): Orbit => ({ x: 700, z: 130, r: ORBIT_RADIUS, agl: MISSION_01.operations.orbitAgl, throttle: 0.35 });
+  const orbit = (): Orbit => ({ x: 700, z: 130, r: ORBIT_RADIUS, agl: 260, throttle: 0.35 });
 
   it('settles into the orbit from any entry, over real terrain, with no player input', () => {
     for (const [x, z, yaw] of [
@@ -86,6 +90,17 @@ describe('autopilot (operator station: the aircraft flies itself)', () => {
     o.z = 450;
     a = fly(a, o, 90);
     expect(Math.hypot(a.x - o.x, a.z - o.z)).toBeLessThan(o.r + 60);
+  });
+
+  it('flies every aircraft type with its own performance profile', () => {
+    for (const id of ['kestrel', 'heron', 'albatross']) {
+      const P = AIRCRAFT_BY_ID[id].perf;
+      const o = orbit();
+      let a = initialAircraft(400, ground(400, 300) + 200, 300, 0);
+      for (let i = 0; i < 120 * 60; i++) a = stepAircraft(a, orbitInput(a, o, ground, P), 1 / 60, ground, P);
+      expect(Math.hypot(a.x - o.x, a.z - o.z)).toBeLessThan(o.r + 80);
+      expect(a.speed).toBeLessThanOrEqual(P.maxSpeed * 1.15);
+    }
   });
 
   it('uses the unchanged flight model: same input, same trajectory', () => {
@@ -160,122 +175,116 @@ describe('crew stations', () => {
   });
 });
 
-describe('mission 01 in the two-station model', () => {
-  it('declares an operations area and what changes by hand-back', () => {
-    const A = MISSION_01.operations.area;
-    expect(inArea(A, (A.x0 + A.x1) / 2, (A.z0 + A.z1) / 2)).toBe(true);
-    expect(inArea(A, BASE.x, BASE.z)).toBe(false);
-    expect(MISSION_01.handback.visibility).toBeLessThan(1);
-    expect(MISSION_01.handback.notices[0]).toMatch(/VISIBILITY/);
-  });
-
-  it('recon objectives belong to the operator; flying home belongs to the pilot', () => {
-    const m = newMission();
-    expect(operatorWork(m)).toBe(true);
-    m.phase = 'destination';
-    expect(operatorWork(m)).toBe(true);
-    m.phase = 'rtb';
-    expect(operatorWork(m)).toBe(false);
-  });
-
-  it('the objective stays the same in both seats; the next step depends on the seat', () => {
-    const m = newMission();
-    const out = objectiveFor(m, { station: 'pilot', inArea: false });
-    const inn = objectiveFor(m, { station: 'pilot', inArea: true });
-    const op = objectiveFor(m, { station: 'operator', inArea: true });
-    expect(new Set([out.title, inn.title, op.title]).size).toBe(1);
-    expect(out.detail).toBe('FLY TO SECTOR 7 · THEN OPEN MISSION CONTROL');
-    expect(inn.detail).toBe('IN SECTOR 7 · OPEN MISSION CONTROL');
-    expect(op.detail).toBe(MISSION_01.intelShort);
-    m.phase = 'destination';
-    expect(objectiveFor(m, { station: 'pilot', inArea: true }).detail).toMatch(/OPEN MISSION CONTROL/);
-    expect(objectiveFor(m, { station: 'operator' }).detail).toMatch(/CAMERA/);
-  });
-
-  it('radar finds returns but only the camera identifies them', () => {
-    const m = newMission();
-    expect(inspectReturn(m, 'B', 5, true)).toEqual([]); // nothing to look at yet
-    scanReturn(m, 'B', 2, false, 600, 250);
-    expect(m.returns.B.detected && !m.returns.B.resolved).toBe(true);
-    expect(inspectReturn(m, 'B', 5, false)).toEqual([]); // out of view
-    expect(inspectReturn(m, 'B', CAMERA_SECONDS / 2, true)).toEqual([]);
-    const ev = inspectReturn(m, 'B', CAMERA_SECONDS / 2 + 0.01, true);
-    expect(ev[0].text).toBe('CAMERA · RETURN B IS 3 SMALL VEHICLES');
-    expect(m.returns.B.resolved).toBe(true);
-  });
-});
-
-describe('the whole rhythm: FLIGHT → MISSION CONTROL → FLIGHT → LAND → DEBRIEF', () => {
-  it('plays Mission 01 through both stations', () => {
+describe('the whole operation: PREFLIGHT → OUTBOUND → RECON → RETURN → DEBRIEF', () => {
+  it('plays Mission 01 end to end with a crewed HERON', () => {
+    // PREFLIGHT: aircraft, crew, equipment
+    let l = withAircraft(defaultLoadout(), 'heron');
+    l = seatCrew(seatCrew(l, 'copilot', 'adeyemi'), 'sensor', 'okafor');
+    l = toggleEquipment(l, 'thermal');
+    expect(checkLoadout(l, () => true).ok).toBe(true);
+    const cap = capabilities(l);
+    const def = MISSION_01;
+    const op = newOperation(def, l);
+    launch(op);
     const m = newMission();
     const crew = newCrew();
-    const A = MISSION_01.operations.area;
+    const A = def.operations.area;
     const movers = new Map(RETURNS.map((r) => [r.id, new RouteMover(r.route, r.speed, r.start, true)]));
-    const step = (dt: number) => movers.forEach((mv) => mv.step(dt));
+    const fixOf = (a: AircraftState) => ({ x: a.x, z: a.z, y: a.y, agl: a.agl });
 
-    // PILOT: at base, Mission Control is not available
+    // OUTBOUND: Mission Control is closed until the gates are flown
     let a = initialAircraft(BASE.x, ground(BASE.x, BASE.z) + 200, BASE.z, -Math.PI / 2);
-    expect(operatorAvailability(crew, { inArea: inArea(A, a.x, a.z), operatorWork: operatorWork(m), fuelFraction: 1, areaLabel: A.label }).ok).toBe(false);
+    expect(operatorAvailability(crew, { inArea: inArea(A, a.x, a.z), operatorWork: op.stage === 'recon', fuelFraction: 1, areaLabel: A.label }).ok).toBe(false);
+    a = { ...a, x: -280, z: 200 };
+    tickOperation(op, def, fixOf(a), 0.1, cap);
+    a = { ...a, x: 700, z: 130, y: ground(700, 130) + 220 };
+    a.agl = 220;
+    tickOperation(op, def, fixOf(a), 0.1, cap);
+    expect(op.stage).toBe('recon');
+    expect(op.outbound.detected).toBe(false); // under the HERON's 300 m stealth ceiling
 
-    // (the pilot flies to the sector)
-    a = { ...a, x: 700, z: 130, y: ground(700, 130) + 260 };
+    // RECON: the copilot flies a tight orbit; the player operates
     expect(operatorAvailability(crew, { inArea: inArea(A, a.x, a.z), operatorWork: operatorWork(m), fuelFraction: 0.8, areaLabel: A.label }).ok).toBe(true);
-    const orbit = engageOperator(crew, a.x, a.z, MISSION_01.operations.orbitAgl);
-
-    // OPERATOR: radar sweeps while the autopilot orbits
+    const orbit = engageOperator(crew, a.x, a.z, cap.orbit.agl);
+    orbit.r = cap.orbit.r;
     const target = movers.get(TARGET.id)!;
-    let t = 0;
-    while (!m.returns.C.detected && t < 240) {
-      const dt = 1 / 20;
-      a = stepAircraft(a, orbitInput(a, orbit, ground), dt, ground);
-      step(dt);
+    const sim = (dt: number) => {
+      a = stepAircraft(a, orbitInput(a, orbit, ground, cap.perf), dt, ground, cap.perf);
+      movers.forEach((mv) => mv.step(dt));
       tickCrew(crew, dt);
+      return tickOperation(op, def, fixOf(a), dt, cap);
+    };
+    const slant = (id: ReturnId) => {
+      const mv = movers.get(id)!;
+      return Math.hypot(mv.x - a.x, mv.z - a.z, a.y - ground(mv.x, mv.z));
+    };
+    const dt = 1 / 20;
+    // radar: search
+    for (let t = 0; t < 240 && !m.returns.C.detected; t += dt) {
+      sim(dt);
       const p = radarParams(a.agl);
-      for (const [id, mv] of movers) scanReturn(m, id, detectionGain(dt, p, Math.hypot(mv.x - a.x, mv.z - a.z), RETURN_BY_ID[id], false, MISSION_RATE), false, mv.x, mv.z);
-      t += dt;
+      for (const [id, mv] of movers) scanReturn(m, id, detectionGain(dt, p, Math.hypot(mv.x - a.x, mv.z - a.z), RETURN_BY_ID[id], false, MISSION_RATE), mv.x, mv.z);
     }
     expect(m.returns.C.detected).toBe(true);
-    // camera on C: the orbit follows it until it is identified
-    for (let i = 0; i < 40 * 20 && !m.returns.C.resolved; i++) {
-      const dt = 1 / 20;
+    // camera on C (orbit follows): identify, mark, photograph
+    for (let t = 0; t < 60 && !m.returns.C.resolved; t += dt) {
       retaskOrbit(crew, target.x, target.z);
-      a = stepAircraft(a, orbitInput(a, orbit, ground), dt, ground);
-      step(dt);
-      tickCrew(crew, dt);
-      const slant = Math.hypot(target.x - a.x, target.z - a.z, a.y - ground(target.x, target.z));
-      inspectReturn(m, 'C', dt, slant < 600);
+      sim(dt);
+      inspectReturn(m, 'C', dt, slant('C') < CAMERA_RANGE, 'optical', 1.6 * cap.identifyTime);
     }
-    expect(m.returns.C.resolved).toBe(true);
     expect(identify(m, 'C').result).toBe('correct');
+    const q = photoQuality({ sensor: 'optical', slant: slant('C'), visibility: reconVisibility(op, def), bonus: cap.photoBonus });
+    expect(q).toBeGreaterThan(0.65); // a crewed HERON gets close, clear evidence
+    expect(photograph(m, 'C', q).result).toBe('primary');
     target.setRoute(destinationRoute(target.x, target.z, target.segment), false);
     target.speed = TARGET_SPEED_TO_DESTINATION;
-    // track the truck to its stop and hold the camera on it
-    for (let i = 0; i < 200 * 20 && m.phase === 'destination'; i++) {
-      const dt = 1 / 20;
+    // dynamic: track to the stop, then the barge appears
+    for (let t = 0; t < 200 && m.phase === 'track'; t += dt) {
       retaskOrbit(crew, target.x, target.z);
-      a = stepAircraft(a, orbitInput(a, orbit, ground), dt, ground);
-      step(dt);
-      tickCrew(crew, dt);
-      const slant = Math.hypot(target.x - a.x, target.z - a.z, a.y - ground(target.x, target.z));
-      updateDestination(m, dt, target.arrived, slant < 600 ? 0 : Infinity);
+      sim(dt);
+      updateDestination(m, dt, target.arrived, slant('C') < CAMERA_RANGE);
     }
-    expect(m.phase).toBe('rtb');
+    expect(m.phase).toBe('landing');
     expect(Math.hypot(target.x - DESTINATION.x, target.z - DESTINATION.z)).toBeLessThan(1);
+    for (let t = 0; t < 60 && !m.returns.E.resolved; t += dt) {
+      retaskOrbit(crew, movers.get('E')!.x, movers.get('E')!.z);
+      sim(dt);
+      inspectReturn(m, 'E', dt, slant('E') < CAMERA_RANGE, 'thermal', 1.6 * cap.identifyTime);
+    }
+    expect(photograph(m, 'E', 0.7).result).toBe('transfer');
+    expect(op.stage).toBe('recon');
+    expect(op.frontArrived).toBe(false); // done inside the window
 
-    // work done: Mission Control hands the aircraft back
+    // EXTRACTION: Mission Control hands back; the return leg brings the weather
     expect(forcedHandback(crew, { fuelFraction: 0.5, operatorWork: operatorWork(m) })).toBe('complete');
-    const ho = buildHandover({ reason: 'complete', x: a.x, z: a.z, agl: a.agl, fuelSeconds: 200, sessionTime: crew.sessionTime, baseX: BASE.x, baseZ: BASE.z, terrainWarning: a.terrainWarning, notices: MISSION_01.handback.notices });
     handBack(crew);
-    expect(crew.station).toBe('pilot');
-    expect(ho.warnings).toContain('LOW VISIBILITY · HAZE OVER THE BASIN');
-    expect(objectiveFor(m, { station: 'pilot' }).title).toBe('RETURN TO BASE');
+    beginReturn(op);
+    expect(op.stage).toBe('return');
+    expect(flightObjective(op, def, cap)!.title).toBe('FLY TO WAYPOINT BRAVO');
+    const deck = def.return.hazards.find((h) => h.kind === 'ceiling')!;
+    // the copilot flies low: this crew comes back under the new cloud deck (the KESTREL's autopilot does not)
+    expect(a.y).toBeLessThan(deck.y);
+    const kestrelOrbitY = ground(700, 130) + capabilities(defaultLoadout()).orbit.agl;
+    expect(kestrelOrbitY).toBeGreaterThan(deck.y);
+    const ho = buildHandover({ reason: 'complete', x: a.x, z: a.z, agl: a.agl, fuelSeconds: 200, sessionTime: crew.sessionTime, baseX: BASE.x, baseZ: BASE.z, terrainWarning: false, notices: def.return.notices });
+    expect(ho.title).toBe('YOU HAVE CONTROL');
+    expect(ho.warnings).toEqual([...def.return.notices]);
 
-    // PILOT: fly home and land
-    expect(land(m).ok).toBe(true);
-    const d = buildDebrief(m, 0.5, crew.timeOnStation);
-    expect(d.success).toBe(true);
-    const row = d.rows.find((r) => r.label === 'Time in mission control')!;
-    expect(crew.timeOnStation).toBeGreaterThan(20);
-    expect(row.value).toMatch(/^\d\d:\d\d$/);
+    // RETURN: under the deck, round the storm via Bravo, land
+    a = { ...a, x: -140, z: 650, y: ground(-140, 650) + 150 };
+    tickOperation(op, def, fixOf(a), 0.1, cap);
+    expect(flightObjective(op, def, cap)!.title).toBe('LAND AT BASE');
+    landAtBase(op, def);
+    expect(op.stage).toBe('debrief');
+
+    // DEBRIEF: report and rewards
+    const r = buildReport(m, op, def, 0.55, crew.timeOnStation);
+    expect(r.success).toBe(true);
+    expect(r.rows.find((x) => x.label === 'Secondary objectives')!.value).toBe('3/3');
+    expect(['S', 'A', 'B']).toContain(r.grade);
+    const career = newCareer();
+    recordOperation(career, def.id, r);
+    expect(career.completed).toBe(1);
+    expect(career.xp).toBeGreaterThan(0);
   });
 });

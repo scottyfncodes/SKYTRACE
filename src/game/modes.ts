@@ -1,5 +1,5 @@
 /** Top-level screen the game is on. */
-export type Mode = 'title' | 'flight' | 'intel' | 'paused' | 'debrief';
+export type Mode = 'title' | 'preflight' | 'flight' | 'intel' | 'paused' | 'debrief';
 
 /**
  * Pause key / button: flight pauses, paused resumes, every other screen

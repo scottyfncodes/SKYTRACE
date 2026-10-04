@@ -21,7 +21,22 @@ export interface FlightInput {
   throttleDelta: number; // -1..1 per second
 }
 
-export const FLIGHT = {
+/** Performance profile. Aircraft differ by profile; the default is the original SKYTRACE aircraft. */
+export interface FlightPerf {
+  minSpeed: number;
+  maxSpeed: number;
+  maxRoll: number;
+  maxPitch: number;
+  rollRate: number;
+  pitchRate: number;
+  turnGain: number;
+  accel: number;
+  ceiling: number;
+  floorAgl: number;
+  bounds: number;
+}
+
+export const FLIGHT: FlightPerf = {
   minSpeed: 32,
   maxSpeed: 92,
   maxRoll: 1.05, // ~60 deg
@@ -45,7 +60,7 @@ export function forwardVector(a: Pick<AircraftState, 'yaw' | 'pitch'>): [number,
 }
 
 /** One simulation step. Pure, deterministic, frame-rate independent. */
-export function stepAircraft(a: AircraftState, inp: FlightInput, dt: number, terrainHeight: (x: number, z: number) => number): AircraftState {
+export function stepAircraft(a: AircraftState, inp: FlightInput, dt: number, terrainHeight: (x: number, z: number) => number, P: FlightPerf = FLIGHT): AircraftState {
   const s: AircraftState = { ...a };
   dt = clamp(dt, 0, 0.05);
 
@@ -53,18 +68,18 @@ export function stepAircraft(a: AircraftState, inp: FlightInput, dt: number, ter
   s.throttle = clamp(s.throttle + inp.throttleDelta * 0.6 * dt, 0, 1);
 
   // attitude: bank follows stick, nose follows stick, both self-centre
-  const targetRoll = clamp(inp.roll, -1, 1) * FLIGHT.maxRoll;
-  s.roll = approach(s.roll, targetRoll, FLIGHT.rollRate * dt);
-  const targetPitch = clamp(inp.pitch, -1, 1) * FLIGHT.maxPitch;
-  s.pitch = approach(s.pitch, targetPitch, FLIGHT.pitchRate * dt);
+  const targetRoll = clamp(inp.roll, -1, 1) * P.maxRoll;
+  s.roll = approach(s.roll, targetRoll, P.rollRate * dt);
+  const targetPitch = clamp(inp.pitch, -1, 1) * P.maxPitch;
+  s.pitch = approach(s.pitch, targetPitch, P.pitchRate * dt);
 
   // banking turns the aircraft (positive roll = right bank = clockwise from above = yaw decreases)
-  s.yaw = wrapAngle(s.yaw - Math.sin(s.roll) * FLIGHT.turnGain * dt);
+  s.yaw = wrapAngle(s.yaw - Math.sin(s.roll) * P.turnGain * dt);
 
   // speed: throttle sets the target, pitch trades energy
-  const targetSpeed = FLIGHT.minSpeed + (FLIGHT.maxSpeed - FLIGHT.minSpeed) * s.throttle;
-  s.speed = damp(s.speed, targetSpeed, FLIGHT.accel, dt) - Math.sin(s.pitch) * 9.8 * 0.35 * dt;
-  s.speed = clamp(s.speed, FLIGHT.minSpeed * 0.8, FLIGHT.maxSpeed * 1.15);
+  const targetSpeed = P.minSpeed + (P.maxSpeed - P.minSpeed) * s.throttle;
+  s.speed = damp(s.speed, targetSpeed, P.accel, dt) - Math.sin(s.pitch) * 9.8 * 0.35 * dt;
+  s.speed = clamp(s.speed, P.minSpeed * 0.8, P.maxSpeed * 1.15);
 
   // integrate
   const f = forwardVector(s);
@@ -73,8 +88,8 @@ export function stepAircraft(a: AircraftState, inp: FlightInput, dt: number, ter
   s.z += f[2] * s.speed * dt;
 
   // ceiling
-  if (s.y > FLIGHT.ceiling) {
-    s.y = FLIGHT.ceiling;
+  if (s.y > P.ceiling) {
+    s.y = P.ceiling;
     if (s.pitch > 0) s.pitch = 0;
   }
 
@@ -82,28 +97,28 @@ export function stepAircraft(a: AircraftState, inp: FlightInput, dt: number, ter
   const ground = terrainHeight(s.x, s.z);
   s.agl = s.y - ground;
   s.terrainWarning = false;
-  if (s.agl < FLIGHT.floorAgl) {
-    s.y = ground + FLIGHT.floorAgl;
-    s.agl = FLIGHT.floorAgl;
+  if (s.agl < P.floorAgl) {
+    s.y = ground + P.floorAgl;
+    s.agl = P.floorAgl;
     if (s.pitch < 0.12) s.pitch = 0.12;
     s.terrainWarning = true;
   } else if (s.agl < 45) {
     // look ahead: rising ground forces a gentle climb
     const aheadGround = terrainHeight(s.x + f[0] * 90, s.z + f[2] * 90);
-    if (aheadGround + FLIGHT.floorAgl > s.y) {
+    if (aheadGround + P.floorAgl > s.y) {
       s.terrainWarning = true;
-      if (s.pitch < 0.2) s.pitch = approach(s.pitch, 0.2, FLIGHT.pitchRate * 1.5 * dt);
+      if (s.pitch < 0.2) s.pitch = approach(s.pitch, 0.2, P.pitchRate * 1.5 * dt);
     }
   }
 
   // boundary: steer back toward the centre
   const r = Math.hypot(s.x, s.z);
-  s.boundaryWarning = Math.max(Math.abs(s.x), Math.abs(s.z)) > FLIGHT.bounds - 120;
-  if (Math.max(Math.abs(s.x), Math.abs(s.z)) > FLIGHT.bounds) {
+  s.boundaryWarning = Math.max(Math.abs(s.x), Math.abs(s.z)) > P.bounds - 120;
+  if (Math.max(Math.abs(s.x), Math.abs(s.z)) > P.bounds) {
     // forward is (-sin yaw, -cos yaw); to point at the centre we need (-x, -z)/r
     const want = Math.atan2(s.x / r, s.z / r);
     s.yaw = wrapAngle(s.yaw + wrapAngle(want - s.yaw) * clamp(2.5 * dt, 0, 1));
-    const k = FLIGHT.bounds / Math.max(Math.abs(s.x), Math.abs(s.z));
+    const k = P.bounds / Math.max(Math.abs(s.x), Math.abs(s.z));
     s.x *= k;
     s.z *= k;
   }

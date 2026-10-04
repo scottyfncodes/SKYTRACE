@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { box } from '../world/props';
 import type { HeightField } from '../world/terrain';
 import { TruckMesh } from '../world/truck';
+import { WATER_LEVEL } from '../world/worldData';
+import type { HazardDef } from '../operation/gates';
 import { RETURNS, type ReturnId, type Sector } from './mission01';
 import type { MissionState } from './mission';
 import type { RouteMover } from './vehicles';
@@ -95,6 +97,37 @@ class ScoutMesh {
   }
 }
 
+/** River barge moored at the landing. */
+class BargeMesh {
+  readonly group = new THREE.Group();
+  constructor() {
+    const hull = box(24, 2.2, 7, 0x4b3a2c);
+    hull.position.y = 0.6;
+    const deck = box(16, 1.6, 6, 0x6a5a44);
+    deck.position.set(-2, 2.4, 0);
+    const cabin = box(4, 3.4, 5, 0x8a8478);
+    cabin.position.set(9, 3.2, 0);
+    this.group.add(hull, deck, cabin);
+  }
+  setPose(x: number, z: number, _heading: number, hf: HeightField): void {
+    this.group.position.set(x, Math.max(hf.sample(x, z), WATER_LEVEL) + 0.2, z);
+    this.group.rotation.y = 0.55;
+  }
+}
+
+/** A storm cell: a dark column of cloud and rain. */
+function stormMesh(r: number): THREE.Group {
+  const g = new THREE.Group();
+  const outer = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 0.85, 620, 28, 1, true), new THREE.MeshBasicMaterial({ color: 0x3b3f48, transparent: true, opacity: 0.38, side: THREE.DoubleSide, depthWrite: false }));
+  outer.position.y = 330;
+  const core = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.6, r * 0.5, 600, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0x23262d, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }));
+  core.position.y = 320;
+  const top = new THREE.Mesh(new THREE.CylinderGeometry(r * 1.25, r, 120, 28), new THREE.MeshBasicMaterial({ color: 0x4a4e57, transparent: true, opacity: 0.6, depthWrite: false }));
+  top.position.y = 660;
+  g.add(outer, core, top);
+  return g;
+}
+
 interface Pose {
   setPose(x: number, z: number, heading: number, hf: HeightField): void;
   group: THREE.Group;
@@ -106,11 +139,14 @@ export class MissionScene {
   private vehicles = new Map<ReturnId, Pose>();
   private pins = new Map<ReturnId, THREE.Group>();
   readonly destinationMarker: THREE.Mesh;
+  private storms = new Map<string, THREE.Group>();
+  private deck: THREE.Mesh;
+  private waypoint: THREE.Mesh;
 
   constructor(sector: Sector, private hf: HeightField) {
     this.group.add(sectorCurtain(sector, hf));
     for (const r of RETURNS) {
-      const m: Pose = r.size === 'small' ? new ScoutMesh() : new TruckMesh();
+      const m: Pose = r.kind === 'vessel' ? new BargeMesh() : r.size === 'small' ? new ScoutMesh() : new TruckMesh();
       this.vehicles.set(r.id, m);
       this.group.add(m.group);
       const pin = new THREE.Group();
@@ -130,7 +166,46 @@ export class MissionScene {
     this.destinationMarker.rotation.x = -Math.PI / 2;
     this.destinationMarker.visible = false;
     this.group.add(this.destinationMarker);
+    // weather + route markers (shown per leg)
+    this.deck = new THREE.Mesh(new THREE.PlaneGeometry(3200, 3200), new THREE.MeshBasicMaterial({ color: 0x9aa0a8, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
+    this.deck.rotation.x = -Math.PI / 2;
+    this.deck.visible = false;
+    this.group.add(this.deck);
+    this.waypoint = new THREE.Mesh(new THREE.CylinderGeometry(6, 10, 520, 10, 1, true), new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: 0.32, depthWrite: false, side: THREE.DoubleSide }));
+    this.waypoint.visible = false;
+    this.group.add(this.waypoint);
     this.group.visible = false;
+  }
+
+  /** Show exactly these hazards (storm cells, cloud deck). */
+  setHazards(hazards: readonly HazardDef[]): void {
+    const want = new Set<string>();
+    this.deck.visible = false;
+    for (const h of hazards) {
+      if (h.kind === 'ceiling') {
+        this.deck.visible = true;
+        this.deck.position.y = h.y;
+        continue;
+      }
+      want.add(h.id);
+      if (!this.storms.has(h.id)) {
+        const m = stormMesh(h.r);
+        m.position.set(h.x, 0, h.z);
+        this.storms.set(h.id, m);
+        this.group.add(m);
+      }
+      this.storms.get(h.id)!.visible = true;
+    }
+    for (const [id, m] of this.storms) if (!want.has(id)) m.visible = false;
+  }
+
+  setWaypoint(p: { x: number; z: number } | null): void {
+    this.waypoint.visible = !!p;
+    if (p) this.waypoint.position.set(p.x, this.hf.sample(p.x, p.z) + 260, p.z);
+  }
+
+  animate(t: number): void {
+    for (const m of this.storms.values()) m.rotation.y = t * 0.05;
   }
 
   sync(movers: Map<ReturnId, RouteMover>, m: MissionState, t: number): void {
@@ -152,10 +227,13 @@ export class MissionScene {
     const was = [...this.pins.values()].map((p) => p.visible);
     for (const p of this.pins.values()) p.visible = false;
     const dest = this.destinationMarker.visible;
+    const wp = this.waypoint.visible;
     this.destinationMarker.visible = false;
+    this.waypoint.visible = false;
     fn();
     [...this.pins.values()].forEach((p, i) => (p.visible = was[i]));
     this.destinationMarker.visible = dest;
+    this.waypoint.visible = wp;
   }
 
   showDestination(x: number, z: number, on: boolean): void {

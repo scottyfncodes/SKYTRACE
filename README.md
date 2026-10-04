@@ -6,33 +6,31 @@ An aerial reconnaissance mystery. Fly a small aircraft over a miniature landscap
 
 The plane gets you there. The sensors show you what you missed. Your deductions reveal what it means.
 
-## Two jobs inside one aircraft
+## The operation
 
-SKYTRACE alternates between two deliberately separate modes:
+Every mission is a reconnaissance operation in five stages:
 
-- **PILOT** — you fly: heading, altitude, throttle, terrain, fuel, landing. The flight HUD says `PILOT · YOU ARE FLYING`.
-- **OPERATOR (Mission Control)** — the autopilot flies an orbit (the real flight model, driven by `src/flight/autopilot.ts`) and you never touch the stick. You run the recon systems: sensors, target selection, marking, re-tasking the orbit.
+**PREFLIGHT → OUTBOUND → RECON → RETURN → DEBRIEF**
 
-The grammar every mission is built on:
+1. **Preflight.** The briefing puts the objective first (primary, secondaries, intel, target area, weather, expected conditions, window, constraints, threats). Then plan the job:
+   - **Aircraft:** KESTREL (single seat, fast, quiet, short legs, fragile in weather), HERON (two crew, long range, weather-tolerant, louder), ALBATROSS (full crew, four bays; unlocked by experience).
+   - **Crew:** a copilot flies the recon orbit for you, tighter than the autopilot. A sensor operator identifies faster or takes better photographs. A navigator puts gates and weather on the scope from take-off.
+   - **Equipment:** search radar, optical camera, thermal imager, SIGINT (unlocked). Each answers a different question. A checklist shows whether the plan can do the primary objective.
+2. **Outbound (you fly).** Mission gates: fly to Waypoint ALPHA north of a storm cell, then enter Sector 7 below your aircraft's stealth ceiling. Storm cells shake the aircraft, burn fuel and damage light airframes; skipped gates and detection count against flight discipline.
+3. **Recon (Mission Control).** The autopilot or your copilot flies an orbit. You run the sensors, against a weather-front clock: haze builds and slows the optical camera. Objectives change as you discover things: locate the truck, photograph it, then *objective updated* (track it to its stop), then a barge is revealed (photograph the transfer). Extract any time once the primary is done.
+4. **Return (you fly again).** The front has arrived: a cloud deck at 300 m (the KESTREL's autopilot orbit is above it), a new storm cell across the direct route home, and haze. Fly via Waypoint BRAVO under the deck, then land.
+5. **Debrief.** A recon report: primary, secondaries, identification, evidence quality, flight discipline, fuel, damage, a grade, credits and XP, unlocks, and the intelligence the recon established.
 
-FLY TO TARGET → MISSION CONTROL → OPERATE → OBJECTIVE → **YOU HAVE CONTROL** → FLY HOME → LAND → DEBRIEF
-
-Mission Control opens only inside the mission's operations area while there is recon work to do (`O` / Enter, or the `MISSION CONTROL` button). `TAKE CONTROLS` hands the aircraft back at any time; Mission Control also hands it back by itself when the recon work is done or at bingo fuel. The hand-back is a gameplay event: time has passed, the aircraft is wherever the orbit left it, and conditions may have changed (Mission 01: haze). A hand-over report lists warnings first, then the return heading and fuel.
-
-## Mission 01: Find the Truck
-
-- **Objective:** locate the missing supply truck inside Sector 7. **Intel:** large, moving, on a road, in Sector 7.
-- **Pilot:** fly to Sector 7 (outlined in amber), open Mission Control.
-- **Operator:** the **radar** finds vehicles and shows whether they move, but cannot say what they are; tap the display to move the orbit. The **camera** shows what a selected return is (size, count, road); the orbit follows it. Each decoy fails the intel on exactly one point. **Mark** the one you believe is the truck (a wrong mark counts a false positive; the mission continues). Then track the truck to its stop and hold the camera on it.
-- **Pilot again:** Mission Control hands back; fly home through the haze and land.
-- **Debrief:** objective, identification, destination, false positives, time, time in Mission Control, fuel, recon findings and what each return really was.
+Progression (credits, XP, unlocks, best grade, last loadout) is saved in the browser, separately from the open case.
 
 | Mission Control | Touch | Keyboard |
 | --- | --- | --- |
-| Radar / camera | RADAR / CAMERA tabs | 1 / 2 |
-| Select a return | tap it (list or display) | A–D |
+| Sensors | RADAR / OPTICAL / THERMAL / SIGINT tabs | 1–4 |
+| Select a return | tap it (list or display) | A–E |
 | Move the orbit | tap the radar display | — |
 | Mark as the truck | MARK AS THE TRUCK | M |
+| Photograph | TAKE PHOTO | P |
+| Extract | EXTRACT · FLY HOME | X |
 | Take controls | TAKE CONTROLS | O or Enter |
 
 The original open-ended investigation is still available from the title screen as **Open case · Varrow Basin**.
@@ -96,11 +94,17 @@ Plain TypeScript + Vite + Three.js, no backend.
 | `src/ui/hud.ts` | Flight instruments and the phosphor radar scope |
 | `src/ui/intelMap.ts` | Paper intelligence map and dossier panel |
 | `src/mission/mission01.ts` | Mission 01 content: sector, vehicle returns, destination, briefing text |
-| `src/mission/missionDef.ts` | What a mission declares: operations area, orbit height, hand-back conditions |
+| `src/operation/catalog.ts` | Aircraft, crew and equipment definitions |
+| `src/operation/loadout.ts` | Loadout validation and the capabilities a plan gives you (pure, tested) |
+| `src/operation/gates.ts` | Mission gates and weather hazards for the flying legs (pure, tested) |
+| `src/operation/operation.ts` | Stage machine: preflight, outbound, recon, return, debrief (pure, tested) |
+| `src/operation/score.ts`, `career.ts` | Recon report, grade, rewards; progression and unlocks (pure, tested) |
+| `src/ui/preflight.ts` | Briefing and loadout screen |
+| `src/mission/missionDef.ts` | What a mission declares: briefing, operations area, recon window, outbound and return legs |
 | `src/mission/crew.ts` | Crew stations (pilot / operator), entry rules, forced hand-back, hand-over report (pure, tested) |
 | `src/flight/autopilot.ts` | Orbit autopilot that drives the unchanged flight model while the player operates (pure, tested) |
 | `src/ui/opsConsole.ts` | Mission Control console: radar display, camera feed frame, returns, mark, take controls |
-| `src/mission/mission.ts` | Mission rules: objective state machine, identification, debrief (pure, tested) |
+| `src/mission/mission.ts` | Mission 01 recon rules: objective chain, sensors, photographs, dynamic objectives (pure, tested) |
 | `src/mission/vehicles.ts` | Route-following vehicles (pure, tested); `missionScene.ts` renders sector and vehicles |
 | `src/game/Game.ts` | Orchestration: mission and case sorties, modes, actions, world markers |
 

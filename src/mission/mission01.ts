@@ -3,7 +3,13 @@
  * `mission.ts` only read it.
  *
  * The puzzle: four vehicle returns, each matching the intelligence on every
- * point but one. Only the supply truck matches all four.
+ * point but one. Only the supply truck matches all four. Each sensor answers
+ * a different part of the question (radar: where and moving; optical: size
+ * and road; thermal: size and engine heat; SIGINT: radio).
+ *
+ * The operation: route north of a storm cell, enter the sector low, find and
+ * photograph the truck before the weather front arrives, then follow what the
+ * recon turns up, and fly home under a cloud deck around a new storm.
  */
 import type { Pt } from '../world/worldData';
 import type { MissionDef } from './missionDef';
@@ -20,7 +26,7 @@ export interface Sector {
 /** Sector 7: the eastern roads, from the haul road to the river landing. */
 export const SECTOR_7: Sector = { id: 'sector7', label: 'SECTOR 7', x0: 400, z0: -300, x1: 1000, z1: 560 };
 
-export type ReturnId = 'A' | 'B' | 'C' | 'D';
+export type ReturnId = 'A' | 'B' | 'C' | 'D' | 'E';
 
 export interface ReturnDef {
   id: ReturnId;
@@ -37,6 +43,13 @@ export interface ReturnDef {
   signature: number;
   concealment: number;
   isTarget: boolean;
+  /** Thermal: is an engine running? */
+  engine: 'running' | 'cold';
+  /** SIGINT: is it transmitting? */
+  radio: boolean;
+  /** Not on the radar until the recon reveals it (dynamic objective). */
+  hidden?: boolean;
+  kind?: 'vehicle' | 'vessel';
   /** Plain-language identity, revealed in the debrief. */
   truth: string;
 }
@@ -61,6 +74,8 @@ export const RETURNS: readonly ReturnDef[] = [
     signature: 0.7,
     concealment: 0.1,
     isTarget: false,
+    engine: 'cold',
+    radio: false,
     truth: 'A broken-down quarry lorry parked beside the main road.',
   },
   {
@@ -79,6 +94,8 @@ export const RETURNS: readonly ReturnDef[] = [
     signature: 0.6,
     concealment: 0.1,
     isTarget: false,
+    engine: 'running',
+    radio: true,
     truth: 'Our own scout patrol: three light 4x4s working the haul road.',
   },
   {
@@ -93,6 +110,8 @@ export const RETURNS: readonly ReturnDef[] = [
     signature: 0.7,
     concealment: 0.1,
     isTarget: true,
+    engine: 'running',
+    radio: false,
     truth: 'The missing supply truck, circling the mine road with a dead radio.',
   },
   {
@@ -112,7 +131,27 @@ export const RETURNS: readonly ReturnDef[] = [
     signature: 0.7,
     concealment: 0.1,
     isTarget: false,
+    engine: 'running',
+    radio: false,
     truth: 'A farm lorry on the main road, west of Sector 7.',
+  },
+  {
+    id: 'E',
+    size: 'large',
+    count: 1,
+    moving: false,
+    onRoad: false,
+    route: [[528, 556]],
+    speed: 0,
+    start: 0,
+    signature: 0.8,
+    concealment: 0.1,
+    isTarget: false,
+    engine: 'running',
+    radio: true,
+    hidden: true,
+    kind: 'vessel',
+    truth: 'A river barge, engines running, taking the truck\'s cargo off the landing.',
   },
 ];
 
@@ -128,21 +167,55 @@ export const DESTINATION_TAIL: readonly Pt[] = [
 export const MINE_ROAD_PTS = MINE_ROAD;
 export const TARGET_SPEED_TO_DESTINATION = 17;
 
+export const OPERATIONS_AREA = SECTOR_7;
+
 export const MISSION_01 = {
+  id: 'mission01',
   code: 'MISSION 01',
   title: 'FIND THE TRUCK',
-  objective: 'Locate the missing supply truck inside Sector 7.',
-  success: 'Mark the truck, confirm where it goes, then return to base.',
-  /** Layer 2: what the pilot knows before take-off. */
+  objective: 'Locate, identify and photograph the missing supply truck in Sector 7.',
+  success: 'Photograph the truck, act on what you find, then fly home and land.',
+  /** Layer 2: what the crew knows before take-off. */
   intel: [
-    'Last radio contact 10 minutes ago, driving a road inside Sector 7 (east of base, outlined in amber).',
+    'Last radio contact 10 minutes ago, driving a road inside Sector 7. Its radio has been silent since.',
     'It is a large cargo truck: bigger than our scout patrol of three light 4x4s, which is also in the sector.',
     'It should still be moving.',
   ],
   /** Compact reminder shown under the objective while searching. */
   intelShort: 'LARGE · MOVING · ON A ROAD · IN SECTOR 7',
-  fuelSeconds: 420,
-  operations: { area: SECTOR_7, orbitAgl: 260 },
-  /** While the crew watched the truck, haze settled over the basin. */
-  handback: { visibility: 0.42, notices: ['LOW VISIBILITY · HAZE OVER THE BASIN'] },
+  briefing: {
+    headline: 'LOCATE THE MISSING SUPPLY TRUCK',
+    primary: 'Find the supply truck in Sector 7, identify it, and photograph it as evidence.',
+    secondaries: ['Reach Sector 7 undetected', 'Further tasking may follow once the truck is found'],
+    weather: 'Clear at take-off. A storm cell sits over the main road between base and the sector.',
+    conditions: 'A front arrives from the west about 5 minutes after you reach the sector: haze first, then a cloud deck at 300 m and a new storm cell across the direct route home.',
+    targetArea: 'Sector 7: the eastern roads, outlined in amber. Grid I–K / 5–9.',
+    constraints: ['Route north of the storm via Waypoint ALPHA', 'Enter Sector 7 low: the ridge radar sees anything above your stealth ceiling', 'Land at base before fuel runs out'],
+    window: '5:00 on station before the front forces extraction',
+    threats: ['Ridge radar watching the sector', 'Storm cell over the main road', 'Our own scout patrol is in the sector: do not misidentify it'],
+  },
+  operations: { area: SECTOR_7 },
+  reconWindow: 300,
+  reconVisibilityEnd: 0.55,
+  outbound: {
+    id: 'outbound',
+    gates: [
+      { kind: 'waypoint', id: 'alpha', label: 'WAYPOINT ALPHA', x: -280, z: 200, r: 150, objective: 'FLY TO WAYPOINT ALPHA', detail: 'ROUTE NORTH OF THE STORM CELL' },
+      { kind: 'enterArea', id: 'sector', label: 'SECTOR 7 ENTRY', area: SECTOR_7, stealth: true, objective: 'ENTER SECTOR 7 LOW', detail: 'STAY UNDER THE RIDGE RADAR' },
+    ],
+    hazards: [{ kind: 'storm', id: 'storm1', label: 'STORM CELL', x: -80, z: 480, r: 230 }],
+  },
+  return: {
+    id: 'return',
+    gates: [
+      { kind: 'waypoint', id: 'bravo', label: 'WAYPOINT BRAVO', x: -140, z: 650, r: 160, objective: 'FLY TO WAYPOINT BRAVO', detail: 'SOUTH OF THE NEW STORM · UNDER THE CLOUD DECK' },
+      { kind: 'land', id: 'land', label: 'LANDING', objective: 'LAND AT BASE', detail: 'FLY LOW OVER THE RUNWAY' },
+    ],
+    hazards: [
+      { kind: 'storm', id: 'storm2', label: 'STORM CELL', x: 20, z: 260, r: 230 },
+      { kind: 'ceiling', id: 'deck', label: 'CLOUD DECK', y: 300 },
+    ],
+    visibility: 0.45,
+    notices: ['WEATHER FRONT · CLOUD DECK AT 300 m', 'NEW STORM CELL ACROSS THE DIRECT ROUTE'],
+  },
 } as const satisfies MissionDef;

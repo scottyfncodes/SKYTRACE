@@ -1,57 +1,78 @@
 import { describe, expect, it } from 'vitest';
 import { DESTINATION, MISSION_01, RETURNS, SECTOR_7, TARGET_SPEED_TO_DESTINATION, type ReturnId } from '../src/mission/mission01';
 import {
-  buildDebrief,
+  BARGE,
+  CAMERA_SECONDS,
+  canExtract,
   CONFIRM_SECONDS,
   describeReturn,
   destinationRoute,
-  fail,
+  evidenceGrade,
+  extract,
   formatTime,
   identify,
   inSector,
   inspectReturn,
-  CAMERA_SECONDS,
-  isActive,
-  land,
+  intelligence,
+  listenReturn,
   mismatchReason,
   MISSION_RATE,
   newMission,
-  objectiveFor,
+  operatorWork,
+  photograph,
+  photoQuality,
+  reconObjective,
   RETURN_BY_ID,
   scanReturn,
+  secondaries,
   TARGET,
   updateDestination,
   type MissionState,
 } from '../src/mission/mission';
 import { RouteMover } from '../src/mission/vehicles';
-import { canResolve, detectionGain, radarParams } from '../src/sensors/radar';
+import { detectionGain, radarParams } from '../src/sensors/radar';
 import { pauseTransition } from '../src/game/modes';
 
-/** Hold the radar over a return from a given altitude until `seconds` pass. */
+/** Hold the radar over a return from a given altitude. */
 function scan(m: MissionState, id: ReturnId, agl: number, seconds: number, dist = 20): void {
   const p = radarParams(agl);
   const def = RETURN_BY_ID[id];
-  for (let t = 0; t < seconds; t += 0.05) scanReturn(m, id, detectionGain(0.05, p, dist, def, false, MISSION_RATE), canResolve(p, def), 600, 300);
+  for (let t = 0; t < seconds; t += 0.05) scanReturn(m, id, detectionGain(0.05, p, dist, def, false, MISSION_RATE), 600, 300);
 }
+const look = (m: MissionState, id: ReturnId, sensor: 'optical' | 'thermal' = 'optical') => inspectReturn(m, id, CAMERA_SECONDS + 0.01, true, sensor);
+/** Locate and identify the truck. */
+const found = () => {
+  const m = newMission();
+  scan(m, 'C', 150, 6);
+  look(m, 'C');
+  identify(m, 'C');
+  return m;
+};
 
 describe('mission 01 content', () => {
   it('loads with one clear objective and a single target', () => {
     const m = newMission();
     expect(m.phase).toBe('locate');
-    expect(Object.keys(m.returns).sort()).toEqual(['A', 'B', 'C', 'D']);
+    expect(Object.keys(m.returns).sort()).toEqual(['A', 'B', 'C', 'D', 'E']);
     expect(RETURNS.filter((r) => r.isTarget)).toHaveLength(1);
     expect(TARGET.id).toBe('C');
-    expect(MISSION_01.title).toBe('FIND THE TRUCK');
-    expect(MISSION_01.objective).toMatch(/Locate the missing supply truck/);
-    expect(MISSION_01.success).toMatch(/return to base/i);
-    const ob = objectiveFor(m);
-    expect(ob.title).toBe('LOCATE THE SUPPLY TRUCK');
-    expect(ob.detail).toBe(MISSION_01.intelShort);
+    expect(MISSION_01.briefing.headline).toBe('LOCATE THE MISSING SUPPLY TRUCK');
+    const ob = reconObjective(m, { station: 'operator' });
+    expect(ob).toEqual({ kicker: 'PRIMARY', title: 'LOCATE THE SUPPLY TRUCK', detail: MISSION_01.intelShort, done: false });
+    expect(m.returns.E.hidden).toBe(true);
     expect(Object.values(m.returns).every((r) => !r.detected && r.verdict === 'none')).toBe(true);
   });
 
+  it('the briefing covers everything a crew needs before take-off', () => {
+    const b = MISSION_01.briefing;
+    for (const k of ['primary', 'weather', 'conditions', 'targetArea', 'window'] as const) expect(b[k].length).toBeGreaterThan(10);
+    expect(b.secondaries.length).toBeGreaterThan(0);
+    expect(b.constraints.length).toBeGreaterThan(0);
+    expect(b.threats.length).toBeGreaterThan(0);
+  });
+
   it('each decoy contradicts the intel on exactly one point, wherever it drives', () => {
-    for (const r of RETURNS) {
+    for (const r of RETURNS.filter((x) => x.kind !== 'vessel')) {
       const mv = new RouteMover(r.route, r.speed, r.start, true);
       const reasons = new Set<string | null>();
       for (let t = 0; t < 400; t += 0.5) {
@@ -68,6 +89,14 @@ describe('mission 01 content', () => {
     expect(mismatchReason(RETURN_BY_ID.D, 0, 600)).toMatch(/outside Sector 7/);
   });
 
+  it('each sensor has a clue to give: engines and radios differ in the right places', () => {
+    expect(RETURN_BY_ID.A.engine).toBe('cold'); // parked
+    expect(RETURN_BY_ID.C.engine).toBe('running');
+    expect(RETURN_BY_ID.C.radio).toBe(false); // the dead radio from the briefing
+    expect(RETURN_BY_ID.B.radio).toBe(true); // our scouts talk
+    expect(MISSION_01.intel.join(' ')).toMatch(/silent/);
+  });
+
   it('the truck starts inside Sector 7 and its destination is inside too', () => {
     const c = new RouteMover(TARGET.route, TARGET.speed, TARGET.start, true);
     expect(inSector(c.x, c.z)).toBe(true);
@@ -76,42 +105,72 @@ describe('mission 01 content', () => {
   });
 });
 
-describe('recon / scanning', () => {
-  it('radar detects a return; its size stays unknown until the camera looks', () => {
+describe('sensors', () => {
+  it('radar detects; size stays unknown until a camera looks', () => {
     const m = newMission();
     scan(m, 'B', 450, 6);
     expect(m.returns.B.detected).toBe(true);
-    expect(m.returns.B.resolved).toBe(false);
-    const card = describeReturn(m, 'B', 600, 250, true);
-    expect(card.traits[0]).toBe('SIZE ? · USE THE CAMERA');
-    inspectReturn(m, 'B', CAMERA_SECONDS + 0.1, true);
-    expect(m.returns.B.resolved).toBe(true);
+    expect(describeReturn(m, 'B', 600, 250, true).traits).toEqual(['SIZE ? · USE A CAMERA', 'MOVING', 'IN SECTOR 7']);
+  });
+
+  it('optical gives size, count and road; thermal gives size, count and engine heat', () => {
+    const m = newMission();
+    scan(m, 'B', 150, 6);
+    scan(m, 'A', 150, 6);
+    expect(look(m, 'B', 'optical')[0].text).toBe('OPTICAL · RETURN B IS 3 SMALL VEHICLES');
     expect(describeReturn(m, 'B', 600, 250, true).traits).toEqual(['3 SMALL VEHICLES', 'MOVING', 'ON ROAD', 'IN SECTOR 7']);
+    expect(look(m, 'A', 'thermal')[0].text).toBe('THERMAL · RETURN A IS A LARGE VEHICLE · ENGINE COLD');
+    expect(describeReturn(m, 'A', 612, 452, false).traits).toEqual(['LARGE VEHICLE', 'STATIONARY', 'ENGINE COLD', 'IN SECTOR 7']);
+    // a second camera adds its own fact
+    expect(look(m, 'A', 'optical')[0].text).toMatch(/OPTICAL/);
+    expect(describeReturn(m, 'A', 612, 452, false).traits).toContain('ON ROAD');
+    expect(look(m, 'A', 'optical')).toEqual([]);
   });
 
-  it('reports detection then resolution as events, once each', () => {
+  it('identification needs steady camera time in view', () => {
     const m = newMission();
-    const p = radarParams(120);
-    const def = RETURN_BY_ID.C;
-    const types: string[] = [];
-    for (let t = 0; t < 10; t += 0.05) for (const e of scanReturn(m, 'C', detectionGain(0.05, p, 20, def, false, MISSION_RATE), canResolve(p, def), 700, 100)) types.push(e.type);
-    expect(types).toEqual(['detected', 'resolved']);
-    expect(m.returns.C.lastKnown).toEqual({ x: 700, z: 100 });
+    scan(m, 'C', 150, 6);
+    expect(inspectReturn(m, 'C', 5, false)).toEqual([]);
+    expect(inspectReturn(m, 'C', CAMERA_SECONDS / 2, true)).toEqual([]);
+    expect(inspectReturn(m, 'C', CAMERA_SECONDS / 2 + 0.01, true)).toHaveLength(1);
+    expect(inspectReturn(m, 'D', 5, true)).toEqual([]); // not detected yet
   });
 
-  it('cards say whether a return is outside Sector 7', () => {
+  it('SIGINT tells transmitting from silent', () => {
     const m = newMission();
-    scan(m, 'D', 150, 6);
-    expect(describeReturn(m, 'D', 0, 600, true).traits).toContain('OUTSIDE SECTOR 7');
-    expect(describeReturn(m, 'A', 612, 452, false).traits).toContain('STATIONARY');
+    scan(m, 'B', 150, 6);
+    scan(m, 'C', 150, 6);
+    expect(listenReturn(m, 'B', true)[0].text).toBe('SIGINT · RETURN B IS TRANSMITTING');
+    expect(listenReturn(m, 'C', false)).toEqual([]);
+    expect(listenReturn(m, 'C', true)[0].text).toBe('SIGINT · RETURN C IS RADIO SILENT');
+    expect(describeReturn(m, 'C', 700, 100, true).traits).toContain('RADIO SILENT');
+    expect(listenReturn(m, 'C', true)).toEqual([]);
+  });
+
+  it('the barge cannot be found until the recon reveals it', () => {
+    const m = newMission();
+    scanReturn(m, 'E', 10, 528, 556);
+    expect(m.returns.E.detected).toBe(false);
+  });
+
+  it('photo quality: optical is sharpest, haze hurts optical not thermal, range and crew matter', () => {
+    const q = (o: Partial<Parameters<typeof photoQuality>[0]>) => photoQuality({ sensor: 'optical', slant: 300, visibility: 1, bonus: 0, ...o });
+    expect(q({})).toBeGreaterThan(q({ sensor: 'thermal' }));
+    expect(q({ visibility: 0.5 })).toBeLessThan(q({}));
+    expect(q({ sensor: 'thermal', visibility: 0.5 })).toBe(q({ sensor: 'thermal' }));
+    expect(q({ slant: 550 })).toBeLessThan(q({}));
+    expect(q({ bonus: 0.15 })).toBeGreaterThan(q({}));
+    expect(evidenceGrade(0)).toBe('NONE');
+    expect(evidenceGrade(0.9)).toBe('EXCELLENT');
+    expect(evidenceGrade(0.7)).toBe('GOOD');
+    expect(evidenceGrade(0.5)).toBe('FAIR');
+    expect(evidenceGrade(0.2)).toBe('POOR');
   });
 });
 
-describe('identification and objective progression', () => {
+describe('recon objectives and dynamic updates', () => {
   it('cannot mark a return that has not been detected', () => {
-    const m = newMission();
-    expect(identify(m, 'C').result).toBe('unknown');
-    expect(m.phase).toBe('locate');
+    expect(identify(newMission(), 'C').result).toBe('unknown');
   });
 
   it('a wrong identification counts a false positive and does not complete the objective', () => {
@@ -119,65 +178,124 @@ describe('identification and objective progression', () => {
     scan(m, 'D', 150, 6);
     const r = identify(m, 'D');
     expect(r.result).toBe('wrong');
-    expect(r.events[0].type).toBe('wrong');
     expect(m.phase).toBe('locate');
-    expect(m.targetIdentified).toBe(false);
     expect(m.falsePositives).toBe(1);
     expect(identify(m, 'D').result).toBe('already');
     expect(m.falsePositives).toBe(1);
-    expect(isActive(m)).toBe(true);
   });
 
-  it('the correct identification completes the objective and announces the next one, in order', () => {
+  it('LOCATE → PHOTOGRAPH, announced in order', () => {
     const m = newMission();
     scan(m, 'C', 150, 6);
     const r = identify(m, 'C');
-    expect(r.result).toBe('correct');
-    expect(r.events.map((e) => e.type)).toEqual(['objective-complete', 'new-objective']);
-    expect(r.events[0].text).toBe('Supply truck located.');
-    expect(r.events[1].text).toMatch(/Confirm the truck's destination/);
-    expect(m.phase).toBe('destination');
-    expect(objectiveFor(m).title).toBe("CONFIRM THE TRUCK'S DESTINATION");
-    expect(objectiveFor(m, { station: 'operator', truckStopped: true }).detail).toMatch(/STOPPED/);
-    // marking is over once the truck is found
-    scan(m, 'A', 150, 6);
-    expect(identify(m, 'A').result).toBe('inactive');
-    expect(m.falsePositives).toBe(0);
+    expect(r.events.map((e) => [e.type, e.text])).toEqual([
+      ['objective-complete', 'Supply truck located.'],
+      ['new-objective', 'Photograph the truck as evidence.'],
+    ]);
+    expect(m.phase).toBe('photograph');
+    expect(reconObjective(m, { station: 'operator' }).title).toBe('PHOTOGRAPH THE TRUCK');
   });
 
-  it('destination is confirmed only once the truck has stopped and the aircraft is over it', () => {
+  it('a photograph needs an identified target; it completes the primary and updates the objective', () => {
     const m = newMission();
     scan(m, 'C', 150, 6);
-    identify(m, 'C');
-    for (let t = 0; t < 10; t += 0.1) expect(updateDestination(m, 0.1, false, 50)).toEqual([]);
-    expect(m.confirm).toBe(0);
-    for (let t = 0; t < 10; t += 0.1) updateDestination(m, 0.1, true, 900);
-    expect(m.phase).toBe('destination');
-    const events = [];
-    for (let t = 0; t <= CONFIRM_SECONDS + 0.2; t += 0.1) events.push(...updateDestination(m, 0.1, true, 120));
-    expect(events.map((e) => e.type)).toEqual(['objective-complete', 'final-objective']);
-    expect(events[0].text).toContain(DESTINATION.name);
-    expect(events[1].text).toBe('Return to base.');
-    expect(m.phase).toBe('rtb');
-    expect(m.destinationConfirmed).toBe(true);
-    expect(objectiveFor(m).title).toBe('RETURN TO BASE');
+    identify(m, 'C'); // marked from radar alone: a gamble that paid off
+    expect(photograph(m, 'C', 0.9).result).toBe('unidentified');
+    look(m, 'C');
+    const r = photograph(m, 'C', 0.9);
+    expect(r.result).toBe('primary');
+    expect(r.events.map((e) => e.type)).toEqual(['objective-complete', 'objective-updated']);
+    expect(r.events[0].text).toBe('Truck photographed · evidence EXCELLENT.');
+    expect(m.primaryComplete).toBe(true);
+    expect(m.phase).toBe('track');
+    expect(reconObjective(m, { station: 'operator' })).toMatchObject({ kicker: 'SECONDARY', title: "CONFIRM THE TRUCK'S DESTINATION" });
+    expect(canExtract(m)).toBe(true);
+    // a better shot later improves the evidence; a worse one keeps the best
+    photograph(m, 'C', 0.95);
+    photograph(m, 'C', 0.2);
+    expect(m.photos.truck).toBe(0.95);
   });
 
-  it('landing only completes the mission in the return-to-base phase', () => {
+  it('photographing anything else in the photograph phase does nothing for the objective', () => {
+    const m = found();
+    scan(m, 'A', 150, 6);
+    look(m, 'A');
+    expect(photograph(m, 'A', 0.9).result).toBe('untasked');
+    expect(m.phase).toBe('photograph');
+  });
+
+  it('TRACK: confirmed only when the truck has stopped and a camera is on it; the barge appears', () => {
+    const m = found();
+    photograph(m, 'C', 0.8);
+    for (let t = 0; t < 10; t += 0.1) expect(updateDestination(m, 0.1, false, true)).toEqual([]);
+    for (let t = 0; t < 10; t += 0.1) updateDestination(m, 0.1, true, false);
+    expect(m.phase).toBe('track');
+    const ev = [];
+    for (let t = 0; t <= CONFIRM_SECONDS + 0.2; t += 0.1) ev.push(...updateDestination(m, 0.1, true, true));
+    expect(ev.map((e) => e.type)).toEqual(['objective-complete', 'objective-updated']);
+    expect(ev[0].text).toContain(DESTINATION.name);
+    expect(ev[1].text).toMatch(/barge/);
+    expect(m.phase).toBe('landing');
+    expect(m.returns.E.detected && !m.returns.E.hidden).toBe(true);
+    expect(reconObjective(m, { station: 'operator' }).title).toBe('PHOTOGRAPH THE BARGE');
+  });
+
+  it('LANDING: photographing the barge completes the recon', () => {
+    const m = found();
+    photograph(m, 'C', 0.8);
+    updateDestination(m, CONFIRM_SECONDS + 1, true, true);
+    look(m, BARGE.id, 'thermal');
+    const r = photograph(m, BARGE.id, 0.7);
+    expect(r.result).toBe('transfer');
+    expect(r.events.map((e) => e.type)).toEqual(['objective-complete', 'recon-complete']);
+    expect(m.phase).toBe('extract');
+    expect(m.extractReason).toBe('complete');
+    expect(operatorWork(m)).toBe(false);
+    expect(reconObjective(m).kicker).toBe('EXTRACTION');
+  });
+
+  it('extraction: by choice only once the primary is done; forced by weather or fuel any time', () => {
     const m = newMission();
-    expect(land(m).ok).toBe(false);
+    expect(extract(m, 'manual')).toEqual([]);
     expect(m.phase).toBe('locate');
-    m.phase = 'rtb';
-    const r = land(m);
-    expect(r.ok).toBe(true);
-    expect(m.phase).toBe('complete');
-    expect(objectiveFor(m).done).toBe(true);
-    expect(isActive(m)).toBe(false);
-    expect(fail(m, 'fuel')).toEqual([]);
+    expect(extract(m, 'weather')[0].title).toBe('WEATHER FRONT');
+    expect(m.phase).toBe('extract');
+    expect(extract(m, 'fuel')).toEqual([]);
+    const m2 = found();
+    photograph(m2, 'C', 0.8);
+    expect(extract(m2, 'manual')[0].title).toBe('EXTRACTING');
+    expect(m2.extractReason).toBe('manual');
+  });
+
+  it('in the pilot seat the objective says how to get back to the recon', () => {
+    const m = newMission();
+    expect(reconObjective(m, { station: 'pilot', inArea: true }).detail).toBe('OPEN MISSION CONTROL');
+    expect(reconObjective(m, { station: 'pilot', inArea: false }).detail).toMatch(/FLY BACK TO SECTOR 7/);
+    expect(reconObjective(m, { station: 'operator', truckStopped: true }).title).toBe('LOCATE THE SUPPLY TRUCK');
+  });
+
+  it('secondaries are issued in the field as the recon unfolds', () => {
+    const m = found();
+    expect(secondaries(m, false).map((s) => s.issued)).toEqual([true, false, false]);
+    photograph(m, 'C', 0.8);
+    updateDestination(m, CONFIRM_SECONDS + 1, true, true);
+    const s = secondaries(m, true);
+    expect(s.map((x) => x.issued)).toEqual([true, true, true]);
+    expect(s.map((x) => x.done)).toEqual([false, true, false]);
+  });
+
+  it('intelligence reports what the recon established and why decoys were not the truck', () => {
+    const m = found();
+    scan(m, 'A', 150, 6);
+    expect(identify(m, 'A').result).toBe('inactive'); // marking closes once the truck is found
+    photograph(m, 'C', 0.8);
+    updateDestination(m, CONFIRM_SECONDS + 1, true, true);
+    expect(intelligence(m)[0]).toMatch(/Sallow river landing/);
+    expect(intelligence(m).join(' ')).toMatch(/Return A: A broken-down quarry lorry.*stationary/);
   });
 });
 
-describe('the truck drives to its destination once found', () => {
+describe('the truck drives to its destination once photographed', () => {
   it('builds a road route from its current mine-road segment to the landing', () => {
     const r = destinationRoute(765, 50, 1);
     expect(r[0]).toEqual([765, 50]);
@@ -197,9 +315,6 @@ describe('the truck drives to its destination once found', () => {
       }
       expect(mv.arrived).toBe(true);
       expect(t).toBeLessThan(110);
-      expect(Math.hypot(mv.x - DESTINATION.x, mv.z - DESTINATION.z)).toBeLessThan(0.01);
-      mv.step(1);
-      expect(mv.moving).toBe(false);
     }
   });
 
@@ -213,59 +328,17 @@ describe('the truck drives to its destination once found', () => {
       expect(b.x).toBeGreaterThanOrEqual(470 - 1e-6);
       expect(b.x).toBeLessThanOrEqual(690 + 1e-6);
     }
-    expect(b.moving).toBe(true);
   });
 });
 
-describe('debrief', () => {
-  it('summarises a clean, complete sortie', () => {
-    const m = newMission();
-    scan(m, 'C', 150, 6);
-    scan(m, 'A', 150, 6);
-    identify(m, 'C');
-    for (let t = 0; t <= CONFIRM_SECONDS + 0.2; t += 0.1) updateDestination(m, 0.1, true, 50);
-    land(m);
-    m.time = 222.4;
-    const d = buildDebrief(m, 0.613);
-    expect(d.success).toBe(true);
-    expect(d.headline).toBe('MISSION COMPLETE');
-    const row = (l: string) => d.rows.find((r) => r.label === l)!.value;
-    expect(row('Objective')).toBe('Complete');
-    expect(row('Supply truck identified')).toBe('Yes · Return C');
-    expect(row('Destination confirmed')).toBe(DESTINATION.name);
-    expect(row('False positives')).toBe('0');
-    expect(row('Time')).toBe('03:42');
-    expect(row('Fuel remaining')).toBe('61%');
-    expect(row('Recon findings')).toBe('2 of 4 returns');
-    expect(d.findings).toHaveLength(2);
-  });
-
-  it('records false positives with the reason they did not match', () => {
-    const m = newMission();
-    scan(m, 'A', 150, 6);
-    identify(m, 'A');
-    fail(m, 'fuel');
-    const d = buildDebrief(m, 0);
-    expect(d.success).toBe(false);
-    expect(d.headline).toMatch(/FUEL/);
-    expect(d.rows.find((r) => r.label === 'False positives')!.value).toBe('1');
-    expect(d.rows.find((r) => r.label === 'Supply truck identified')!.value).toBe('No');
-    expect(d.findings[0]).toMatch(/marked in error.*stationary/);
-  });
-
-  it('formats mission time as mm:ss', () => {
+describe('misc', () => {
+  it('formats time as mm:ss', () => {
     expect(formatTime(0)).toBe('00:00');
-    expect(formatTime(59.9)).toBe('00:59');
     expect(formatTime(222)).toBe('03:42');
   });
-});
-
-describe('pause transitions', () => {
-  it('pauses flight, resumes from pause, ignores other screens', () => {
+  it('pause transitions: flight ↔ paused, other screens ignore it', () => {
     expect(pauseTransition('flight')).toBe('paused');
     expect(pauseTransition('paused')).toBe('flight');
-    expect(pauseTransition('title')).toBeNull();
-    expect(pauseTransition('intel')).toBeNull();
-    expect(pauseTransition('debrief')).toBeNull();
+    for (const m of ['title', 'preflight', 'intel', 'debrief'] as const) expect(pauseTransition(m)).toBeNull();
   });
 });

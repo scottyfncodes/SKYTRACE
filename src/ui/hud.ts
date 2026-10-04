@@ -31,7 +31,13 @@ export interface HudFrame {
   /** Replaces "SORTIE n" (mission mode). */
   sortieLabel?: string;
   /** Mission objective indicator; null hides it (open case). */
-  objective?: { title: string; detail: string; progress: number | null; done: boolean } | null;
+  objective?: { kicker?: string; title: string; detail: string; progress: number | null; done: boolean } | null;
+  /** Small status chips under the nav strip (weather, cloud clearance). */
+  chips?: { text: string; cls?: string }[];
+  /** Mission warning shown when nothing more urgent is (e.g. IN CLOUD). */
+  warning?: string;
+  /** Storm cells drawn on the scope. */
+  storms?: { x: number; z: number; r: number }[];
   /** Search area outlined on the scope. */
   sector?: { x0: number; z0: number; x1: number; z1: number } | null;
 }
@@ -53,6 +59,7 @@ export class Hud {
   private banners: Banner[] = [];
   private bannerShown: Banner | null = null;
   private lastObjective = '';
+  private lastChips = '';
 
   constructor(root: HTMLElement) {
     const q = (id: string) => {
@@ -60,7 +67,7 @@ export class Hud {
       if (!e) throw new Error(`missing #${id}`);
       return e;
     };
-    for (const id of ['alt', 'spd', 'hdg', 'compass', 'fuel-fill', 'fuel-txt', 'sensors', 'sortie', 'msgs', 'warn', 'nav', 'contact-card', 'cc-code', 'cc-label', 'cc-grid', 'cc-conf', 'cc-status', 'radar-state', 'btn-mark', 'btn-scan', 'btn-drop', 'btn-rtb', 'signal', 'thr-fill', 'objective', 'obj-title', 'obj-detail', 'obj-progress', 'banner', 'banner-kicker', 'banner-text', 'cc-traits', 'cc-action']) {
+    for (const id of ['alt', 'spd', 'hdg', 'compass', 'fuel-fill', 'fuel-txt', 'sensors', 'sortie', 'msgs', 'warn', 'nav', 'contact-card', 'cc-code', 'cc-label', 'cc-grid', 'cc-conf', 'cc-status', 'radar-state', 'btn-mark', 'btn-scan', 'btn-drop', 'btn-rtb', 'signal', 'thr-fill', 'objective', 'obj-title', 'obj-detail', 'obj-progress', 'banner', 'banner-kicker', 'banner-text', 'cc-traits', 'cc-action', 'obj-kicker', 'chips']) {
       this.el[id] = q(id);
     }
     this.scope = q('scope') as HTMLCanvasElement;
@@ -140,6 +147,7 @@ export class Hud {
     const ob = f.objective ?? null;
     this.el['objective'].classList.toggle('hidden', !ob);
     if (ob) {
+      this.el['obj-kicker'].textContent = ob.kicker ?? '';
       const key = `${ob.title}|${ob.detail}|${ob.done}`;
       if (key !== this.lastObjective) {
         this.lastObjective = key;
@@ -161,6 +169,7 @@ export class Hud {
     let warn = '';
     if (a.terrainWarning) warn = 'TERRAIN';
     else if (a.boundaryWarning) warn = 'EDGE OF AREA';
+    else if (f.warning) warn = f.warning;
     else if (f.fuel < 0.12) warn = 'FUEL — RETURN TO BASE';
     if (warn !== this.lastWarn) {
       this.el['warn'].textContent = warn;
@@ -193,6 +202,13 @@ export class Hud {
       this.el['signal'].innerHTML = `SIG ${arrow(rel)} ${String(Math.round(f.signal.bearing)).padStart(3, '0')}° <i style="width:${Math.round(f.signal.strength * 40)}px"></i>`;
       this.el['signal'].classList.add('on');
     } else this.el['signal'].classList.remove('on');
+
+    // weather / constraint chips
+    const chips = (f.chips ?? []).map((c) => `<span class="chip ${c.cls ?? ''}">${c.text}</span>`).join('');
+    if (chips !== this.lastChips) {
+      this.lastChips = chips;
+      this.el['chips'].innerHTML = chips;
+    }
 
     // radar state
     const res = f.quality > 0.72 ? 'HIGH' : f.quality > 0.45 ? 'MEDIUM' : 'LOW';
@@ -335,6 +351,19 @@ export class Hud {
         else ctx.lineTo(px, py);
       });
       ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+
+    // storm cells
+    for (const st of f.storms ?? []) {
+      const [sx, sz] = toScope(st.x, st.z);
+      ctx.fillStyle = 'rgba(255,90,60,0.16)';
+      ctx.strokeStyle = 'rgba(255,90,60,0.75)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(sx, sz, st.r * k, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
       ctx.lineWidth = 1;
