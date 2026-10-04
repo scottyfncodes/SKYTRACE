@@ -20,16 +20,28 @@
 
       <div id="loading">LOADING TERRAIN MODEL…</div>
 
-      <!-- ===== TITLE / BRIEFING ===== -->
+      <!-- ===== TITLE / MISSION BRIEFING ===== -->
       <section id="title" class="screen hidden">
-        <div class="title-card">
+        <div id="mission-card" class="title-card">
           <h1>SKYTRACE</h1>
           <p class="tag">AERIAL RECONNAISSANCE · VARROW BASIN</p>
+          <div id="mission-brief" class="mission-brief"></div>
+          <div class="title-actions">
+            <button id="btn-mission" class="btn big">TAKE OFF</button>
+          </div>
+          <div class="alt-mode">
+            <button id="btn-open-case" class="btn ghost">OPEN CASE · VARROW BASIN ›</button>
+          </div>
+        </div>
+        <div id="case-card" class="title-card hidden">
+          <h1>SKYTRACE</h1>
+          <p class="tag">OPEN CASE · VARROW BASIN</p>
           <div id="brief"></div>
           <div class="title-actions">
             <button id="btn-begin" class="btn big">TAKE OFF</button>
             <button id="btn-continue" class="btn big hidden">CONTINUE</button>
             <button id="btn-newcase-title" class="btn ghost hidden">NEW CASE</button>
+            <button id="btn-case-back" class="btn ghost">‹ MISSION 01</button>
           </div>
           <p class="controls-hint">Stick or arrows to fly · SCAN for ground radar · MARK a contact · DROP a sensor · MAP for intelligence</p>
         </div>
@@ -49,6 +61,8 @@
           <div class="pk"><label>SENSOR PKGS</label><b id="sensors">1</b></div>
           <button id="btn-pause" class="icon" aria-label="Pause">II</button>
         </div>
+        <div id="objective" class="objective hidden" role="status" aria-live="polite"><div class="obj-title"><i class="reticle"></i><b id="obj-title">LOCATE THE SUPPLY TRUCK</b></div><div id="obj-detail" class="obj-detail"></div><div class="obj-progress"><i id="obj-progress"></i></div></div>
+        <div id="banner" class="banner" aria-live="assertive"><small id="banner-kicker"></small><b id="banner-text"></b></div>
         <div id="nav" class="nav"></div>
         <div id="signal" class="signal"></div>
         <div id="msgs" class="msgs"></div>
@@ -62,6 +76,8 @@
           <div class="cc-head"><b id="cc-code">K-1</b><span id="cc-status">DETECTED</span></div>
           <div id="cc-label" class="cc-label">UNIDENTIFIED RETURN</div>
           <div class="cc-meta"><span id="cc-grid">F-5</span> · CONFIDENCE <span id="cc-conf">0%</span></div>
+          <div id="cc-traits" class="cc-traits"></div>
+          <div id="cc-action" class="cc-action"></div>
         </div>
 
         <div id="stick-zone" class="stick-zone"><div id="stick-knob" class="stick-knob"></div></div>
@@ -80,6 +96,7 @@
       <section id="pause" class="screen overlay hidden">
         <div class="card">
           <h2>PAUSED</h2>
+          <div id="pause-objective" class="pause-objective hidden"></div>
           <p class="muted">Keyboard: arrows / WASD fly · Shift / Ctrl throttle · Space radar · M mark · E drop · Tab map · R land · Esc pause</p>
           <button id="btn-resume-pause" class="btn big">RESUME</button>
           <button id="btn-map-pause" class="btn">INTELLIGENCE MAP</button>
@@ -95,6 +112,20 @@
               </div>
             </div>
             <div id="vert-note" class="set-note">Stick up / ↑ climbs</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== MISSION DEBRIEF ===== -->
+      <section id="debrief" class="screen overlay hidden">
+        <div class="card debrief-card">
+          <p class="tag">MISSION 01 · DEBRIEF</p>
+          <h2 id="db-headline">MISSION COMPLETE</h2>
+          <dl id="db-rows" class="db-rows"></dl>
+          <div id="db-findings" class="db-findings"></div>
+          <div class="db-actions">
+            <button id="btn-fly-again" class="btn big">FLY AGAIN</button>
+            <button id="btn-debrief-menu" class="btn ghost">MAIN MENU</button>
           </div>
         </div>
       </section>

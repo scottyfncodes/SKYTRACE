@@ -6,7 +6,22 @@ An aerial reconnaissance mystery. Fly a small aircraft over a miniature landscap
 
 The plane gets you there. The sensors show you what you missed. Your deductions reveal what it means.
 
-## The loop
+## Mission 01: Find the Truck
+
+The game opens on a short, objective-led sortie (3–5 minutes):
+
+BRIEFING → FLY → SCAN → DISCOVER → MARK → CONFIRM DESTINATION → RETURN TO BASE → DEBRIEF
+
+- **Objective:** locate the missing supply truck inside Sector 7 (outlined in amber on the ground and the scope).
+- **Intel:** large, moving, on a road, in Sector 7, and bigger than the three-vehicle scout patrol.
+- **Recon:** the radar finds four vehicle returns. Movement and sector show at once; size, count and road need a low pass (under ~300 m). Each decoy fails the intel on exactly one point.
+- **Mark** (`MARK` / M) the return you believe is the truck. A wrong mark counts a false positive but the mission carries on.
+- **Next objectives** are always announced: confirm where the truck stops, then return to base.
+- **Debrief:** objective, identification, destination, false positives, time, fuel, recon findings and what each return really was.
+
+The original open-ended investigation is still available from the title screen as **Open case · Varrow Basin**.
+
+## The open case loop
 
 FLY → OBSERVE → SCAN → INVESTIGATE → IDENTIFY → MARK → RETURN → CONNECT THE DOTS
 
@@ -64,6 +79,9 @@ Plain TypeScript + Vite + Three.js, no backend.
 | `src/intel/state.ts` | Persistent investigation state, events, leads, assessment, coverage |
 | `src/ui/hud.ts` | Flight instruments and the phosphor radar scope |
 | `src/ui/intelMap.ts` | Paper intelligence map and dossier panel |
-| `src/game/Game.ts` | Orchestration: sorties, modes, actions, world markers |
+| `src/mission/mission01.ts` | Mission 01 content: sector, vehicle returns, destination, briefing text |
+| `src/mission/mission.ts` | Mission rules: objective state machine, identification, debrief (pure, tested) |
+| `src/mission/vehicles.ts` | Route-following vehicles (pure, tested); `missionScene.ts` renders sector and vehicles |
+| `src/game/Game.ts` | Orchestration: mission and case sorties, modes, actions, world markers |
 
 Automated checks live in `tests/`. A Playwright playthrough script (desktop + iPhone viewports) was used for QA and the screenshots in `docs/screenshots/`.

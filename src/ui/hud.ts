@@ -26,8 +26,21 @@ export interface HudFrame {
   waypoint: { x: number; z: number; label: string } | null;
   nearBase: boolean;
   signal: { bearing: number; strength: number } | null;
-  nearContact: { codename: string; label: string; grid: string; confidence: number; canMark: boolean; status: string } | null;
+  nearContact: { codename: string; label: string; grid: string; confidence: number; canMark: boolean; status: string; traits?: string[]; action?: string } | null;
   sweepAngle: number;
+  /** Replaces "SORTIE n" (mission mode). */
+  sortieLabel?: string;
+  /** Mission objective indicator; null hides it (open case). */
+  objective?: { title: string; detail: string; progress: number | null; done: boolean } | null;
+  /** Search area outlined on the scope. */
+  sector?: { x0: number; z0: number; x1: number; z1: number } | null;
+}
+
+interface Banner {
+  kicker: string;
+  text: string;
+  cls: string;
+  t: number;
 }
 
 export class Hud {
@@ -37,6 +50,9 @@ export class Hud {
   private msgs: { text: string; t: number; cls: string }[] = [];
   private afterglow: { x: number; z: number; t: number }[] = [];
   private lastWarn = '';
+  private banners: Banner[] = [];
+  private bannerShown: Banner | null = null;
+  private lastObjective = '';
 
   constructor(root: HTMLElement) {
     const q = (id: string) => {
@@ -44,7 +60,7 @@ export class Hud {
       if (!e) throw new Error(`missing #${id}`);
       return e;
     };
-    for (const id of ['alt', 'spd', 'hdg', 'compass', 'fuel-fill', 'fuel-txt', 'sensors', 'sortie', 'msgs', 'warn', 'nav', 'contact-card', 'cc-code', 'cc-label', 'cc-grid', 'cc-conf', 'cc-status', 'radar-state', 'btn-mark', 'btn-scan', 'btn-drop', 'btn-rtb', 'signal', 'thr-fill']) {
+    for (const id of ['alt', 'spd', 'hdg', 'compass', 'fuel-fill', 'fuel-txt', 'sensors', 'sortie', 'msgs', 'warn', 'nav', 'contact-card', 'cc-code', 'cc-label', 'cc-grid', 'cc-conf', 'cc-status', 'radar-state', 'btn-mark', 'btn-scan', 'btn-drop', 'btn-rtb', 'signal', 'thr-fill', 'objective', 'obj-title', 'obj-detail', 'obj-progress', 'banner', 'banner-kicker', 'banner-text', 'cc-traits', 'cc-action']) {
       this.el[id] = q(id);
     }
     this.scope = q('scope') as HTMLCanvasElement;
@@ -59,6 +75,37 @@ export class Hud {
 
   private renderMsgs(): void {
     this.el['msgs'].innerHTML = this.msgs.map((m) => `<div class="msg ${m.cls}" style="opacity:${Math.min(1, m.t)}">${m.text}</div>`).join('');
+  }
+
+  /**
+   * Large centred announcement (objective changes). Queued so that
+   * "OBJECTIVE COMPLETE" is always read before "NEW OBJECTIVE".
+   */
+  banner(kicker: string, text: string, cls = '', seconds = 2.8): void {
+    this.banners.push({ kicker, text, cls, t: seconds });
+    if (!this.bannerShown) this.nextBanner();
+  }
+
+  clearBanners(): void {
+    this.banners = [];
+    this.bannerShown = null;
+    this.el['banner'].classList.remove('on');
+    this.el['msgs'].style.visibility = '';
+  }
+
+  private nextBanner(): void {
+    const b = this.banners.shift() ?? null;
+    this.bannerShown = b;
+    const el = this.el['banner'];
+    // the feed would sit under the banner: hold it back while one is up
+    this.el['msgs'].style.visibility = b ? 'hidden' : '';
+    if (!b) {
+      el.classList.remove('on');
+      return;
+    }
+    this.el['banner-kicker'].textContent = b.kicker;
+    this.el['banner-text'].textContent = b.text;
+    el.className = `banner on ${b.cls}`;
   }
 
   blip(x: number, z: number): void {
@@ -76,7 +123,31 @@ export class Hud {
     this.el['fuel-fill'].classList.toggle('low', f.fuel < 0.2);
     this.el['fuel-txt'].textContent = `${Math.max(0, Math.floor(f.fuelSeconds / 60))}:${String(Math.max(0, Math.floor(f.fuelSeconds % 60))).padStart(2, '0')}`;
     this.el['sensors'].textContent = `${f.sensorsLeft}`;
-    this.el['sortie'].textContent = `SORTIE ${f.sortie}`;
+    this.el['sortie'].textContent = f.sortieLabel ?? `SORTIE ${f.sortie}`;
+
+    // objective indicator
+    const ob = f.objective ?? null;
+    this.el['objective'].classList.toggle('hidden', !ob);
+    if (ob) {
+      const key = `${ob.title}|${ob.detail}|${ob.done}`;
+      if (key !== this.lastObjective) {
+        this.lastObjective = key;
+        this.el['obj-title'].textContent = ob.done ? `\u2713 ${ob.title}` : ob.title;
+        this.el['obj-detail'].textContent = ob.detail;
+        this.el['objective'].classList.toggle('done', ob.done);
+        this.el['objective'].classList.remove('flash');
+        void this.el['objective'].offsetWidth; // restart the flash animation
+        this.el['objective'].classList.add('flash');
+      }
+      this.el['objective'].classList.toggle('has-progress', ob.progress !== null);
+      this.el['obj-progress'].style.width = `${Math.round((ob.progress ?? 0) * 100)}%`;
+    } else this.lastObjective = '';
+
+    // banners
+    if (this.bannerShown) {
+      this.bannerShown.t -= dt;
+      if (this.bannerShown.t <= 0) this.nextBanner();
+    }
     this.el['thr-fill'].style.height = `${a.throttle * 100}%`;
 
     // warnings
@@ -134,10 +205,16 @@ export class Hud {
       this.el['cc-grid'].textContent = f.nearContact.grid;
       this.el['cc-conf'].textContent = `${Math.round(f.nearContact.confidence * 100)}%`;
       this.el['cc-status'].textContent = f.nearContact.status;
+      const traits = f.nearContact.traits ?? [];
+      this.el['cc-traits'].innerHTML = traits.map((t) => `<span>${t}</span>`).join('');
+      this.el['cc-action'].textContent = f.nearContact.action ?? '';
+      card.classList.toggle('mission', traits.length > 0);
+      card.parentElement?.classList.add('card-on');
       this.el['btn-mark'].classList.toggle('ready', f.nearContact.canMark);
     } else {
       card.classList.remove('on');
       this.el['btn-mark'].classList.remove('ready');
+      card.parentElement?.classList.remove('card-on');
     }
 
     // messages
@@ -230,6 +307,30 @@ export class Hud {
       ctx.moveTo(R, R);
       ctx.lineTo(R + Math.cos(ang - Math.PI / 2) * R, R + Math.sin(ang - Math.PI / 2) * R);
       ctx.stroke();
+    }
+
+    // search sector
+    if (f.sector) {
+      const s = f.sector;
+      ctx.strokeStyle = 'rgba(242,169,59,0.85)';
+      ctx.fillStyle = 'rgba(242,169,59,0.07)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      const cs: [number, number][] = [
+        [s.x0, s.z0],
+        [s.x1, s.z0],
+        [s.x1, s.z1],
+        [s.x0, s.z1],
+      ];
+      cs.forEach(([x, z], i) => {
+        const [px, py] = toScope(x, z);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.lineWidth = 1;
     }
 
     // base

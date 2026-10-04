@@ -82,6 +82,12 @@ export class TruckMesh {
     }
     this.group.add(bed, cab, load);
   }
+  /** Place the mesh directly (mission vehicles drive their own routes). */
+  setPose(x: number, z: number, heading: number, hf: HeightField): void {
+    this.group.position.set(x, hf.sample(x, z) + 0.1, z);
+    this.group.rotation.y = heading + Math.PI / 2;
+    this.group.visible = true;
+  }
   sync(sim: TruckSim, hf: HeightField): void {
     this.group.position.set(sim.x, hf.sample(sim.x, sim.z) + 0.1, sim.z);
     this.group.rotation.y = sim.heading + Math.PI / 2;
