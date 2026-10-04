@@ -3,7 +3,9 @@ import type { OperationsArea } from '../mission/missionDef';
 import type { ReturnId } from '../mission/mission01';
 import { RIVER, ROADS, type Pt } from '../world/worldData';
 
-export type OpsTool = 'radar' | 'camera';
+export type OpsTool = 'radar' | 'optical' | 'thermal' | 'sigint';
+/** Tools that show the camera feed. */
+export const isCameraTool = (t: OpsTool) => t === 'optical' || t === 'thermal';
 
 export interface OpsReturn {
   id: ReturnId;
@@ -16,7 +18,13 @@ export interface OpsReturn {
 
 export interface OpsFrame {
   tool: OpsTool;
-  objective: { title: string; detail: string; progress: number | null };
+  /** Sensors fitted for this operation, in tab order. */
+  tools: OpsTool[];
+  /** "AUTOPILOT FLYING" / "M. ADEYEMI HAS CONTROL" */
+  control: string;
+  /** Seconds until the weather front forces extraction. */
+  frontSeconds: number;
+  objective: { kicker: string; title: string; detail: string; progress: number | null };
   orbit: Orbit;
   aircraft: { x: number; z: number; yaw: number; agl: number };
   footprint: number;
@@ -29,6 +37,10 @@ export interface OpsFrame {
   selected: ReturnId | null;
   camera: { label: string; acquire: number | null };
   canMark: boolean;
+  canPhoto: boolean;
+  canExtract: boolean;
+  /** SIGINT: bearings (radians, compass) to emitters heard. */
+  bearings: { bearing: number; strength: number }[];
   hint: string;
   displayHint: string;
 }
@@ -37,6 +49,8 @@ export interface OpsHandlers {
   onTool(t: OpsTool): void;
   onSelect(id: ReturnId): void;
   onMark(): void;
+  onPhoto(): void;
+  onExtract(): void;
   onRetask(x: number, z: number): void;
   onTakeControls(): void;
   onPause(): void;
@@ -49,8 +63,11 @@ const mmss = (sec: number) => {
 
 const NOTES: Record<OpsTool, string> = {
   radar: 'Finds vehicles and shows whether they move. Cannot tell what they are. Tap the display to send the orbit there.',
-  camera: 'Shows what a vehicle is: size, count, road. Select a return to slew the camera; the orbit follows it.',
+  optical: 'Size, count and road of the selected return; the sharpest photographs. Haze slows it down.',
+  thermal: 'Size, count and engine heat of the selected return. Sees through haze; photographs are only fair.',
+  sigint: 'Hears radios: bearings to transmitters, and which known returns are transmitting or silent.',
 };
+const LABEL: Record<OpsTool, string> = { radar: 'RADAR', optical: 'OPTICAL', thermal: 'THERMAL', sigint: 'SIGINT' };
 
 /**
  * The operator's station. Nothing here flies the aircraft: the controls are
@@ -64,6 +81,7 @@ export class OpsConsole {
   private ctx: CanvasRenderingContext2D;
   private last: OpsFrame | null = null;
   private listHtml = '';
+  private toolsKey = '';
   private active = false;
 
   constructor(root: HTMLElement, private h: OpsHandlers) {
@@ -73,13 +91,18 @@ export class OpsConsole {
       if (!e) throw new Error(`missing #${id}`);
       return e;
     };
-    for (const id of ['ops-orbit', 'ops-fuel', 'ops-time', 'ops-obj-title', 'ops-obj-detail', 'ops-obj-progress', 'ops-cam', 'ops-cam-label', 'ops-cam-acq', 'ops-display-hint', 'ops-tool-note', 'ops-returns', 'btn-ops-mark', 'ops-hint', 'btn-take', 'btn-ops-pause']) this.el[id] = q(id);
+    for (const id of ['ops-orbit', 'ops-fuel', 'ops-time', 'ops-front', 'ops-control', 'ops-obj-kicker', 'ops-obj-title', 'ops-obj-detail', 'ops-obj-progress', 'ops-cam', 'ops-cam-label', 'ops-cam-acq', 'ops-display-hint', 'ops-tools', 'ops-tool-note', 'ops-returns', 'btn-ops-mark', 'btn-ops-photo', 'btn-ops-extract', 'ops-hint', 'btn-take', 'btn-ops-pause']) this.el[id] = q(id);
     this.display = q('ops-display');
     this.radar = q('ops-radar') as HTMLCanvasElement;
     this.ctx = this.radar.getContext('2d')!;
 
-    for (const b of root.querySelectorAll<HTMLElement>('[data-tool]')) b.addEventListener('click', () => h.onTool(b.dataset.tool as OpsTool));
+    this.el['ops-tools'].addEventListener('click', (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLElement>('[data-tool]');
+      if (b) h.onTool(b.dataset.tool as OpsTool);
+    });
     this.el['btn-ops-mark'].addEventListener('click', () => h.onMark());
+    this.el['btn-ops-photo'].addEventListener('click', () => h.onPhoto());
+    this.el['btn-ops-extract'].addEventListener('click', () => h.onExtract());
     this.el['btn-take'].addEventListener('click', () => h.onTakeControls());
     this.el['btn-ops-pause'].addEventListener('click', () => h.onPause());
     this.el['ops-returns'].addEventListener('click', (e) => {
@@ -90,9 +113,11 @@ export class OpsConsole {
     window.addEventListener('keydown', (e) => {
       if (!this.active || e.repeat) return;
       const k = e.key.toLowerCase();
-      if (k === '1') h.onTool('radar');
-      else if (k === '2') h.onTool('camera');
-      else if (['a', 'b', 'c', 'd'].includes(k) && this.last?.returns.some((r) => r.id === k.toUpperCase())) h.onSelect(k.toUpperCase() as ReturnId);
+      const n = Number(k);
+      if (n >= 1 && n <= (this.last?.tools.length ?? 0)) h.onTool(this.last!.tools[n - 1]);
+      else if (k === 'p') h.onPhoto();
+      else if (k === 'x' && this.last?.canExtract) h.onExtract();
+      else if (['a', 'b', 'c', 'd', 'e'].includes(k) && this.last?.returns.some((r) => r.id === k.toUpperCase())) h.onSelect(k.toUpperCase() as ReturnId);
     });
   }
 
@@ -105,6 +130,13 @@ export class OpsConsole {
   hide(): void {
     this.active = false;
     this.root.classList.add('hidden');
+  }
+
+  /** Shutter flash over the display when a photograph is taken. */
+  flash(): void {
+    this.display.classList.remove('shutter');
+    void this.display.offsetWidth;
+    this.display.classList.add('shutter');
   }
 
   /** Screen rectangle of the sensor display, for rendering the camera feed into it. */
@@ -150,18 +182,29 @@ export class OpsConsole {
     this.el['ops-orbit'].textContent = `ORBIT ${Math.round(f.aircraft.agl)} m`;
     this.el['ops-fuel'].textContent = `FUEL ${mmss(f.fuelSeconds)}`;
     this.el['ops-time'].textContent = `ON STATION ${mmss(f.timeOnStation)}`;
+    this.el['ops-control'].textContent = f.control;
+    this.el['ops-front'].textContent = `FRONT ${mmss(f.frontSeconds)}`;
+    this.el['ops-front'].classList.toggle('urgent', f.frontSeconds < 60);
+    this.el['ops-obj-kicker'].textContent = f.objective.kicker;
     this.el['ops-obj-title'].textContent = f.objective.title;
     this.el['ops-obj-detail'].textContent = f.objective.detail;
     this.el['ops-obj-progress'].parentElement!.classList.toggle('on', f.objective.progress !== null);
     this.el['ops-obj-progress'].style.width = `${Math.round((f.objective.progress ?? 0) * 100)}%`;
-    for (const b of this.root.querySelectorAll<HTMLElement>('[data-tool]')) {
+    const key = f.tools.join(',');
+    if (key !== this.toolsKey) {
+      this.toolsKey = key;
+      this.el['ops-tools'].innerHTML = f.tools.map((t, i) => `<button type="button" role="tab" data-tool="${t}">${LABEL[t]}<small>${i + 1}</small></button>`).join('');
+    }
+    for (const b of this.el['ops-tools'].querySelectorAll<HTMLElement>('[data-tool]')) {
       const on = b.dataset.tool === f.tool;
       b.classList.toggle('on', on);
       b.setAttribute('aria-selected', on ? 'true' : 'false');
     }
-    this.root.classList.toggle('tool-camera', f.tool === 'camera');
+    const cam = isCameraTool(f.tool);
+    this.root.classList.toggle('tool-camera', cam);
+    this.root.classList.toggle('tool-thermal', f.tool === 'thermal');
     this.el['ops-tool-note'].textContent = NOTES[f.tool];
-    this.el['ops-cam'].classList.toggle('hidden', f.tool !== 'camera');
+    this.el['ops-cam'].classList.toggle('hidden', !cam);
     this.el['ops-cam-label'].textContent = f.camera.label;
     this.el['ops-cam-acq'].parentElement!.classList.toggle('on', f.camera.acquire !== null);
     this.el['ops-cam-acq'].style.width = `${Math.round((f.camera.acquire ?? 0) * 100)}%`;
@@ -169,6 +212,10 @@ export class OpsConsole {
     this.el['ops-hint'].textContent = f.hint;
     this.el['btn-ops-mark'].classList.toggle('disabled', !f.canMark);
     this.el['btn-ops-mark'].toggleAttribute('disabled', !f.canMark);
+    this.el['btn-ops-photo'].classList.toggle('hidden', !cam);
+    this.el['btn-ops-photo'].classList.toggle('disabled', !f.canPhoto);
+    this.el['btn-ops-photo'].toggleAttribute('disabled', !f.canPhoto);
+    this.el['btn-ops-extract'].classList.toggle('hidden', !f.canExtract);
 
     const html = f.returns.length
       ? f.returns
@@ -182,7 +229,7 @@ export class OpsConsole {
       this.listHtml = html;
       this.el['ops-returns'].innerHTML = html;
     }
-    if (f.tool === 'radar') this.drawRadar(f);
+    if (!cam) this.drawRadar(f);
   }
 
   private drawRadar(f: OpsFrame): void {
@@ -258,17 +305,33 @@ export class OpsConsole {
     ctx.lineTo(ocx, ocy + 5);
     ctx.stroke();
     const [acx, acy] = P(f.aircraft.x, f.aircraft.z);
-    ctx.fillStyle = 'rgba(110,255,150,0.08)';
-    ctx.strokeStyle = 'rgba(110,255,150,0.5)';
-    ctx.beginPath();
-    ctx.arc(acx, acy, f.footprint * v.s, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(170,255,200,0.85)';
-    ctx.beginPath();
-    ctx.moveTo(acx, acy);
-    ctx.lineTo(acx + Math.cos(f.sweep) * f.footprint * v.s, acy + Math.sin(f.sweep) * f.footprint * v.s);
-    ctx.stroke();
+    if (f.tool === 'sigint') {
+      // bearing lines: direction only, no range
+      ctx.lineWidth = 1.5;
+      for (const b of f.bearings) {
+        ctx.strokeStyle = `rgba(143,208,255,${0.35 + 0.6 * b.strength})`;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(acx, acy);
+        ctx.lineTo(acx + Math.sin(b.bearing) * 2000, acy - Math.cos(b.bearing) * 2000);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.lineWidth = 1;
+    }
+    if (f.tool === 'radar') {
+      ctx.fillStyle = 'rgba(110,255,150,0.08)';
+      ctx.strokeStyle = 'rgba(110,255,150,0.5)';
+      ctx.beginPath();
+      ctx.arc(acx, acy, f.footprint * v.s, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(170,255,200,0.85)';
+      ctx.beginPath();
+      ctx.moveTo(acx, acy);
+      ctx.lineTo(acx + Math.cos(f.sweep) * f.footprint * v.s, acy + Math.sin(f.sweep) * f.footprint * v.s);
+      ctx.stroke();
+    }
     // aircraft
     ctx.save();
     ctx.translate(acx, acy);

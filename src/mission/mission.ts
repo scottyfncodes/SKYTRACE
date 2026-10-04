@@ -1,29 +1,42 @@
 /**
- * Mission rules: a small, explicit objective state machine. Pure and
- * deterministic so every transition is covered by tests; `Game` feeds it
- * radar gains and positions and renders the events it returns.
+ * Mission 01 recon rules: the objective chain the operator works through in
+ * Mission Control. Pure and deterministic so every transition is tested;
+ * `Game` feeds it sensor gains and positions and renders the events.
  *
- *   locate  → (correct MARK)            → destination
- *   destination → (stop confirmed)      → rtb
- *   rtb     → (landed at base)          → complete
- *   any active phase → (fuel / abort)   → failed
+ *   locate      → (correct MARK)                 → photograph
+ *   photograph  → (photo of the truck)           → track        PRIMARY COMPLETE · objective updated
+ *   track       → (camera on the stopped truck)  → landing      objective updated: a barge
+ *   landing     → (photo of the barge)           → extract      recon complete
+ *   any phase   → (extract: done / weather / fuel / by choice once primary is done) → extract
+ *
+ * Sensors answer different questions: radar (where, moving), optical (size,
+ * count, road; best photos; haze hurts), thermal (size, count, engine heat;
+ * sees through haze; fair photos), SIGINT (radio on or off).
  */
 import { DESTINATION, DESTINATION_TAIL, MINE_ROAD_PTS, MISSION_01, RETURNS, SECTOR_7, type ReturnDef, type ReturnId, type Sector } from './mission01';
 import type { Pt } from '../world/worldData';
-import { DETECT_THRESHOLD, RESOLVE_THRESHOLD } from '../sensors/radar';
+import { DETECT_THRESHOLD } from '../sensors/radar';
 
-export type Phase = 'locate' | 'destination' | 'rtb' | 'complete' | 'failed';
+export type Phase = 'locate' | 'photograph' | 'track' | 'landing' | 'extract';
+export type Imager = 'optical' | 'thermal';
+export type ExtractReason = 'complete' | 'manual' | 'weather' | 'fuel';
 
 export interface ReturnState {
   id: ReturnId;
   detection: number;
   detected: boolean;
+  /** Not yet part of the picture (revealed by a dynamic objective). */
+  hidden: boolean;
+  /** Size and count known (camera). */
   resolved: boolean;
+  roadKnown: boolean;
+  heatKnown: boolean;
+  radioKnown: boolean;
   /** Player's identification of this return. */
   verdict: 'none' | 'correct' | 'wrong';
   /** Last position the aircraft saw it at. */
   lastKnown: { x: number; z: number } | null;
-  /** Seconds the camera has held it in view (identification). */
+  /** Seconds the camera has held it in view. */
   look: number;
 }
 
@@ -33,117 +46,134 @@ export interface MissionState {
   falsePositives: number;
   wrongIds: ReturnId[];
   targetIdentified: boolean;
+  primaryComplete: boolean;
   destinationConfirmed: boolean;
+  transferPhotographed: boolean;
   /** 0..1 progress toward confirming the destination. */
   confirm: number;
+  /** Best photograph quality (0..1) of the truck and of the barge. */
+  photos: { truck: number; barge: number };
+  photosTaken: number;
+  extractReason: ExtractReason | null;
   time: number;
-  failReason: 'fuel' | 'aborted' | null;
 }
 
 export interface MissionEvent {
-  type: 'detected' | 'resolved' | 'wrong' | 'objective-complete' | 'new-objective' | 'final-objective' | 'mission-complete' | 'mission-failed';
+  type: 'detected' | 'resolved' | 'wrong' | 'photo' | 'objective-complete' | 'new-objective' | 'objective-updated' | 'recon-complete';
   title: string;
   text: string;
   id?: ReturnId;
 }
 
 export interface Objective {
-  /** Short imperative shown in the HUD indicator. */
+  /** PRIMARY / SECONDARY / EXTRACTION */
+  kicker: string;
+  /** Short imperative shown in the indicator. */
   title: string;
   /** One supporting line: what to look for, or how to do it. */
   detail: string;
   done: boolean;
 }
 
-/** How long the aircraft must stay over the truck's stop to confirm it. */
+/** How long the camera must stay on the stopped truck to confirm where it went. */
 export const CONFIRM_SECONDS = 2.5;
-export const CONFIRM_RANGE = 320;
 /** Mission radar works a little faster than the open case: vehicles move, the sortie is short. */
 export const MISSION_RATE = 2.5;
-export const MARK_RANGE = 340;
-/** Seconds of steady camera time to identify a return's size, count and road. */
+/** Seconds of steady camera time to identify a return (before crew and haze). */
 export const CAMERA_SECONDS = 1.6;
-/** Slant range at which the camera can still make out a vehicle. */
+/** Slant range at which a camera can still make out a vehicle. */
 export const CAMERA_RANGE = 600;
+/** SIGINT hears emitters within this range. */
+export const SIGINT_RANGE = 1400;
 
-/** Where the player is sitting, and whether they can open Mission Control from here. */
 export interface StationContext {
   station?: 'pilot' | 'operator';
   inArea?: boolean;
   truckStopped?: boolean;
 }
 
-export function newMission(): MissionState {
-  const returns = {} as Record<ReturnId, ReturnState>;
-  for (const r of RETURNS) returns[r.id] = { id: r.id, detection: 0, detected: false, resolved: false, verdict: 'none', lastKnown: null, look: 0 };
-  return { phase: 'locate', returns, falsePositives: 0, wrongIds: [], targetIdentified: false, destinationConfirmed: false, confirm: 0, time: 0, failReason: null };
-}
-
 export const RETURN_BY_ID: Readonly<Record<ReturnId, ReturnDef>> = Object.fromEntries(RETURNS.map((r) => [r.id, r])) as Record<ReturnId, ReturnDef>;
 export const TARGET: ReturnDef = RETURNS.find((r) => r.isTarget)!;
+export const BARGE: ReturnDef = RETURN_BY_ID.E;
+
+export function newMission(): MissionState {
+  const returns = {} as Record<ReturnId, ReturnState>;
+  for (const r of RETURNS) returns[r.id] = { id: r.id, detection: 0, detected: false, hidden: !!r.hidden, resolved: false, roadKnown: false, heatKnown: false, radioKnown: false, verdict: 'none', lastKnown: null, look: 0 };
+  return {
+    phase: 'locate',
+    returns,
+    falsePositives: 0,
+    wrongIds: [],
+    targetIdentified: false,
+    primaryComplete: false,
+    destinationConfirmed: false,
+    transferPhotographed: false,
+    confirm: 0,
+    photos: { truck: 0, barge: 0 },
+    photosTaken: 0,
+    extractReason: null,
+    time: 0,
+  };
+}
 
 export function inSector(x: number, z: number, s: Sector = SECTOR_7): boolean {
   return x >= s.x0 && x <= s.x1 && z >= s.z0 && z <= s.z1;
 }
 
-export function isActive(m: MissionState): boolean {
-  return m.phase === 'locate' || m.phase === 'destination' || m.phase === 'rtb';
+/** Is there still recon work for the operator? */
+export function operatorWork(m: MissionState): boolean {
+  return m.phase !== 'extract';
 }
 
-/** Does the current objective need the operator station (recon work), or the pilot? */
-export function operatorWork(m: MissionState): boolean {
-  return m.phase === 'locate' || m.phase === 'destination';
+export function canExtract(m: MissionState): boolean {
+  return m.primaryComplete && m.phase !== 'extract';
 }
 
 /**
- * The objective never changes with the station; the supporting line does,
- * so it always names the next thing to do from where the player is sitting.
+ * The recon objective. Its title never changes with the seat; the detail
+ * names the next step from where the player is sitting.
  */
-export function objectiveFor(m: MissionState, ctx: StationContext = {}): Objective {
+export function reconObjective(m: MissionState, ctx: StationContext = {}): Objective {
   const pilot = ctx.station === 'pilot';
+  const openMc = ctx.inArea ? 'OPEN MISSION CONTROL' : 'FLY BACK TO SECTOR 7 · THEN OPEN MISSION CONTROL';
   switch (m.phase) {
     case 'locate':
+      return { kicker: 'PRIMARY', title: 'LOCATE THE SUPPLY TRUCK', detail: pilot ? openMc : MISSION_01.intelShort, done: false };
+    case 'photograph':
+      return { kicker: 'PRIMARY', title: 'PHOTOGRAPH THE TRUCK', detail: pilot ? openMc : 'CAMERA ON RETURN C · TAKE A PHOTO', done: false };
+    case 'track':
       return {
-        title: 'LOCATE THE SUPPLY TRUCK',
-        detail: !pilot ? MISSION_01.intelShort : ctx.inArea ? 'IN SECTOR 7 · OPEN MISSION CONTROL' : 'FLY TO SECTOR 7 · THEN OPEN MISSION CONTROL',
-        done: false,
-      };
-    case 'destination':
-      return {
+        kicker: 'SECONDARY',
         title: "CONFIRM THE TRUCK'S DESTINATION",
-        detail: pilot
-          ? ctx.inArea
-            ? 'OPEN MISSION CONTROL TO TRACK THE TRUCK'
-            : 'FLY BACK TO SECTOR 7 · THEN OPEN MISSION CONTROL'
-          : ctx.truckStopped
-            ? 'TRUCK HAS STOPPED · HOLD THE CAMERA ON IT'
-            : 'TRACK THE TRUCK WITH THE CAMERA UNTIL IT STOPS',
+        detail: pilot ? openMc : ctx.truckStopped ? 'TRUCK HAS STOPPED · HOLD A CAMERA ON IT' : 'KEEP A CAMERA ON THE TRUCK UNTIL IT STOPS',
         done: false,
       };
-    case 'rtb':
-      return { title: 'RETURN TO BASE', detail: 'FLY LOW OVER THE AIRFIELD TO LAND', done: false };
-    case 'complete':
-      return { title: 'MISSION COMPLETE', detail: '', done: true };
-    case 'failed':
-      return { title: 'MISSION INCOMPLETE', detail: '', done: false };
+    case 'landing':
+      return { kicker: 'SECONDARY', title: 'PHOTOGRAPH THE BARGE', detail: pilot ? openMc : 'SELECT RETURN E · TAKE A PHOTO', done: false };
+    case 'extract':
+      return { kicker: 'EXTRACTION', title: 'RETURN TO BASE', detail: '', done: true };
   }
 }
 
-/** What the card says about a return. Size, count and road need a resolved (low) pass. */
+/** What the console says about a return: each sensor adds its own facts. */
 export function describeReturn(m: MissionState, id: ReturnId, x: number, z: number, moving: boolean): { head: string; traits: string[]; resolved: boolean } {
   const st = m.returns[id];
   const def = RETURN_BY_ID[id];
   const traits: string[] = [];
-  if (st.resolved) traits.push(def.count > 1 ? `${def.count} ${def.size.toUpperCase()} VEHICLES` : `${def.size.toUpperCase()} VEHICLE`);
-  else traits.push('SIZE ? · USE THE CAMERA');
+  const noun = def.kind === 'vessel' ? 'VESSEL' : 'VEHICLE';
+  if (st.resolved) traits.push(def.count > 1 ? `${def.count} ${def.size.toUpperCase()} ${noun}S` : `${def.size.toUpperCase()} ${noun}`);
+  else traits.push('SIZE ? · USE A CAMERA');
   traits.push(moving ? 'MOVING' : 'STATIONARY');
-  if (st.resolved) traits.push(def.onRoad ? 'ON ROAD' : 'OFF ROAD');
+  if (st.roadKnown) traits.push(def.kind === 'vessel' ? 'ON THE RIVER' : def.onRoad ? 'ON ROAD' : 'OFF ROAD');
+  if (st.heatKnown) traits.push(def.engine === 'running' ? 'ENGINE RUNNING' : 'ENGINE COLD');
+  if (st.radioKnown) traits.push(def.radio ? 'RADIO ACTIVE' : 'RADIO SILENT');
   traits.push(inSector(x, z) ? 'IN SECTOR 7' : 'OUTSIDE SECTOR 7');
   return { head: `RETURN ${id}`, traits, resolved: st.resolved };
 }
 
 /** The first way a return contradicts the mission intelligence, or null for the truck. */
 export function mismatchReason(def: ReturnDef, x: number, z: number): string | null {
+  if (def.kind === 'vessel') return 'a vessel on the river, not a truck';
   if (def.size !== 'large' || def.count !== 1) return `${def.count > 1 ? `${def.count} small vehicles` : 'a small vehicle'}, not one large truck`;
   if (!def.moving) return 'stationary, but the truck should be moving';
   if (!def.onRoad) return 'off road, but the truck was driving a road';
@@ -151,42 +181,46 @@ export function mismatchReason(def: ReturnDef, x: number, z: number): string | n
   return null;
 }
 
-/**
- * Add radar confidence to a return. `canResolve` is the existing radar rule
- * (scan quality high enough for detail). Returns the events this caused.
- */
-export function scanReturn(m: MissionState, id: ReturnId, gain: number, canResolve: boolean, x: number, z: number): MissionEvent[] {
-  if (!isActive(m) || gain <= 0) return [];
+/** RADAR: add confidence to a return within the footprint. */
+export function scanReturn(m: MissionState, id: ReturnId, gain: number, x: number, z: number): MissionEvent[] {
   const st = m.returns[id];
-  const ev: MissionEvent[] = [];
+  if (gain <= 0 || st.hidden) return [];
   st.detection += gain;
   st.lastKnown = { x, z };
   if (!st.detected && st.detection >= DETECT_THRESHOLD) {
     st.detected = true;
-    ev.push({ type: 'detected', title: `RETURN ${id}`, text: `RADAR RETURN ${id} · VEHICLE`, id });
+    return [{ type: 'detected', title: `RETURN ${id}`, text: `RADAR RETURN ${id} · ${RETURN_BY_ID[id].kind === 'vessel' ? 'VESSEL' : 'VEHICLE'}`, id }];
   }
-  if (st.detected && !st.resolved && canResolve && st.detection >= RESOLVE_THRESHOLD) {
-    st.resolved = true;
-    const def = RETURN_BY_ID[id];
-    ev.push({ type: 'resolved', title: `RETURN ${id}`, text: `RETURN ${id} RESOLVED · ${def.count > 1 ? `${def.count} ${def.size.toUpperCase()} VEHICLES` : `${def.size.toUpperCase()} VEHICLE`}`, id });
-  }
-  return ev;
+  return [];
+}
+
+/** SIGINT: hear whether a detected return in range is transmitting. */
+export function listenReturn(m: MissionState, id: ReturnId, inRange: boolean): MissionEvent[] {
+  const st = m.returns[id];
+  if (!inRange || !st.detected || st.radioKnown) return [];
+  st.radioKnown = true;
+  return [{ type: 'resolved', title: `RETURN ${id}`, text: `SIGINT · RETURN ${id} ${RETURN_BY_ID[id].radio ? 'IS TRANSMITTING' : 'IS RADIO SILENT'}`, id }];
 }
 
 /**
- * Camera time on a selected return. Radar finds and tracks; only the camera
- * shows what a return is (size, count, road). `inView` means selected,
- * slewed and within camera range.
+ * CAMERA time on a selected return. `seconds` is the time this sensor needs
+ * (crew and haze included). Optical learns the road; thermal the engine heat.
  */
-export function inspectReturn(m: MissionState, id: ReturnId, dt: number, inView: boolean): MissionEvent[] {
-  if (!isActive(m) || !inView) return [];
+export function inspectReturn(m: MissionState, id: ReturnId, dt: number, inView: boolean, sensor: Imager = 'optical', seconds = CAMERA_SECONDS): MissionEvent[] {
   const st = m.returns[id];
-  if (!st.detected || st.resolved) return [];
+  if (!inView || !st.detected) return [];
+  const learnsNew = !st.resolved || (sensor === 'optical' ? !st.roadKnown : !st.heatKnown);
+  if (!learnsNew) return [];
   st.look += dt;
-  if (st.look < CAMERA_SECONDS) return [];
+  if (st.look < seconds) return [];
+  st.look = 0;
   st.resolved = true;
+  if (sensor === 'optical') st.roadKnown = true;
+  else st.heatKnown = true;
   const def = RETURN_BY_ID[id];
-  return [{ type: 'resolved', title: `RETURN ${id}`, text: `CAMERA · RETURN ${id} IS ${def.count > 1 ? `${def.count} ${def.size.toUpperCase()} VEHICLES` : `A ${def.size.toUpperCase()} VEHICLE`}`, id }];
+  const what = def.count > 1 ? `${def.count} ${def.size.toUpperCase()} VEHICLES` : `A ${def.size.toUpperCase()} ${def.kind === 'vessel' ? 'VESSEL' : 'VEHICLE'}`;
+  const text = sensor === 'optical' ? `OPTICAL · RETURN ${id} IS ${what}` : `THERMAL · RETURN ${id} IS ${what} · ENGINE ${def.engine === 'running' ? 'RUNNING' : 'COLD'}`;
+  return [{ type: 'resolved', title: `RETURN ${id}`, text, id }];
 }
 
 /** Player marks a return as "this is the truck". */
@@ -204,56 +238,132 @@ export function identify(m: MissionState, id: ReturnId): { result: 'correct' | '
   }
   st.verdict = 'correct';
   m.targetIdentified = true;
-  m.phase = 'destination';
+  m.phase = 'photograph';
   return {
     result: 'correct',
     events: [
       { type: 'objective-complete', title: 'OBJECTIVE COMPLETE', text: 'Supply truck located.', id },
-      { type: 'new-objective', title: 'NEW OBJECTIVE', text: "Confirm the truck's destination. Track it until it stops." },
+      { type: 'new-objective', title: 'NEW OBJECTIVE', text: 'Photograph the truck as evidence.' },
     ],
   };
 }
 
-/** Advance destination confirmation: the truck has stopped and the aircraft is over it. */
-export function updateDestination(m: MissionState, dt: number, truckArrived: boolean, distToTruck: number): MissionEvent[] {
-  if (m.phase !== 'destination') return [];
-  if (truckArrived && distToTruck <= CONFIRM_RANGE) m.confirm = Math.min(1, m.confirm + dt / CONFIRM_SECONDS);
+/** Evidence quality of one photograph (0..1). */
+export function photoQuality(p: { sensor: Imager; slant: number; visibility: number; bonus: number }): number {
+  const base = p.sensor === 'optical' ? 1 : 0.72;
+  const range = Math.max(0.4, Math.min(1, 1.15 - p.slant / 1000));
+  const haze = p.sensor === 'optical' ? 0.45 + 0.55 * Math.max(0, Math.min(1, p.visibility)) : 1;
+  return Math.max(0, Math.min(1, base * range * haze + p.bonus));
+}
+
+export function evidenceGrade(q: number): 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR' | 'NONE' {
+  if (q <= 0) return 'NONE';
+  if (q >= 0.85) return 'EXCELLENT';
+  if (q >= 0.65) return 'GOOD';
+  if (q >= 0.4) return 'FAIR';
+  return 'POOR';
+}
+
+/** Take a photograph of an identified return. */
+export function photograph(m: MissionState, id: ReturnId, quality: number): { result: 'primary' | 'transfer' | 'improved' | 'untasked' | 'unidentified'; events: MissionEvent[] } {
+  const st = m.returns[id];
+  if (!st.detected || !st.resolved) return { result: 'unidentified', events: [{ type: 'photo', title: 'NO PHOTO', text: `IDENTIFY RETURN ${id} WITH A CAMERA FIRST`, id }] };
+  m.photosTaken += 1;
+  const grade = evidenceGrade(quality);
+  if (id === TARGET.id && m.targetIdentified) {
+    const better = quality > m.photos.truck;
+    m.photos.truck = Math.max(m.photos.truck, quality);
+    if (m.phase === 'photograph') {
+      m.primaryComplete = true;
+      m.phase = 'track';
+      return {
+        result: 'primary',
+        events: [
+          { type: 'objective-complete', title: 'PRIMARY OBJECTIVE COMPLETE', text: `Truck photographed · evidence ${grade}.`, id },
+          { type: 'objective-updated', title: 'OBJECTIVE UPDATED', text: 'The truck is pulling out. Track it and confirm where it stops.' },
+        ],
+      };
+    }
+    return { result: 'improved', events: [{ type: 'photo', title: 'PHOTO', text: better ? `TRUCK RE-SHOT · EVIDENCE ${grade}` : `TRUCK PHOTO · ${grade} (KEEPING THE BETTER ONE)`, id }] };
+  }
+  if (id === BARGE.id && !st.hidden) {
+    m.photos.barge = Math.max(m.photos.barge, quality);
+    if (m.phase === 'landing') {
+      m.transferPhotographed = true;
+      m.phase = 'extract';
+      m.extractReason = 'complete';
+      return {
+        result: 'transfer',
+        events: [
+          { type: 'objective-complete', title: 'OBJECTIVE COMPLETE', text: `Cargo transfer photographed · ${grade}.`, id },
+          { type: 'recon-complete', title: 'RECON COMPLETE', text: 'Extract. Fly home.' },
+        ],
+      };
+    }
+  }
+  return { result: 'untasked', events: [{ type: 'photo', title: 'PHOTO', text: `RETURN ${id} PHOTOGRAPHED · NOT TASKED`, id }] };
+}
+
+/** Track the truck to its stop: a camera has to be on it once it has stopped. */
+export function updateDestination(m: MissionState, dt: number, truckArrived: boolean, cameraOnTruck: boolean): MissionEvent[] {
+  if (m.phase !== 'track') return [];
+  if (truckArrived && cameraOnTruck) m.confirm = Math.min(1, m.confirm + dt / CONFIRM_SECONDS);
   else m.confirm = Math.max(0, m.confirm - dt / (CONFIRM_SECONDS * 2));
   if (m.confirm < 1) return [];
   m.destinationConfirmed = true;
-  m.phase = 'rtb';
+  m.phase = 'landing';
+  // the recon turns up something nobody briefed: the cargo is going onto a barge
+  const e = m.returns[BARGE.id];
+  e.hidden = false;
+  e.detected = true;
+  e.detection = Math.max(e.detection, DETECT_THRESHOLD);
+  e.lastKnown = { x: BARGE.route[0][0], z: BARGE.route[0][1] };
   return [
     { type: 'objective-complete', title: 'OBJECTIVE COMPLETE', text: `Destination confirmed: ${DESTINATION.name}.` },
-    { type: 'final-objective', title: 'FINAL OBJECTIVE', text: 'Return to base.' },
+    { type: 'objective-updated', title: 'OBJECTIVE UPDATED', text: "A barge at the landing is taking the truck's cargo. Photograph the barge (Return E)." },
   ];
 }
 
-/** Landing only completes the mission once the recon is done. */
-export function land(m: MissionState): { ok: boolean; events: MissionEvent[] } {
-  if (m.phase !== 'rtb') return { ok: false, events: [] };
-  m.phase = 'complete';
-  return { ok: true, events: [{ type: 'mission-complete', title: 'MISSION COMPLETE', text: 'Sortie complete. Debrief follows.' }] };
+/** Leave the area: by choice once the primary is done, or forced (weather, fuel). */
+export function extract(m: MissionState, reason: ExtractReason): MissionEvent[] {
+  if (m.phase === 'extract') return [];
+  if (reason === 'manual' && !m.primaryComplete) return [];
+  m.phase = 'extract';
+  m.extractReason = reason;
+  const text = reason === 'weather' ? 'The weather front has arrived. Extract now.' : reason === 'fuel' ? 'Bingo fuel. Extract now.' : 'Extract. Fly home.';
+  return [{ type: 'recon-complete', title: reason === 'weather' ? 'WEATHER FRONT' : reason === 'fuel' ? 'BINGO FUEL' : 'EXTRACTING', text }];
 }
 
-export function fail(m: MissionState, reason: 'fuel' | 'aborted'): MissionEvent[] {
-  if (!isActive(m)) return [];
-  m.phase = 'failed';
-  m.failReason = reason;
-  return [{ type: 'mission-failed', title: 'MISSION INCOMPLETE', text: reason === 'fuel' ? 'Fuel exhausted. Recovered on reserves.' : 'Mission aborted.' }];
-}
-
-export interface DebriefRow {
+export interface Secondary {
   label: string;
-  value: string;
-  tone?: 'good' | 'bad';
+  done: boolean;
+  /** Issued in the field (unknown at the briefing). */
+  issued: boolean;
 }
 
-export interface Debrief {
-  headline: string;
-  success: boolean;
-  rows: DebriefRow[];
-  /** Short notes on each return, so the player can check their reasoning. */
-  findings: string[];
+export function secondaries(m: MissionState, detected: boolean): Secondary[] {
+  return [
+    { label: 'Reach Sector 7 undetected', done: !detected, issued: true },
+    { label: "Confirm the truck's destination", done: m.destinationConfirmed, issued: m.primaryComplete },
+    { label: 'Photograph the cargo transfer', done: m.transferPhotographed, issued: m.destinationConfirmed },
+  ];
+}
+
+/** Intelligence for the report: what the recon actually established. */
+export function intelligence(m: MissionState): string[] {
+  const out: string[] = [];
+  if (m.destinationConfirmed) out.push(`The supply truck drove to ${DESTINATION.name}.`);
+  if (m.transferPhotographed) out.push('Its cargo was transferred to a river barge: it is leaving the basin by water.');
+  else if (m.destinationConfirmed) out.push('A barge was loading at the landing. Its cargo is unconfirmed.');
+  for (const r of RETURNS) {
+    const st = m.returns[r.id];
+    if (!st.detected || r.id === BARGE.id) continue;
+    const pos = st.lastKnown ?? { x: r.route[0][0], z: r.route[0][1] };
+    const why = mismatchReason(r, pos.x, pos.z);
+    const tag = st.verdict === 'wrong' ? ' (marked in error)' : st.verdict === 'correct' ? ' (marked)' : '';
+    out.push(`Return ${r.id}${tag}: ${r.truth}${why ? ` It was ${why}.` : ''}`);
+  }
+  return out;
 }
 
 export function formatTime(sec: number): string {
@@ -262,37 +372,9 @@ export function formatTime(sec: number): string {
 }
 
 /**
- * Debrief data. `positions` are where each return was when it was last seen,
- * used to explain why a false positive did not match the intel.
- */
-export function buildDebrief(m: MissionState, fuelFraction: number, timeOnStation = 0): Debrief {
-  const success = m.phase === 'complete';
-  const detected = RETURNS.filter((r) => m.returns[r.id].detected);
-  const headline = success ? 'MISSION COMPLETE' : m.failReason === 'fuel' ? 'MISSION INCOMPLETE · FUEL EXHAUSTED' : 'MISSION INCOMPLETE · ABORTED';
-  const rows: DebriefRow[] = [
-    { label: 'Objective', value: success ? 'Complete' : 'Incomplete', tone: success ? 'good' : 'bad' },
-    { label: 'Supply truck identified', value: m.targetIdentified ? `Yes · Return ${TARGET.id}` : 'No', tone: m.targetIdentified ? 'good' : 'bad' },
-    { label: 'Destination confirmed', value: m.destinationConfirmed ? DESTINATION.name : 'No', tone: m.destinationConfirmed ? 'good' : 'bad' },
-    { label: 'False positives', value: String(m.falsePositives), tone: m.falsePositives === 0 ? 'good' : 'bad' },
-    { label: 'Time', value: formatTime(m.time) },
-    { label: 'Time in mission control', value: formatTime(timeOnStation) },
-    { label: 'Fuel remaining', value: `${Math.round(Math.max(0, Math.min(1, fuelFraction)) * 100)}%` },
-    { label: 'Recon findings', value: `${detected.length} of ${RETURNS.length} returns` },
-  ];
-  const findings = detected.map((r) => {
-    const st = m.returns[r.id];
-    const pos = st.lastKnown ?? { x: r.route[0][0], z: r.route[0][1] };
-    const why = mismatchReason(r, pos.x, pos.z);
-    const tag = st.verdict === 'wrong' ? ' (marked in error)' : st.verdict === 'correct' ? ' (marked)' : '';
-    return `Return ${r.id}${tag}: ${r.truth}${why ? ` It was ${why}.` : ''}`;
-  });
-  return { headline, success, rows, findings };
-}
-
-/**
- * The road the truck takes once found: from where it is, back down the mine
- * road to the quarry junction, then along the main road to the landing.
- * `segment` is the mine-road segment it is currently on.
+ * The road the truck takes once photographed: from where it is, back down
+ * the mine road to the quarry junction, then along the main road to the
+ * landing. `segment` is the mine-road segment it is currently on.
  */
 export function destinationRoute(x: number, z: number, segment: number): Pt[] {
   const pts: Pt[] = [[x, z]];

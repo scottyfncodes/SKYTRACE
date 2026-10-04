@@ -1,12 +1,13 @@
 /**
- * What every SKYTRACE mission declares. The game's grammar is
+ * What every SKYTRACE operation declares. The grammar is
  *
- *   FLY TO TARGET → MISSION CONTROL → OPERATE → (objective) → FLY HOME → LAND → DEBRIEF
+ *   PREFLIGHT → OUTBOUND (gates) → RECON (Mission Control) → RETURN (gates) → DEBRIEF
  *
- * so a mission states where Mission Control can be opened, how the autopilot
- * holds the aircraft there, and what the pilot inherits when the operator
- * work is done and the aircraft is handed back.
+ * The flying legs are lists of gates and hazards (`operation/gates.ts`);
+ * the recon objectives live in the mission's own rules module.
  */
+import type { LegDef } from '../operation/gates';
+
 export interface OperationsArea {
   id: string;
   label: string;
@@ -16,22 +17,38 @@ export interface OperationsArea {
   z1: number;
 }
 
+export interface Briefing {
+  /** "LOCATE THE MISSING SUPPLY TRUCK" */
+  headline: string;
+  primary: string;
+  /** Known secondary objectives (more may be issued in the field). */
+  secondaries: string[];
+  weather: string;
+  conditions: string;
+  targetArea: string;
+  constraints: string[];
+  window: string;
+  threats: string[];
+}
+
 export interface MissionDef {
+  id: string;
   code: string;
   title: string;
   objective: string;
   success: string;
   intel: readonly string[];
   intelShort: string;
-  fuelSeconds: number;
-  /** Where Mission Control is available, and the autopilot orbit height there. */
-  operations: { area: OperationsArea; orbitAgl: number };
-  /**
-   * Conditions that changed while the player was heads-down, applied when
-   * the operator work is complete and the pilot takes the aircraft back.
-   * `visibility` is 0..1 (1 = clear).
-   */
-  handback: { visibility: number; notices: readonly string[] };
+  briefing: Briefing;
+  /** Where Mission Control is available. The orbit comes from the aircraft and crew. */
+  operations: { area: OperationsArea };
+  /** Seconds on station before the weather front forces extraction. */
+  reconWindow: number;
+  /** Visibility (0..1) by the end of the recon window, as the front arrives. */
+  reconVisibilityEnd: number;
+  outbound: LegDef;
+  /** The return leg: conditions the pilot inherits after extraction. */
+  return: LegDef & { visibility: number; notices: readonly string[] };
 }
 
 /** Is a point inside an operations area? */

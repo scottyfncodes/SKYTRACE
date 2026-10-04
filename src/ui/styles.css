@@ -547,3 +547,162 @@ ul.evidence li.unmarked { color: #9a4a12; }
   .handoff-card b { font-size: 19px; letter-spacing: 0.14em; }
   .handoff-card ul { font-size: 11px; letter-spacing: 0.08em; }
 }
+
+/* ============================================================
+   Operations: preflight, gates & weather, sensors, report
+   ============================================================ */
+.career-line { margin: 10px 0 0; font-size: 10px; letter-spacing: 0.16em; color: var(--ph-dim); }
+
+/* ---------- preflight ---------- */
+.preflight { z-index: 14; display: flex; flex-direction: column; background: #050c08; color: #e8f3ea; padding: var(--sat) var(--sar) var(--sab) var(--sal); }
+.pf-bar { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: #0d1a12; border-bottom: 2px solid var(--amber); }
+.pf-bar .btn { min-width: 44px; min-height: 44px; padding: 0 12px; font-size: 18px; }
+.pf-id b { display: block; font-size: 14px; letter-spacing: 0.3em; color: var(--amber); }
+.pf-id span { font-size: 10px; letter-spacing: 0.12em; color: var(--ph-dim); }
+.pf-body { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 0; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+.pf-brief { padding: 14px 16px 18px; border-right: 1px solid var(--ph-faint); }
+.pf-code { margin: 0; font-size: 10px; letter-spacing: 0.24em; color: var(--ph-dim); }
+.pf-brief h2 { margin: 4px 0 12px; font-size: 18px; letter-spacing: 0.12em; color: #fff; line-height: 1.3; }
+.pf-primary { border-left: 4px solid var(--amber); background: rgba(242, 169, 59, 0.08); padding: 8px 10px; margin-bottom: 12px; border-radius: 4px; }
+.pf-primary label, .pf-row label { display: block; font-size: 9px; letter-spacing: 0.24em; color: var(--amber); margin-bottom: 3px; }
+.pf-primary p { margin: 0; font-size: 15px; color: var(--ph); line-height: 1.4; }
+.pf-row { margin: 0 0 9px; }
+.pf-row p, .pf-row ul { margin: 0; font-family: var(--serif); font-size: 13px; line-height: 1.45; color: #d8d2c0; }
+.pf-row ul { padding-left: 16px; }
+.pf-load { padding: 10px 14px 18px; }
+.pf-load h3 { margin: 10px 0 6px; font-size: 11px; letter-spacing: 0.24em; color: var(--ph-dim); font-weight: 500; }
+.pf-load h3 small { color: var(--amber); margin-left: 8px; }
+.pf-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.pf-card { text-align: left; padding: 10px 12px; min-height: 44px; border: 1px solid rgba(124, 255, 154, 0.25); border-radius: 8px; background: rgba(124, 255, 154, 0.03); color: #e8f3ea; display: flex; flex-direction: column; gap: 4px; }
+.pf-card b { font-size: 14px; letter-spacing: 0.18em; color: var(--ph); }
+.pf-card .pf-sub { font-size: 11px; color: #e8f3ea; letter-spacing: 0.04em; }
+.pf-card .pf-limit { font-size: 10px; color: rgba(232, 243, 234, 0.55); }
+.pf-card .pf-stats { display: flex; flex-wrap: wrap; gap: 4px; }
+.pf-card .pf-stats i { font-style: normal; font-size: 9px; letter-spacing: 0.1em; padding: 1px 5px; border: 1px solid rgba(124, 255, 154, 0.3); border-radius: 3px; }
+.pf-card ul { margin: 2px 0 0; padding-left: 14px; font-family: var(--serif); font-size: 12px; line-height: 1.35; color: #d8d2c0; }
+.pf-card.on { border-color: var(--amber); background: rgba(242, 169, 59, 0.1); box-shadow: inset 0 0 0 1px var(--amber); }
+.pf-card.on b { color: var(--amber); }
+.pf-card.locked, .pf-chip.locked { opacity: 0.4; }
+.pf-card .lock, .pf-chip .lock { font-style: normal; font-size: 10px; letter-spacing: 0.14em; color: var(--amber); }
+.pf-crew { display: flex; flex-direction: column; gap: 8px; }
+.pf-seat label { display: block; font-size: 9px; letter-spacing: 0.22em; color: var(--amber); margin-bottom: 4px; }
+.pf-seat-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.pf-chip { min-height: 44px; padding: 6px 10px; border: 1px solid rgba(124, 255, 154, 0.25); border-radius: 8px; background: transparent; color: rgba(232, 243, 234, 0.75); font-size: 11px; letter-spacing: 0.12em; text-align: left; }
+.pf-chip.crew { display: flex; flex-direction: column; gap: 2px; max-width: 260px; }
+.pf-chip.crew b { color: var(--ph); letter-spacing: 0.12em; font-size: 12px; }
+.pf-chip.crew small { font-size: 9px; color: var(--amber); letter-spacing: 0.06em; }
+.pf-chip.crew em { font-style: normal; font-family: var(--serif); font-size: 11px; color: #d8d2c0; letter-spacing: 0; }
+.pf-chip.on { border-color: var(--amber); background: rgba(242, 169, 59, 0.12); color: var(--amber); }
+.pf-note { margin: 0; font-family: var(--serif); font-size: 13px; color: #d8d2c0; }
+.pf-foot { display: flex; align-items: center; gap: 12px; padding: 8px 14px; background: #0d1a12; border-top: 1px solid var(--ph-faint); }
+.pf-check { flex: 1; min-width: 0; }
+.pf-check ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 10px; letter-spacing: 0.06em; }
+.pf-check li.ok { color: var(--ph); }
+.pf-check li.no { color: var(--warn); }
+.pf-check li.opt { color: rgba(232, 243, 234, 0.4); }
+.pf-check .why { margin: 4px 0 0; font-size: 11px; color: var(--warn); letter-spacing: 0.1em; }
+.pf-foot .btn.big { flex: 0 0 auto; }
+.btn.disabled, .btn:disabled { opacity: 0.35; }
+@media (orientation: portrait), (max-width: 760px) {
+  .pf-body { grid-template-columns: 1fr; }
+  .pf-brief { border-right: 0; border-bottom: 1px solid var(--ph-faint); }
+  .pf-foot { flex-direction: column; align-items: stretch; gap: 6px; }
+  .pf-foot .btn.big { width: 100%; }
+}
+@media (max-height: 460px) {
+  .pf-check ul { display: none; }
+  .pf-foot { flex-direction: row; padding: 5px 12px; }
+  .pf-foot .btn.big { width: auto; padding: 10px 22px; }
+  .pf-bar { padding: 4px 10px; }
+}
+
+/* ---------- flight: stage, gates, weather ---------- */
+.obj-kicker { display: block; font-size: 9px; letter-spacing: 0.24em; color: var(--ph-dim); margin: 0 0 2px 22px; }
+.obj-kicker:empty { display: none; }
+.chips { position: absolute; top: calc(var(--sat) + 152px); left: 50%; transform: translateX(-50%); display: flex; gap: 6px; pointer-events: none; flex-wrap: wrap; justify-content: center; max-width: 92vw; }
+.chips .chip { font-size: 10px; letter-spacing: 0.14em; padding: 3px 8px; border-radius: 10px; background: rgba(8, 18, 12, 0.72); border: 1px solid var(--ph-faint); color: #e8f3ea; }
+.chips .chip.warn { border-color: rgba(242, 169, 59, 0.6); color: var(--amber); }
+.chips .chip.bad { border-color: var(--warn); color: var(--warn); }
+#hud.mission .hint { top: calc(var(--sat) + 180px); }
+#hud.mission .msgs { top: calc(var(--sat) + 210px); }
+@media (max-width: 760px) {
+  .chips { top: calc(var(--sat) + 140px); }
+  #hud.mission .hint { top: calc(var(--sat) + 166px); }
+  #hud.mission .msgs { top: calc(var(--sat) + 194px); }
+}
+@media (orientation: portrait) and (max-width: 600px) {
+  .chips { top: calc(var(--sat) + 196px); }
+  #hud.mission .hint { top: calc(var(--sat) + 224px); }
+  #hud.mission .msgs { top: calc(var(--sat) + 254px); }
+}
+@media (max-height: 460px) and (orientation: landscape) {
+  .chips { top: calc(var(--sat) + 134px); }
+  #hud.mission .hint { top: calc(var(--sat) + 158px); }
+  #hud.mission .msgs { top: calc(var(--sat) + 184px); }
+}
+
+/* ---------- Mission Control additions ---------- */
+.ops-id em { font-style: normal; }
+.ops-stats .front { color: var(--amber); }
+.ops-stats .front.urgent { color: var(--warn); animation: blink 1s steps(2) infinite; }
+.ops-objective .k { display: block; font-size: 9px; letter-spacing: 0.24em; color: var(--ph-dim); }
+.ops-actions { display: flex; gap: 6px; }
+.ops-actions .btn { flex: 1; min-height: 48px; padding: 8px 6px; font-size: 11px; letter-spacing: 0.1em; }
+.ops-panel .btn.photo { border-color: #d9ffe3; color: #d9ffe3; background: rgba(217, 255, 227, 0.08); }
+.ops-panel .btn.photo.disabled { opacity: 0.35; }
+.ops-panel .btn.extract { min-height: 48px; border-color: var(--ph); color: #04120a; background: var(--ph); font-weight: 600; }
+.ops-display.shutter::after { content: ''; position: absolute; inset: 0; background: #fff; animation: shutter 0.35s ease-out forwards; pointer-events: none; }
+@keyframes shutter { from { opacity: 0.85; } to { opacity: 0; } }
+#app.thermal-feed #gl { filter: grayscale(1) invert(1) contrast(1.7) brightness(1.05); }
+.ops.tool-thermal .ops-cam .c, .ops.tool-thermal .ops-cam .cross { border-color: rgba(255, 255, 255, 0.85); }
+@media (orientation: portrait) {
+  .ops-stats { display: flex; }
+  .ops-stats #ops-orbit, .ops-stats #ops-time, .ops-stats #ops-fuel { display: none; }
+}
+@media (max-width: 760px) {
+  .ops-stats #ops-time { display: none; }
+}
+
+/* ---------- recon report ---------- */
+.db-head { display: flex; align-items: flex-start; gap: 12px; }
+.db-head > div:first-child { flex: 1; min-width: 0; }
+.db-aircraft { margin: 2px 0 0; font-size: 10px; letter-spacing: 0.1em; color: var(--ph-dim); line-height: 1.4; }
+.db-grade { flex: 0 0 auto; width: 58px; height: 58px; display: grid; place-items: center; font-size: 34px; font-weight: 700; border: 2px solid var(--amber); color: var(--amber); border-radius: 10px; transform: rotate(-4deg); }
+.db-grade.g-S, .db-grade.g-A { border-color: var(--ph); color: var(--ph); }
+.db-grade.g-D, .db-grade.g-F { border-color: var(--warn); color: var(--warn); }
+.db-secondaries h3, .db-findings h3 { font-size: 10px; letter-spacing: 0.24em; color: var(--amber); margin: 6px 0 4px; font-weight: 500; }
+.db-secondaries ul { list-style: none; margin: 0; padding: 0; font-size: 12px; line-height: 1.6; }
+.db-secondaries li.ok { color: var(--ph); }
+.db-secondaries li.no { color: rgba(232, 243, 234, 0.55); }
+.db-rewards { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.db-rewards .rw { flex: 1; min-width: 80px; text-align: center; padding: 6px; border: 1px solid var(--ph-faint); border-radius: 8px; }
+.db-rewards .rw b { display: block; font-size: 18px; color: var(--amber); }
+.db-rewards .rw small { font-size: 9px; letter-spacing: 0.2em; color: var(--ph-dim); }
+.db-rewards .unl { flex-basis: 100%; margin: 2px 0 0; font-size: 11px; letter-spacing: 0.1em; color: var(--ph); }
+.debrief-card { max-height: calc(100vh - 32px); overflow-y: auto; touch-action: pan-y; }
+@media (max-height: 460px) {
+  .debrief-card .db-head, .debrief-card .db-rewards, .debrief-card .db-secondaries { grid-column: 1 / -1; }
+}
+/* two independently scrolling columns where there is width for them */
+@media (min-width: 761px) and (orientation: landscape), (max-height: 460px) and (orientation: landscape) {
+  .pf-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); overflow: hidden; }
+  .pf-brief, .pf-load { overflow-y: auto; min-height: 0; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+  .pf-brief { border-right: 1px solid var(--ph-faint); border-bottom: 0; }
+}
+@media (max-height: 460px) and (orientation: landscape) {
+  .pf-brief h2 { font-size: 14px; margin-bottom: 8px; }
+  .pf-primary p { font-size: 13px; }
+  .pf-cards { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+  .pf-card ul { font-size: 11px; }
+}
+@media (orientation: portrait) and (max-width: 600px) {
+  .ops-bar { flex-wrap: wrap; row-gap: 4px; }
+  .ops-bar .ops-id { flex: 1; }
+  .ops-stats { order: 5; flex-basis: 100%; margin-left: 0; justify-content: space-between; font-size: 10px; }
+  .ops-stats #ops-fuel, .ops-stats #ops-time { display: inline; }
+}
+@media (orientation: portrait) and (max-width: 600px) {
+  .ops-bar .ops-id { min-width: 0; }
+  .ops-id b { font-size: 12px; letter-spacing: 0.2em; }
+  .ops-id span { white-space: normal; flex-wrap: wrap; line-height: 1.4; }
+}

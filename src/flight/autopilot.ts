@@ -1,5 +1,5 @@
 import { clamp, wrapAngle } from '../core/math';
-import { FLIGHT, type AircraftState, type FlightInput } from './aircraft';
+import { FLIGHT, type AircraftState, type FlightInput, type FlightPerf } from './aircraft';
 
 /**
  * Orbit autopilot. While the player is the operator, this produces the
@@ -20,7 +20,7 @@ export interface Orbit {
 }
 
 /** Clockwise (seen from above) orbit guidance: tangent course plus a radial correction. */
-export function orbitInput(a: AircraftState, o: Orbit, terrainAt: (x: number, z: number) => number): FlightInput {
+export function orbitInput(a: AircraftState, o: Orbit, terrainAt: (x: number, z: number) => number, P: FlightPerf = FLIGHT): FlightInput {
   const dx = a.x - o.x;
   const dz = a.z - o.z;
   const dist = Math.max(1, Math.hypot(dx, dz));
@@ -45,7 +45,7 @@ export function orbitInput(a: AircraftState, o: Orbit, terrainAt: (x: number, z:
   const ground = Math.max(terrainAt(a.x, a.z), terrainAt(a.x + fx * 120, a.z + fz * 120));
   const wantY = ground + o.agl;
   const wantPitch = clamp((wantY - a.y) / 140, -0.22, 0.32);
-  const pitch = clamp(wantPitch / FLIGHT.maxPitch, -1, 1);
+  const pitch = clamp(wantPitch / P.maxPitch, -1, 1);
 
   const throttleDelta = clamp((o.throttle - a.throttle) * 4, -1, 1);
   return { roll, pitch, throttleDelta };
