@@ -9,6 +9,8 @@ import {
   formatTime,
   identify,
   inSector,
+  inspectReturn,
+  CAMERA_SECONDS,
   isActive,
   land,
   mismatchReason,
@@ -75,14 +77,14 @@ describe('mission 01 content', () => {
 });
 
 describe('recon / scanning', () => {
-  it('detects from altitude but needs a low pass to resolve size', () => {
+  it('radar detects a return; its size stays unknown until the camera looks', () => {
     const m = newMission();
     scan(m, 'B', 450, 6);
     expect(m.returns.B.detected).toBe(true);
     expect(m.returns.B.resolved).toBe(false);
     const card = describeReturn(m, 'B', 600, 250, true);
-    expect(card.traits[0]).toMatch(/SIZE \?/);
-    scan(m, 'B', 150, 6);
+    expect(card.traits[0]).toBe('SIZE ? · USE THE CAMERA');
+    inspectReturn(m, 'B', CAMERA_SECONDS + 0.1, true);
     expect(m.returns.B.resolved).toBe(true);
     expect(describeReturn(m, 'B', 600, 250, true).traits).toEqual(['3 SMALL VEHICLES', 'MOVING', 'ON ROAD', 'IN SECTOR 7']);
   });
@@ -136,7 +138,7 @@ describe('identification and objective progression', () => {
     expect(r.events[1].text).toMatch(/Confirm the truck's destination/);
     expect(m.phase).toBe('destination');
     expect(objectiveFor(m).title).toBe("CONFIRM THE TRUCK'S DESTINATION");
-    expect(objectiveFor(m, true).detail).toMatch(/STOPPED/);
+    expect(objectiveFor(m, { station: 'operator', truckStopped: true }).detail).toMatch(/STOPPED/);
     // marking is over once the truck is found
     scan(m, 'A', 150, 6);
     expect(identify(m, 'A').result).toBe('inactive');

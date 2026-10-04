@@ -167,6 +167,18 @@ describe('Input vertical axis (stick + keyboard share one path)', () => {
     }
   });
 
+  it('O and Enter switch crew stations (Mission Control) without touching the flight axes', () => {
+    const t = make();
+    let n = 0;
+    t.input.onAction('ops', () => n++);
+    t.key('o', true);
+    t.key('o', false);
+    t.key('Enter', true);
+    t.key('Enter', false);
+    expect(n).toBe(2);
+    expect(t.input.read()).toEqual({ roll: 0, pitch: 0, throttleDelta: 0 });
+  });
+
   it('switching mode takes effect on the next read without re-touching', () => {
     const t = make();
     t.stick(0, -54);

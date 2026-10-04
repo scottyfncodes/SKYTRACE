@@ -33,27 +33,34 @@ import { buildProps, buildTrees, updateProps, type WorldProps } from '../world/p
 import { createScene, type SceneBundle } from '../world/scene';
 import { TruckMesh, TruckSim } from '../world/truck';
 import { BASE, RUNWAY, gridRef } from '../world/worldData';
-import { DESTINATION, MISSION_01, RETURNS, SECTOR_7, TARGET_SPEED_TO_DESTINATION, type ReturnId } from '../mission/mission01';
+import { DESTINATION, MISSION_01, RETURNS, TARGET_SPEED_TO_DESTINATION, type ReturnId } from '../mission/mission01';
 import {
   buildDebrief,
+  CAMERA_RANGE,
+  CAMERA_SECONDS,
   describeReturn,
   destinationRoute,
   fail as failMission,
   identify,
-  inSector,
+  inspectReturn,
   isActive,
   land as landMission,
-  MARK_RANGE,
   MISSION_RATE,
   newMission,
   objectiveFor,
+  operatorWork,
   RETURN_BY_ID,
   scanReturn,
   TARGET,
   updateDestination,
   type MissionEvent,
   type MissionState,
+  type StationContext,
 } from '../mission/mission';
+import { buildHandover, engageOperator, forcedHandback, handBack, newCrew, operatorAvailability, retaskOrbit, tickCrew, type CrewState, type HandbackReason } from '../mission/crew';
+import { inArea } from '../mission/missionDef';
+import { orbitInput } from '../flight/autopilot';
+import { OpsConsole, type OpsReturn, type OpsTool } from '../ui/opsConsole';
 import { MissionScene } from '../mission/missionScene';
 import { RouteMover } from '../mission/vehicles';
 import { pauseTransition, type Mode } from './modes';
@@ -108,6 +115,15 @@ export class Game {
   private mission: MissionState = newMission();
   private movers = new Map<ReturnId, RouteMover>();
   private missionScene: MissionScene;
+  /** Which crew station the player occupies (mission play). */
+  private crew: CrewState = newCrew();
+  private ops: OpsConsole;
+  private opsTool: OpsTool = 'radar';
+  private opsSelected: ReturnId | null = null;
+  private camSettle = 0;
+  private handbackTimer = -1;
+  private visibility = 1;
+  private sensorCam = new THREE.PerspectiveCamera(20, 1, 1, 4200);
 
   constructor(root: HTMLElement) {
     const q = (id: string) => {
@@ -115,9 +131,10 @@ export class Game {
       if (!e) throw new Error(`missing #${id}`);
       return e;
     };
-    for (const id of ['gl', 'hud', 'intel', 'title', 'pause', 'hint', 'btn-begin', 'btn-continue', 'btn-newcase-title', 'stick-zone', 'stick-knob', 'throttle', 'btn-scan', 'btn-mark', 'btn-drop', 'btn-map', 'btn-pause', 'btn-rtb', 'btn-resume-pause', 'btn-map-pause', 'btn-end-sortie', 'btn-sound-pause', 'loading', 'btn-mission', 'btn-open-case', 'btn-case-back', 'mission-card', 'case-card', 'mission-brief', 'debrief', 'btn-fly-again', 'btn-debrief-menu', 'db-headline', 'db-rows', 'db-findings', 'pause-objective']) {
+    for (const id of ['gl', 'hud', 'intel', 'title', 'pause', 'hint', 'btn-begin', 'btn-continue', 'btn-newcase-title', 'stick-zone', 'stick-knob', 'throttle', 'btn-scan', 'btn-mark', 'btn-drop', 'btn-map', 'btn-pause', 'btn-rtb', 'btn-resume-pause', 'btn-map-pause', 'btn-end-sortie', 'btn-sound-pause', 'loading', 'btn-mission', 'btn-open-case', 'btn-case-back', 'mission-card', 'case-card', 'mission-brief', 'debrief', 'btn-fly-again', 'btn-debrief-menu', 'db-headline', 'db-rows', 'db-findings', 'pause-objective', 'btn-ops', 'handoff', 'ops']) {
       this.el[id] = q(id);
     }
+    this.el['app'] = root;
     const canvas = this.el['gl'] as HTMLCanvasElement;
     this.bundle = createScene(canvas);
     const hf = this.bundle.heightField;
@@ -126,7 +143,7 @@ export class Game {
     this.bundle.scene.add(buildTrees(hf));
     this.bundle.scene.add(this.truckMesh.group);
     this.bundle.scene.add(this.plane.group);
-    this.missionScene = new MissionScene(SECTOR_7, hf);
+    this.missionScene = new MissionScene(MISSION_01.operations.area, hf);
     this.bundle.scene.add(this.missionScene.group);
 
     // radar footprint visual
@@ -150,7 +167,19 @@ export class Game {
     this.input = new Input(this.el['stick-zone'], this.el['stick-knob'], this.el['throttle']);
     this.prefs = loadPrefs(localStorage);
     this.input.verticalMode = this.prefs.verticalMode;
-    this.hud = new Hud(this.el['hud']);
+    this.hud = new Hud(root);
+    this.ops = new OpsConsole(this.el['ops'], {
+      onTool: (t) => this.setOpsTool(t),
+      onSelect: (id) => this.opsSelect(id),
+      onMark: () => this.opsMark(),
+      onRetask: (x, z) => {
+        retaskOrbit(this.crew, x, z);
+        if (this.opsTool === 'camera') this.opsSelected = null;
+        this.audio.click();
+      },
+      onTakeControls: () => this.takeControls('manual'),
+      onPause: () => this.togglePause(),
+    });
     this.intel = new IntelMap(this.el['intel'], {
       onClose: () => this.closeIntel(),
       onWaypoint: (id) => {
@@ -181,6 +210,8 @@ export class Game {
     this.input.bindButton(this.el['btn-map'], 'map', 'click');
     this.input.bindButton(this.el['btn-pause'], 'pause', 'click');
     this.input.bindButton(this.el['btn-rtb'], 'rtb', 'click');
+    this.input.bindButton(this.el['btn-ops'], 'ops', 'click');
+    this.input.onAction('ops', () => this.opsAction());
     this.input.onAction('scan', () => this.toggleScan());
     this.input.onAction('mark', () => this.doMark());
     this.input.onAction('drop', () => this.doDrop());
@@ -250,6 +281,9 @@ export class Game {
       getMission: () => this.mission,
       getReturns: () => [...this.movers].map(([id, m]) => ({ id, x: m.x, z: m.z, moving: m.moving, arrived: m.arrived })),
       getFuel: () => this.fuel,
+      getCrew: () => ({ ...this.crew, orbit: this.crew.orbit && { ...this.crew.orbit } }),
+      getOps: () => ({ tool: this.opsTool, selected: this.opsSelected }),
+      getVisibility: () => this.visibility,
     };
     this.last = performance.now();
     this.raf = requestAnimationFrame((now) => this.frame(now));
@@ -261,6 +295,7 @@ export class Game {
     this.el['debrief'].classList.add('hidden');
     this.el['pause'].classList.add('hidden');
     this.missionScene.group.visible = false;
+    this.leaveMissionStations();
     this.hud.clearBanners();
     const M = MISSION_01;
     this.el['mission-brief'].innerHTML =
@@ -284,6 +319,15 @@ export class Game {
     this.bundle.camera.position.set(-300, 420, 900);
     this.bundle.camera.up.set(0, 1, 0);
     this.bundle.camera.lookAt(200, 40, -100);
+  }
+
+  /** Leaving mission play: back to the pilot's seat, clear weather, no console. */
+  private leaveMissionStations(): void {
+    if (this.crew.station === 'operator') handBack(this.crew);
+    this.ops.hide();
+    this.hideHandoff();
+    this.el['app'].classList.remove('sensor-feed');
+    this.setVisibility(1);
   }
 
   private showCaseCard(on: boolean): void {
@@ -363,7 +407,7 @@ export class Game {
     if (next === 'paused') {
       this.mode = 'paused';
       const mission = this.play === 'mission';
-      const ob = objectiveFor(this.mission, this.movers.get(TARGET.id)?.arrived);
+      const ob = objectiveFor(this.mission, this.stationContext());
       this.el['pause-objective'].classList.toggle('hidden', !mission);
       this.el['pause-objective'].innerHTML = mission ? `<i class="reticle"></i><b>${ob.title}</b><small>${ob.detail}</small>` : '';
       this.el['btn-map-pause'].classList.toggle('hidden', mission);
@@ -384,6 +428,7 @@ export class Game {
     const hf = this.bundle.heightField;
     const cap = capabilities(this.state);
     this.play = 'case';
+    this.leaveMissionStations();
     this.missionScene.group.visible = false;
     this.el['hud'].classList.remove('mission');
     this.hud.clearBanners();
@@ -457,6 +502,7 @@ export class Game {
   private tryReturn(): void {
     if (this.mode !== 'flight') return;
     if (this.play === 'mission') {
+      if (this.crew.station === 'operator') return;
       this.tryMissionLanding();
       return;
     }
@@ -468,6 +514,11 @@ export class Game {
   // ------------------------------------------------------------------ actions
   private toggleScan(): void {
     if (this.mode !== 'flight') return;
+    if (this.play === 'mission') {
+      if (this.crew.station === 'operator') this.setOpsTool('radar');
+      else this.hud.message('RECON SYSTEMS RUN FROM MISSION CONTROL', 'sys');
+      return;
+    }
     this.scanning = !this.scanning;
     this.radarRing.visible = this.scanning;
     if (this.scanning) this.audio.radarOn();
@@ -489,7 +540,8 @@ export class Game {
   private doMark(): void {
     if (this.mode !== 'flight') return;
     if (this.play === 'mission') {
-      this.missionMark();
+      if (this.crew.station === 'operator') this.opsMark();
+      else this.hud.message('MARK TARGETS FROM MISSION CONTROL', 'sys');
       return;
     }
     const n = this.nearContact();
@@ -615,11 +667,19 @@ export class Game {
   }
 
   // ------------------------------------------------------------------ mission 01
+  // Two stations. PILOT: the player flies (flight HUD). OPERATOR: the autopilot
+  // flies an orbit and the player runs the recon systems (Mission Control).
   private startMission(): void {
     const hf = this.bundle.heightField;
     this.audio.unlock();
     this.play = 'mission';
     this.mission = newMission();
+    this.crew = newCrew();
+    this.opsTool = 'radar';
+    this.opsSelected = null;
+    this.camSettle = 0;
+    this.handbackTimer = -1;
+    this.setVisibility(1);
     this.movers.clear();
     for (const r of RETURNS) this.movers.set(r.id, new RouteMover(r.route, r.speed, r.start, true));
     this.a = initialAircraft(RUNWAY.x1 + 16, hf.sample(RUNWAY.x1 + 16, RUNWAY.z) + 2, RUNWAY.z, BASE.heading);
@@ -643,6 +703,8 @@ export class Game {
     this.el['title'].classList.add('hidden');
     this.el['debrief'].classList.add('hidden');
     this.el['pause'].classList.add('hidden');
+    this.ops.hide();
+    this.hideHandoff();
     this.el['hud'].classList.add('mission');
     this.el['hud'].classList.remove('hidden');
     this.intel.close();
@@ -655,12 +717,13 @@ export class Game {
   private missionEvents(events: MissionEvent[]): void {
     for (const e of events) {
       switch (e.type) {
+        // on station the console lists every return; the flight feed is for the pilot
         case 'detected':
-          this.hud.message(e.text, '');
+          if (this.crew.station === 'pilot') this.hud.message(e.text, '');
           this.audio.contact();
           break;
         case 'resolved':
-          this.hud.message(e.text, 'good');
+          if (this.crew.station === 'pilot') this.hud.message(e.text, 'good');
           this.audio.resolved();
           break;
         case 'wrong':
@@ -681,38 +744,140 @@ export class Game {
     }
   }
 
-  private nearestReturn(): { id: ReturnId; dist: number } | null {
-    let best: { id: ReturnId; dist: number } | null = null;
-    for (const [id, mv] of this.movers) {
-      if (!this.mission.returns[id].detected) continue;
-      const d = Math.hypot(mv.x - this.a.x, mv.z - this.a.z);
-      if (d < MARK_RANGE && (!best || d < best.dist)) best = { id, dist: d };
-    }
-    return best;
+  private inOpsArea(): boolean {
+    return inArea(MISSION_01.operations.area, this.a.x, this.a.z);
   }
 
-  private missionMark(): void {
-    const n = this.nearestReturn();
-    if (!n) {
-      this.hud.message(this.mission.phase === 'locate' ? 'NO RETURN IN RANGE · SCAN AND FLY CLOSER' : 'NOTHING TO MARK', 'warn');
+  private stationContext(): StationContext {
+    return { station: this.crew.station, inArea: this.inOpsArea(), truckStopped: !!this.movers.get(TARGET.id)?.arrived };
+  }
+
+  /** The OPS key / button: switch jobs inside the aircraft. */
+  private opsAction(): void {
+    if (this.mode !== 'flight' || this.play !== 'mission') return;
+    if (this.crew.station === 'operator') {
+      this.takeControls('manual');
       return;
     }
-    const { result, events } = identify(this.mission, n.id);
-    if (result === 'already') this.hud.message(`RETURN ${n.id} ALREADY MARKED`, 'sys');
-    else if (result === 'inactive') this.hud.message('TRUCK ALREADY IDENTIFIED', 'sys');
+    const av = operatorAvailability(this.crew, {
+      inArea: this.inOpsArea(),
+      operatorWork: operatorWork(this.mission),
+      fuelFraction: this.fuel / this.fuelMax,
+      areaLabel: MISSION_01.operations.area.label,
+    });
+    if (!av.ok) {
+      this.hud.message(av.reason, 'warn');
+      return;
+    }
+    engageOperator(this.crew, this.a.x, this.a.z, MISSION_01.operations.orbitAgl);
+    this.camSettle = 0;
+    this.setOpsTool(this.opsTool);
+    this.el['hud'].classList.add('hidden');
+    this.ops.show();
+    this.audio.radarOn();
+    this.showHandoff('enter', 'AUTOPILOT ENGAGED', 'YOU ARE THE OPERATOR', [], ['THE AIRCRAFT IS FLYING ITSELF · HANDS OFF', `ORBITING ${MISSION_01.operations.area.label} · RECON SYSTEMS ONLINE`], 1.9);
+  }
+
+  /** Hand the aircraft back to the pilot. The hand-back is a gameplay event. */
+  private takeControls(reason: HandbackReason): void {
+    if (this.crew.station !== 'operator') return;
+    const session = this.crew.sessionTime;
+    handBack(this.crew);
+    this.handbackTimer = -1;
+    this.scanning = false;
+    this.radarRing.visible = false;
+    this.el['app'].classList.remove('sensor-feed');
+    const notices: string[] = [];
+    if (reason === 'complete') {
+      // time passed while the crew was heads-down: the pilot inherits the result
+      this.setVisibility(MISSION_01.handback.visibility);
+      notices.push(...MISSION_01.handback.notices);
+    }
+    const ho = buildHandover({
+      reason,
+      x: this.a.x,
+      z: this.a.z,
+      agl: this.a.agl,
+      fuelSeconds: this.fuel,
+      sessionTime: session,
+      baseX: BASE.x,
+      baseZ: BASE.z,
+      terrainWarning: this.a.terrainWarning,
+      notices,
+    });
+    this.ops.hide();
+    this.chase.reset();
+    this.el['hud'].classList.remove('hidden');
+    this.audio.radarOff();
+    this.audio.warn();
+    this.showHandoff('exit', reason === 'manual' ? 'AUTOPILOT DISENGAGED' : reason === 'fuel' ? 'AUTOPILOT DISENGAGED · BINGO FUEL' : 'RECON COMPLETE · AUTOPILOT DISENGAGED', ho.title, ho.warnings, ho.status, 3.6);
+    this.last = performance.now();
+  }
+
+  private handoffTimer = 0;
+  private showHandoff(kind: 'enter' | 'exit', kicker: string, title: string, warnings: string[], status: string[], seconds: number): void {
+    const el = this.el['handoff'];
+    el.querySelector('#ho-kicker')!.textContent = kicker;
+    el.querySelector('#ho-title')!.textContent = title;
+    el.querySelector('#ho-warn')!.innerHTML = warnings.map((w) => `<li>${w}</li>`).join('');
+    el.querySelector('#ho-status')!.innerHTML = status.map((w) => `<li>${w}</li>`).join('');
+    el.className = `handoff ${kind}`;
+    void el.offsetWidth;
+    el.classList.add('on');
+    this.handoffTimer = seconds;
+  }
+
+  private hideHandoff(): void {
+    this.handoffTimer = 0;
+    this.el['handoff'].className = 'handoff hidden';
+  }
+
+  private setOpsTool(t: OpsTool): void {
+    this.opsTool = t;
+    this.camSettle = 0;
+    this.scanning = t === 'radar';
+    this.el['app'].classList.toggle('sensor-feed', t === 'camera' && this.crew.station === 'operator');
+    if (this.crew.station === 'operator') this.audio.click();
+  }
+
+  private opsSelect(id: ReturnId): void {
+    if (!this.mission.returns[id].detected) return;
+    this.opsSelected = id;
+    this.camSettle = 0;
+    this.audio.click();
+  }
+
+  private opsMark(): void {
+    const id = this.opsSelected;
+    if (!id) {
+      this.hud.banner('NO TARGET', 'SELECT A RETURN FIRST', 'bad', 1.8);
+      return;
+    }
+    const { result, events } = identify(this.mission, id);
+    if (result === 'already') this.hud.banner('ALREADY MARKED', `RETURN ${id}`, 'bad', 1.6);
     if (result === 'correct') {
       this.audio.mark();
-      const mv = this.movers.get(n.id)!;
+      const mv = this.movers.get(id)!;
       mv.setRoute(destinationRoute(mv.x, mv.z, mv.segment), false);
       mv.speed = TARGET_SPEED_TO_DESTINATION;
+      // keep the camera on the truck: the next objective is to track it
+      this.setOpsTool('camera');
     }
     this.missionEvents(events);
+  }
+
+  /** Haze / visibility the pilot flies in (1 = clear). */
+  private setVisibility(v: number): void {
+    this.visibility = v;
+    const fog = this.bundle.scene.fog as THREE.Fog;
+    fog.near = 650 * Math.pow(v, 1.6);
+    fog.far = 2300 * v;
   }
 
   private tryMissionLanding(): void {
     const d = Math.hypot(this.a.x - BASE.x, this.a.z - BASE.z);
     if (this.mission.phase !== 'rtb') {
-      this.hud.message(`OBJECTIVE FIRST: ${objectiveFor(this.mission).title}`, 'warn');
+      this.hud.message(`OBJECTIVE FIRST: ${objectiveFor(this.mission, this.stationContext()).title}`, 'warn');
       return;
     }
     if (d < 480) this.endMission('landed');
@@ -723,15 +888,19 @@ export class Game {
     if (this.mode !== 'flight' && this.mode !== 'paused') return;
     if (reason === 'landed') this.missionEvents(landMission(this.mission).events);
     else failMission(this.mission, reason);
+    if (this.crew.station === 'operator') handBack(this.crew);
     this.mode = 'debrief';
     this.scanning = false;
     this.radarRing.visible = false;
+    this.el['app'].classList.remove('sensor-feed');
+    this.ops.hide();
+    this.hideHandoff();
     this.audio.updateFlight(0, 0, false, false);
     this.audio.land();
     this.el['pause'].classList.add('hidden');
     this.el['hud'].classList.add('hidden');
     this.hud.clearBanners();
-    const d = buildDebrief(this.mission, this.fuel / this.fuelMax);
+    const d = buildDebrief(this.mission, this.fuel / this.fuelMax, this.crew.timeOnStation);
     this.el['db-headline'].textContent = d.headline;
     this.el['db-headline'].className = d.success ? 'good' : 'bad';
     this.el['db-rows'].innerHTML = d.rows.map((r) => `<dt>${r.label}</dt><dd class="${r.tone ?? ''}">${r.value}</dd>`).join('');
@@ -753,54 +922,179 @@ export class Game {
     (this.radarDisc.material as THREE.MeshBasicMaterial).opacity = 0.04 + quality * 0.06;
   }
 
+  /** Slant range from the aircraft to a ground point. */
+  private slant(x: number, z: number): number {
+    const g = this.bundle.heightField.sample(x, z);
+    return Math.hypot(x - this.a.x, z - this.a.z, this.a.y - g);
+  }
+
   private updateMission(dt: number): void {
     const m = this.mission;
-    const hf = this.bundle.heightField;
     m.time += dt;
     if (this.fuel <= 0) {
       this.endMission('fuel');
       return;
     }
-    // ---- world
     for (const mv of this.movers.values()) mv.step(dt);
     this.plane.sync(this.a, this.t);
-    const target = this.movers.get(TARGET.id)!;
+    if (this.handoffTimer > 0) {
+      this.handoffTimer -= dt;
+      if (this.handoffTimer <= 0) this.el['handoff'].classList.remove('on');
+    }
+    if (this.crew.station === 'operator') this.updateOperator(dt);
+    else this.updatePilot(dt);
+    this.missionScene.sync(this.movers, m, this.t);
+  }
 
-    // ---- radar
+  // ---- OPERATOR: the autopilot flies, the player runs the sensors
+  private updateOperator(dt: number): void {
+    const m = this.mission;
+    const crew = this.crew;
+    tickCrew(crew, dt);
+    const target = this.movers.get(TARGET.id)!;
+    const sel = this.opsSelected;
+    const selMover = sel ? this.movers.get(sel)! : null;
+
+    // the orbit is slaved to the camera's target: the operator directs, never flies
+    if (this.opsTool === 'camera' && selMover) retaskOrbit(crew, selMover.x, selMover.z);
+
+    // ---- radar: finds and tracks; cannot identify
     const params = radarParams(this.a.agl, 1);
-    if (this.scanning) {
+    if (this.opsTool === 'radar') {
       this.updateRadarVisual(dt, params.radius, params.quality);
-      this.blipTimer -= dt;
       const events: MissionEvent[] = [];
       for (const [id, mv] of this.movers) {
-        const def = RETURN_BY_ID[id];
-        const dist = Math.hypot(mv.x - this.a.x, mv.z - this.a.z);
-        const gain = detectionGain(dt, params, dist, def, false, MISSION_RATE);
-        if (gain <= 0) continue;
-        if (this.blipTimer <= 0) {
-          const unc = uncertaintyFor(params, def.concealment);
-          this.hud.blip(mv.x + (Math.random() - 0.5) * unc * 0.5, mv.z + (Math.random() - 0.5) * unc * 0.5);
-        }
-        events.push(...scanReturn(m, id, gain, canResolve(params, def), mv.x, mv.z));
+        const gain = detectionGain(dt, params, Math.hypot(mv.x - this.a.x, mv.z - this.a.z), RETURN_BY_ID[id], false, MISSION_RATE);
+        events.push(...scanReturn(m, id, gain, false, mv.x, mv.z));
       }
-      if (this.blipTimer <= 0) this.blipTimer = 0.35;
       if (events.length) this.missionEvents(events);
     }
-    // a detected return is tracked while it is in the footprint or in plain sight
-    for (const [id, mv] of this.movers) {
-      const st = m.returns[id];
-      if (!st.detected) continue;
-      const dist = Math.hypot(mv.x - this.a.x, mv.z - this.a.z);
-      if ((this.scanning && dist <= params.radius) || (dist < 260 && this.a.agl < 320)) st.lastKnown = { x: mv.x, z: mv.z };
+
+    // ---- camera: identifies the selected return when it is in range
+    this.camSettle += dt;
+    const slant = selMover ? this.slant(selMover.x, selMover.z) : Infinity;
+    const inView = this.opsTool === 'camera' && !!sel && m.returns[sel].detected && slant < CAMERA_RANGE && this.camSettle > 0.6;
+    if (inView && sel && selMover) {
+      m.returns[sel].lastKnown = { x: selMover.x, z: selMover.z };
+      const ev = inspectReturn(m, sel, dt, true);
+      if (ev.length) this.missionEvents(ev);
     }
 
-    // ---- destination
+    // ---- destination: hold the camera on the stopped truck
     if (m.phase === 'destination') {
-      const ev = updateDestination(m, dt, target.arrived, Math.hypot(target.x - this.a.x, target.z - this.a.z));
+      const ev = updateDestination(m, dt, target.arrived, inView && sel === TARGET.id ? 0 : Infinity);
       this.missionScene.showDestination(DESTINATION.x, DESTINATION.z, target.arrived);
       if (ev.length) this.missionEvents(ev);
     }
-    this.missionScene.sync(this.movers, m, this.t);
+
+    // ---- the operator gives the aircraft back when the work is done or fuel runs short
+    const forced = forcedHandback(crew, { fuelFraction: this.fuel / this.fuelMax, operatorWork: operatorWork(m) });
+    if (forced === 'fuel') {
+      this.takeControls('fuel');
+      return;
+    }
+    if (forced === 'complete') {
+      // let the operator read the announcements on the console first, then hand back
+      if (this.handbackTimer < 0) this.handbackTimer = 1;
+      if (!this.hud.bannerActive) this.handbackTimer -= dt;
+      if (this.handbackTimer <= 0) {
+        this.takeControls('complete');
+        return;
+      }
+    }
+
+    this.audio.updateFlight(this.a.throttle, this.a.speed, true, this.opsTool === 'radar');
+    this.hud.tickBanners(dt);
+
+    // ---- console frame
+    const ob = objectiveFor(m, this.stationContext());
+    const returns: OpsReturn[] = [];
+    for (const r of RETURNS) {
+      const st = m.returns[r.id];
+      if (!st.detected || !st.lastKnown) continue;
+      const mv = this.movers.get(r.id)!;
+      returns.push({ id: r.id, x: st.lastKnown.x, z: st.lastKnown.z, traits: describeReturn(m, r.id, st.lastKnown.x, st.lastKnown.z, mv.moving).traits, verdict: st.verdict, resolved: st.resolved });
+    }
+    const selSt = sel ? m.returns[sel] : null;
+    let camLabel = 'NO TARGET · SELECT A RETURN';
+    let acquire: number | null = null;
+    if (sel && selSt) {
+      const rng = `${Math.round(slant)} m`;
+      if (slant >= CAMERA_RANGE) camLabel = `RETURN ${sel} · ${rng} · OUT OF RANGE · ORBIT MOVING IN`;
+      else if (!selSt.resolved) camLabel = `RETURN ${sel} · ${rng} · IDENTIFYING`;
+      else camLabel = `RETURN ${sel} · ${rng} · ${describeReturn(m, sel, 0, 0, true).traits[0]}`;
+      if (inView && !selSt.resolved) acquire = selSt.look / CAMERA_SECONDS;
+      if (m.phase === 'destination' && sel === TARGET.id && target.arrived) {
+        acquire = m.confirm;
+        camLabel = `RETURN ${sel} · STOPPED AT ${DESTINATION.short} · CONFIRMING`;
+      }
+    }
+    const anyDetected = returns.length > 0;
+    let hint = '';
+    if (m.phase === 'locate') {
+      if (!anyDetected) hint = 'The truck was last driving a road in Sector 7. Tap the display to move the orbit over the roads.';
+      else if (!sel) hint = 'Radar shows where vehicles are and whether they move, not what they are. Select a return.';
+      else if (!selSt!.resolved && this.opsTool === 'radar') hint = `Switch to CAMERA (2) to see what Return ${sel} is.`;
+      else if (!selSt!.resolved) hint = `Hold the camera on Return ${sel} to identify it.`;
+      else if (selSt!.verdict === 'none') hint = `Does Return ${sel} match every point? ${MISSION_01.intelShort}`;
+      else hint = 'Select another return.';
+    } else if (m.phase === 'destination') hint = target.arrived ? 'The truck has stopped. Hold the camera on it to confirm where.' : 'Keep the camera on the truck. The orbit follows it.';
+    else hint = 'Recon complete. The aircraft is being handed back to you.';
+    const displayHint = this.opsTool === 'radar' ? (anyDetected ? '' : 'TAP THE DISPLAY TO MOVE THE ORBIT') : sel ? '' : 'SELECT A RETURN TO SLEW THE CAMERA';
+    this.ops.update({
+      tool: this.opsTool,
+      objective: { title: ob.title, detail: ob.detail, progress: m.phase === 'destination' && target.arrived ? m.confirm : null },
+      orbit: crew.orbit!,
+      aircraft: { x: this.a.x, z: this.a.z, yaw: this.a.yaw, agl: this.a.agl },
+      footprint: params.radius,
+      sweep: this.sweep,
+      fuelSeconds: this.fuel,
+      timeOnStation: crew.timeOnStation,
+      area: MISSION_01.operations.area,
+      returns,
+      selected: sel,
+      camera: { label: camLabel, acquire },
+      canMark: m.phase === 'locate' && !!selSt && selSt.verdict === 'none',
+      hint,
+      displayHint,
+    });
+  }
+
+  /** Telephoto sensor view rendered into the console's display. */
+  private renderSensorFeed(): void {
+    const r = this.ops.displayRect();
+    if (r.width < 4 || r.height < 4) return;
+    const hf = this.bundle.heightField;
+    const cam = this.sensorCam;
+    const sel = this.opsSelected ? this.movers.get(this.opsSelected) : null;
+    const o = this.crew.orbit;
+    const tx = sel ? sel.x : o ? o.x : this.a.x;
+    const tz = sel ? sel.z : o ? o.z : this.a.z;
+    cam.position.set(this.a.x, this.a.y - 3, this.a.z);
+    cam.up.set(0, 1, 0);
+    cam.lookAt(tx, hf.sample(tx, tz) + 2, tz);
+    const slant = this.slant(tx, tz);
+    cam.fov = sel ? clamp((2 * Math.atan(24 / slant) * 180) / Math.PI, 3, 20) : 36;
+    cam.aspect = r.width / r.height;
+    cam.updateProjectionMatrix();
+    const rr = this.bundle.renderer;
+    const H = window.innerHeight;
+    this.plane.group.visible = false;
+    rr.setScissorTest(true);
+    rr.setViewport(r.left, H - r.bottom, r.width, r.height);
+    rr.setScissor(r.left, H - r.bottom, r.width, r.height);
+    this.missionScene.withoutPins(() => rr.render(this.bundle.scene, cam));
+    rr.setScissorTest(false);
+    rr.setViewport(0, 0, window.innerWidth, H);
+    this.plane.group.visible = true;
+  }
+
+  // ---- PILOT: the player flies; recon systems wait in Mission Control
+  private updatePilot(dt: number): void {
+    const m = this.mission;
+    const hf = this.bundle.heightField;
+    const target = this.movers.get(TARGET.id)!;
+    this.hud.tickBanners(0);
 
     // ---- landing
     const dBase = Math.hypot(this.a.x - BASE.x, this.a.z - BASE.z);
@@ -809,52 +1103,27 @@ export class Game {
       return;
     }
 
-    // ---- contact card
-    const near = this.nearestReturn();
-    let nearCard: HudFrame['nearContact'] = null;
-    if (near) {
-      const mv = this.movers.get(near.id)!;
-      const st = m.returns[near.id];
-      const d = describeReturn(m, near.id, mv.x, mv.z, mv.moving);
-      const markKey = this.input.isTouch ? 'TAP MARK' : 'PRESS M';
-      nearCard = {
-        codename: d.head,
-        label: st.verdict === 'correct' ? 'SUPPLY TRUCK' : st.verdict === 'wrong' ? 'NOT THE TRUCK' : 'VEHICLE RETURN',
-        grid: gridRef(mv.x, mv.z),
-        confidence: st.resolved ? 1 : clamp(st.detection / RESOLVE_THRESHOLD, 0.2, 0.95),
-        canMark: m.phase === 'locate' && st.verdict === 'none',
-        status: st.verdict === 'correct' ? 'TARGET' : st.verdict === 'wrong' ? 'REJECTED' : st.resolved ? 'RESOLVED' : 'DETECTED',
-        traits: d.traits,
-        action: m.phase === 'locate' && st.verdict === 'none' ? `${markKey} IF THIS IS THE TRUCK` : '',
-      };
-    }
+    const area = this.inOpsArea();
+    const opsReady = operatorAvailability(this.crew, { inArea: area, operatorWork: operatorWork(m), fuelFraction: this.fuel / this.fuelMax, areaLabel: MISSION_01.operations.area.label }).ok;
+    this.el['btn-ops'].classList.toggle('ready', opsReady);
+    this.el['btn-ops'].classList.toggle('disabled', !opsReady);
 
     // ---- navigation target
     let waypoint: HudFrame['waypoint'] = null;
-    if (m.phase === 'locate' && !inSector(this.a.x, this.a.z)) waypoint = { x: (SECTOR_7.x0 + SECTOR_7.x1) / 2, z: (SECTOR_7.z0 + SECTOR_7.z1) / 2, label: 'SECTOR 7' };
-    else if (m.phase === 'destination') {
-      const p = m.returns[TARGET.id].lastKnown ?? target;
-      waypoint = { x: p.x, z: p.z, label: target.arrived ? 'TRUCK STOPPED' : 'TRUCK' };
-    }
+    const A = MISSION_01.operations.area;
+    if (operatorWork(m) && !area) waypoint = { x: (A.x0 + A.x1) / 2, z: (A.z0 + A.z1) / 2, label: A.label };
 
     // ---- contextual hint: always says what to do next
     const touch = this.input.isTouch;
     let hint = '';
     if (this.sortieTime < 7) hint = touch ? 'DRAG LEFT SIDE TO STEER · SLIDE THROTTLE ON THE RIGHT' : 'ARROWS / WASD STEER · SHIFT / CTRL THROTTLE';
-    else if (m.phase === 'locate') {
-      const anyUnresolved = RETURNS.some((r) => m.returns[r.id].detected && !m.returns[r.id].resolved);
-      if (near && nearCard?.canMark) hint = `DOES RETURN ${near.id} MATCH EVERY POINT OF THE INTEL?`;
-      else if (!this.scanning) hint = touch ? 'TAP SCAN TO SEARCH FOR VEHICLE RETURNS' : 'PRESS SPACE TO SCAN FOR VEHICLE RETURNS';
-      else if (!inSector(this.a.x, this.a.z)) hint = 'HEAD FOR SECTOR 7 · OUTLINED IN AMBER';
-      else if (anyUnresolved) hint = 'FLY UNDER 300 m OVER A RETURN TO RESOLVE ITS SIZE';
-      else hint = 'SWEEP THE ROADS IN SECTOR 7 WITH THE RADAR';
-    } else if (m.phase === 'destination') hint = target.arrived ? 'FLY OVER THE STOPPED TRUCK TO CONFIRM' : 'STAY WITH THE TRUCK UNTIL IT STOPS';
+    else if (operatorWork(m)) hint = !area ? `FLY TO ${A.label} · OUTLINED IN AMBER` : touch ? 'TAP MISSION CONTROL · THE AUTOPILOT WILL FLY' : 'PRESS O FOR MISSION CONTROL · THE AUTOPILOT WILL FLY';
     else if (m.phase === 'rtb') hint = touch ? 'FOLLOW BASE · FLY LOW OVER THE RUNWAY OR TAP LAND' : 'FOLLOW BASE · FLY LOW OVER THE RUNWAY OR PRESS R';
     this.el['hint'].textContent = hint;
 
     // ---- camera, audio, HUD
-    this.chase.update(this.bundle.camera, this.a, dt, this.scanning, (x, z) => hf.sample(x, z));
-    this.audio.updateFlight(this.a.throttle, this.a.speed, true, this.scanning);
+    this.chase.update(this.bundle.camera, this.a, dt, false, (x, z) => hf.sample(x, z));
+    this.audio.updateFlight(this.a.throttle, this.a.speed, true, false);
     const contacts: ScopeContact[] = [];
     for (const r of RETURNS) {
       const st = m.returns[r.id];
@@ -864,15 +1133,16 @@ export class Game {
         z: st.lastKnown.z,
         r: 30,
         kind: st.verdict === 'correct' ? 'sensor' : st.resolved || st.verdict === 'wrong' ? 'resolved' : 'detected',
-        label: st.verdict === 'correct' ? `${r.id} TRUCK` : st.verdict === 'wrong' ? `${r.id} \u2715` : r.id,
+        label: st.verdict === 'correct' ? `${r.id} TRUCK` : st.verdict === 'wrong' ? `${r.id} ✕` : r.id,
         marked: st.verdict === 'wrong',
       });
     }
-    const ob = objectiveFor(m, target.arrived);
+    const ob = objectiveFor(m, this.stationContext());
+    const params = radarParams(this.a.agl, 1);
     this.hud.update(
       {
         a: this.a,
-        scanning: this.scanning,
+        scanning: false,
         footprint: params.radius,
         quality: params.quality,
         fuel: this.fuel / this.fuelMax,
@@ -885,13 +1155,14 @@ export class Game {
         waypoint,
         nearBase: dBase < 480 && m.phase === 'rtb',
         signal: null,
-        nearContact: nearCard,
+        nearContact: null,
         sweepAngle: this.sweep,
-        objective: isActive(m) ? { title: ob.title, detail: ob.detail, progress: m.phase === 'destination' && target.arrived ? m.confirm : null, done: ob.done } : null,
-        sector: SECTOR_7,
+        objective: isActive(m) ? { title: ob.title, detail: ob.detail, progress: null, done: ob.done } : null,
+        sector: A,
       },
       dt,
     );
+    void target;
   }
 
   // ------------------------------------------------------------------ loop
@@ -921,7 +1192,10 @@ export class Game {
       this.truck.step(dt);
       this.truckMesh.sync(this.truck, this.bundle.heightField);
     }
-    if (this.mode !== 'intel') this.bundle.renderer.render(this.bundle.scene, this.bundle.camera);
+    if (this.play === 'mission' && this.crew.station === 'operator' && (this.mode === 'flight' || this.mode === 'paused')) {
+      // Mission Control: the radar display is drawn by the console; the camera feed is rendered into it
+      if (this.opsTool === 'camera') this.renderSensorFeed();
+    } else if (this.mode !== 'intel') this.bundle.renderer.render(this.bundle.scene, this.bundle.camera);
     void this.raf;
   }
 
@@ -932,9 +1206,11 @@ export class Game {
     this.sortieTime += dt;
 
     // ---- controls
-    const inp = this.input.read();
+    // the operator never flies: the autopilot supplies the controls
+    const operator = this.play === 'mission' && this.crew.station === 'operator' && this.crew.orbit;
+    const inp = operator ? orbitInput(this.a, this.crew.orbit!, (x, z) => hf.sample(x, z)) : this.input.read();
     if (this.input.touchThrottle !== null) {
-      this.a.throttle = this.input.touchThrottle;
+      if (!operator) this.a.throttle = this.input.touchThrottle;
       this.input.touchThrottle = null;
     }
     if (this.sortieTime < 4.5) {

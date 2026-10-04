@@ -6,6 +6,7 @@
  * point but one. Only the supply truck matches all four.
  */
 import type { Pt } from '../world/worldData';
+import type { MissionDef } from './missionDef';
 
 export interface Sector {
   id: string;
@@ -141,4 +142,7 @@ export const MISSION_01 = {
   /** Compact reminder shown under the objective while searching. */
   intelShort: 'LARGE · MOVING · ON A ROAD · IN SECTOR 7',
   fuelSeconds: 420,
-} as const;
+  operations: { area: SECTOR_7, orbitAgl: 260 },
+  /** While the crew watched the truck, haze settled over the basin. */
+  handback: { visibility: 0.42, notices: ['LOW VISIBILITY · HAZE OVER THE BASIN'] },
+} as const satisfies MissionDef;

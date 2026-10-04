@@ -62,13 +62,13 @@
           <button id="btn-pause" class="icon" aria-label="Pause">II</button>
         </div>
         <div id="objective" class="objective hidden" role="status" aria-live="polite"><div class="obj-title"><i class="reticle"></i><b id="obj-title">LOCATE THE SUPPLY TRUCK</b></div><div id="obj-detail" class="obj-detail"></div><div class="obj-progress"><i id="obj-progress"></i></div></div>
-        <div id="banner" class="banner" aria-live="assertive"><small id="banner-kicker"></small><b id="banner-text"></b></div>
         <div id="nav" class="nav"></div>
         <div id="signal" class="signal"></div>
         <div id="msgs" class="msgs"></div>
         <div id="warn" class="warn"></div>
         <div id="hint" class="hint"></div>
         <div id="radar-state" class="radar-state">RADAR STANDBY</div>
+        <div id="station-tag" class="station-tag"><i></i>PILOT · YOU ARE FLYING</div>
 
         <div class="scope-wrap"><canvas id="scope"></canvas></div>
 
@@ -89,8 +89,41 @@
           <button id="btn-mark" class="hb mark">MARK</button>
           <button id="btn-drop" class="hb drop">DROP</button>
           <button id="btn-map" class="hb map">MAP</button>
+          <button id="btn-ops" class="hb ops">MISSION<br />CONTROL</button>
         </div>
       </section>
+
+      <!-- ===== MISSION CONTROL (operator station: the autopilot flies) ===== -->
+      <section id="ops" class="screen ops hidden" aria-label="Mission control">
+        <header class="ops-bar">
+          <div class="ops-id"><b>MISSION CONTROL</b><span><i></i>AUTOPILOT FLYING · HANDS OFF</span></div>
+          <div class="ops-stats"><span id="ops-orbit">ORBIT</span><span id="ops-fuel">FUEL</span><span id="ops-time">ON STATION</span></div>
+          <button id="btn-ops-pause" class="icon" aria-label="Pause">II</button>
+          <button id="btn-take" class="btn take">TAKE CONTROLS</button>
+        </header>
+        <div class="ops-objective"><i class="reticle"></i><div><b id="ops-obj-title"></b><small id="ops-obj-detail"></small><div class="obj-progress"><i id="ops-obj-progress"></i></div></div></div>
+        <div class="ops-body">
+          <div id="ops-display" class="ops-display">
+            <canvas id="ops-radar"></canvas>
+            <div id="ops-cam" class="ops-cam hidden"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><i class="cross"></i><div id="ops-cam-label" class="ops-cam-label"></div><div class="ops-cam-acq"><i id="ops-cam-acq"></i></div></div>
+            <div id="ops-display-hint" class="ops-display-hint"></div>
+          </div>
+          <aside class="ops-panel">
+            <div class="ops-tools" role="tablist" aria-label="Sensor">
+              <button type="button" role="tab" data-tool="radar" class="on">RADAR<small>1</small></button>
+              <button type="button" role="tab" data-tool="camera">CAMERA<small>2</small></button>
+            </div>
+            <div id="ops-tool-note" class="ops-tool-note"></div>
+            <div id="ops-returns" class="ops-returns"></div>
+            <button id="btn-ops-mark" class="btn mark">MARK AS THE TRUCK</button>
+            <div id="ops-hint" class="ops-hint"></div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- hand-over between stations -->
+      <div id="handoff" class="handoff hidden" aria-live="assertive"><div class="handoff-card"><small id="ho-kicker"></small><b id="ho-title"></b><ul id="ho-warn" class="ho-warn"></ul><ul id="ho-status" class="ho-status"></ul></div></div>
+      <div id="banner" class="banner" aria-live="assertive"><small id="banner-kicker"></small><b id="banner-text"></b></div>
 
       <!-- ===== PAUSE ===== -->
       <section id="pause" class="screen overlay hidden">

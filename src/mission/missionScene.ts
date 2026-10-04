@@ -147,6 +147,17 @@ export class MissionScene {
     }
   }
 
+  /** Render something without the world markers (the sensor camera sees the vehicles, not our pins). */
+  withoutPins(fn: () => void): void {
+    const was = [...this.pins.values()].map((p) => p.visible);
+    for (const p of this.pins.values()) p.visible = false;
+    const dest = this.destinationMarker.visible;
+    this.destinationMarker.visible = false;
+    fn();
+    [...this.pins.values()].forEach((p, i) => (p.visible = was[i]));
+    this.destinationMarker.visible = dest;
+  }
+
   showDestination(x: number, z: number, on: boolean): void {
     this.destinationMarker.visible = on;
     if (on) this.destinationMarker.position.set(x, this.hf.sample(x, z) + 1.8, z);

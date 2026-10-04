@@ -190,7 +190,7 @@ button.icon { width: 38px; height: 38px; border-radius: 8px; background: var(--g
 #hud.mission .pk, #hud.mission .hb.drop, #hud.mission .hb.map { display: none; }
 
 /* banner: objective changes */
-.banner { position: absolute; top: 34%; left: 50%; transform: translate(-50%, -50%) scale(0.96); min-width: min(86vw, 320px); max-width: 92vw; text-align: center; background: rgba(8, 18, 12, 0.88); border: 1px solid var(--amber); border-radius: 10px; padding: 12px 22px 14px; opacity: 0; transition: opacity 0.25s, transform 0.25s; pointer-events: none; z-index: 5; }
+.banner { position: absolute; top: 34%; left: 50%; transform: translate(-50%, -50%) scale(0.96); min-width: min(86vw, 320px); max-width: 92vw; text-align: center; background: rgba(8, 18, 12, 0.88); border: 1px solid var(--amber); border-radius: 10px; padding: 12px 22px 14px; opacity: 0; transition: opacity 0.25s, transform 0.25s; pointer-events: none; z-index: 25; }
 .banner.on { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 .banner small { display: block; font-size: 11px; letter-spacing: 0.3em; color: var(--amber); margin-bottom: 6px; }
 .banner b { display: block; font-size: 17px; letter-spacing: 0.08em; color: #fff; font-weight: 600; line-height: 1.3; }
@@ -411,4 +411,139 @@ ul.evidence li.unmarked { color: #9a4a12; }
   #mission-card .mb-controls { grid-column: 1; margin-top: 2px; }
   #mission-card .title-actions { grid-column: 1; margin-top: 8px; }
   #mission-card .alt-mode { grid-column: 2; margin-top: 8px; padding-top: 8px; align-self: end; }
+}
+
+/* ============================================================
+   Crew stations: PILOT (flight HUD) / OPERATOR (Mission Control)
+   ============================================================ */
+/* pilot: recon controls live in Mission Control, not on the stick */
+.hb.ops { display: none; border-color: var(--amber); color: var(--amber); font-size: 9px; line-height: 1.25; letter-spacing: 0.1em; text-align: center; }
+#hud.mission .hb.ops { display: grid; }
+#hud.mission .hb.scan, #hud.mission .hb.mark { display: none; }
+.hb.ops.ready { background: rgba(242, 169, 59, 0.18); animation: pulse 1.2s ease-in-out infinite; }
+.hb.ops.disabled { opacity: 0.38; }
+.station-tag { display: none; position: absolute; left: 50%; bottom: calc(var(--sab) + 30px); transform: translateX(-50%); align-items: center; gap: 7px; font-size: 10px; letter-spacing: 0.22em; color: var(--ph); background: rgba(8, 18, 12, 0.66); border: 1px solid var(--ph-faint); border-radius: 12px; padding: 4px 12px; pointer-events: none; white-space: nowrap; }
+.station-tag i { width: 7px; height: 7px; border-radius: 50%; background: var(--ph); box-shadow: 0 0 8px var(--ph); }
+#hud.mission .station-tag { display: flex; }
+@media (orientation: portrait) and (max-width: 600px) {
+  .station-tag { bottom: calc(var(--sab) + 186px); }
+}
+
+/* operator: a different job, a different screen */
+.ops { z-index: 12; display: flex; flex-direction: column; background: #050c08; padding: var(--sat) var(--sar) var(--sab) var(--sal); color: #e8f3ea; }
+.ops-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #0d1a12; border-bottom: 2px solid var(--amber); }
+.ops-id { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ops-id b { font-size: 14px; letter-spacing: 0.3em; color: var(--amber); font-weight: 600; white-space: nowrap; }
+.ops-id span { display: flex; align-items: center; gap: 6px; font-size: 9px; letter-spacing: 0.2em; color: var(--ph); white-space: nowrap; }
+.ops-id span i { width: 7px; height: 7px; border-radius: 50%; background: var(--ph); animation: blink 1.4s steps(2) infinite; }
+.ops-stats { display: flex; gap: 12px; margin-left: auto; font-size: 11px; letter-spacing: 0.12em; color: rgba(232, 243, 234, 0.75); }
+.ops-bar .btn.take { padding: 10px 14px; min-height: 44px; border-color: var(--ph); color: #04120a; background: var(--ph); font-weight: 600; }
+.ops-bar button.icon { flex: 0 0 auto; }
+.ops-objective { display: flex; align-items: center; gap: 10px; padding: 7px 14px; background: rgba(242, 169, 59, 0.07); border-bottom: 1px solid rgba(242, 169, 59, 0.3); }
+.ops-objective > div { min-width: 0; flex: 1; }
+.ops-objective b { display: block; font-size: 13px; letter-spacing: 0.14em; color: #fff; }
+.ops-objective small { display: block; font-size: 10px; letter-spacing: 0.12em; color: var(--amber); margin-top: 2px; }
+.ops-objective .obj-progress { margin-left: 0; max-width: 360px; }
+.ops-objective .obj-progress.on { display: block; }
+.ops-body { flex: 1; display: flex; min-height: 0; }
+.ops-display { position: relative; flex: 1; min-width: 0; margin: 10px; border: 1px solid var(--ph-dim); border-radius: 8px; overflow: hidden; background: #04120a; }
+.ops.tool-camera { background: transparent; }
+/* the camera feed is the WebGL canvas showing through this window; everything around it is console */
+.ops.tool-camera .ops-display { background: transparent; box-shadow: 0 0 0 100vmax #050c08; }
+.ops-bar, .ops-objective { position: relative; z-index: 1; }
+.ops-panel { position: relative; z-index: 1; }
+#ops-radar { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+.ops.tool-camera #ops-radar { display: none; }
+.ops-cam { position: absolute; inset: 0; pointer-events: none; }
+.ops-cam .c { position: absolute; width: 26px; height: 26px; border: 2px solid rgba(190, 255, 210, 0.85); }
+.ops-cam .tl { left: 12px; top: 12px; border-right: 0; border-bottom: 0; }
+.ops-cam .tr { right: 12px; top: 12px; border-left: 0; border-bottom: 0; }
+.ops-cam .bl { left: 12px; bottom: 12px; border-right: 0; border-top: 0; }
+.ops-cam .br { right: 12px; bottom: 12px; border-left: 0; border-top: 0; }
+.ops-cam .cross { position: absolute; left: 50%; top: 50%; width: 64px; height: 64px; margin: -32px 0 0 -32px; border: 1px solid rgba(190, 255, 210, 0.7); border-radius: 50%; }
+.ops-cam .cross::before, .ops-cam .cross::after { content: ''; position: absolute; background: rgba(190, 255, 210, 0.7); }
+.ops-cam .cross::before { left: 50%; top: -14px; bottom: -14px; width: 1px; }
+.ops-cam .cross::after { top: 50%; left: -14px; right: -14px; height: 1px; }
+.ops-cam-label { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); font-size: 11px; letter-spacing: 0.14em; color: #d9ffe3; background: rgba(4, 18, 10, 0.7); padding: 3px 8px; border-radius: 4px; white-space: nowrap; max-width: calc(100% - 90px); overflow: hidden; text-overflow: ellipsis; }
+.ops-cam-acq { display: none; position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%); width: min(60%, 260px); height: 6px; border: 1px solid rgba(190, 255, 210, 0.7); border-radius: 3px; overflow: hidden; background: rgba(4, 18, 10, 0.6); }
+.ops-cam-acq.on { display: block; }
+.ops-cam-acq i { display: block; height: 100%; width: 0; background: var(--amber); }
+.ops-display-hint { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); font-size: 10px; letter-spacing: 0.16em; color: var(--amber); background: rgba(4, 18, 10, 0.75); padding: 3px 8px; border-radius: 4px; pointer-events: none; white-space: nowrap; }
+.ops-display-hint:empty { display: none; }
+#app.sensor-feed #gl { filter: grayscale(1) sepia(0.55) hue-rotate(70deg) saturate(1.7) contrast(1.15) brightness(1.05); }
+
+.ops-panel { flex: 0 0 300px; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 10px 0; min-height: 0; overflow-y: auto; touch-action: pan-y; }
+.ops-tools { display: flex; border: 1px solid var(--ph-dim); border-radius: 8px; overflow: hidden; }
+.ops-tools button { flex: 1; min-height: 44px; border: 0; background: transparent; color: rgba(232, 243, 234, 0.6); font-size: 12px; letter-spacing: 0.18em; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.ops-tools button + button { border-left: 1px solid var(--ph-dim); }
+.ops-tools button small { font-size: 9px; opacity: 0.6; }
+.ops-tools button.on { background: rgba(124, 255, 154, 0.2); color: var(--ph); box-shadow: inset 0 -2px 0 var(--amber); }
+.ops-tool-note { font-size: 11px; line-height: 1.45; color: rgba(232, 243, 234, 0.65); font-family: var(--serif); }
+.ops-returns { display: flex; flex-direction: column; gap: 6px; }
+.ops-returns .none { margin: 0; font-size: 12px; color: rgba(232, 243, 234, 0.55); font-family: var(--serif); }
+.ret { display: grid; grid-template-columns: 26px 1fr; gap: 2px 8px; align-items: center; text-align: left; width: 100%; padding: 7px 8px; min-height: 44px; border: 1px solid rgba(124, 255, 154, 0.25); border-radius: 6px; background: rgba(124, 255, 154, 0.04); color: #e8f3ea; }
+.ret b { font-size: 18px; color: var(--ph); grid-row: span 2; text-align: center; }
+.ret span { display: flex; flex-wrap: wrap; gap: 3px; }
+.ret span i { font-style: normal; font-size: 9px; letter-spacing: 0.08em; padding: 1px 5px; border: 1px solid rgba(124, 255, 154, 0.3); border-radius: 3px; }
+.ret em { grid-column: 2; font-style: normal; font-size: 9px; letter-spacing: 0.16em; }
+.ret em.ok { color: var(--amber); }
+.ret em.no { color: var(--warn); }
+.ret.sel { border-color: var(--amber); background: rgba(242, 169, 59, 0.12); }
+.ret.correct b { color: var(--amber); }
+.ret.wrong { opacity: 0.6; }
+.ret.wrong b { color: var(--warn); }
+.ops-panel .btn.mark { min-height: 48px; border-color: var(--amber); color: var(--amber); background: rgba(242, 169, 59, 0.12); }
+.ops-panel .btn.mark.disabled { opacity: 0.35; }
+.ops-hint { font-size: 12px; line-height: 1.45; color: #fff; font-family: var(--serif); padding: 6px 8px; border-left: 3px solid var(--amber); background: rgba(242, 169, 59, 0.06); }
+.ops-hint:empty { display: none; }
+
+@media (orientation: portrait) {
+  .ops-body { flex-direction: column; overflow-y: auto; }
+  .ops-display { flex: 0 0 auto; height: min(92vw, 44vh); }
+  .ops-panel { flex: 1 0 auto; padding: 0 10px 10px; overflow: visible; }
+  .ops-stats { display: none; }
+}
+@media (max-width: 760px) {
+  .ops-stats { gap: 8px; font-size: 10px; }
+  .ops-stats #ops-orbit { display: none; }
+  .ops-bar .btn.take { padding: 8px 10px; font-size: 11px; letter-spacing: 0.08em; }
+}
+@media (max-height: 460px) and (orientation: landscape) {
+  .ops-bar { padding: 5px 10px; }
+  .ops-id b { font-size: 12px; }
+  .ops-objective { padding: 4px 12px; }
+  .ops-display { margin: 6px; }
+  .ops-panel { flex-basis: 270px; padding: 6px 8px 6px 0; gap: 6px; }
+  .ops-tool-note { display: none; }
+  .ret { min-height: 40px; padding: 5px 7px; }
+}
+
+/* hand-over between stations */
+.handoff { position: absolute; inset: 0; z-index: 30; display: grid; place-items: center; pointer-events: none; opacity: 0; transition: opacity 0.35s; }
+.handoff.on { opacity: 1; }
+.handoff.enter { background: rgba(5, 12, 8, 0.82); }
+.handoff.exit { box-shadow: inset 0 0 0 4px var(--warn), inset 0 0 120px rgba(255, 90, 60, 0.35); }
+.handoff.exit.on { animation: handflash 0.6s steps(2) 3; }
+@keyframes handflash { 50% { box-shadow: inset 0 0 0 4px rgba(255, 90, 60, 0.2), inset 0 0 60px rgba(255, 90, 60, 0.1); } }
+.handoff-card { text-align: center; padding: 14px 24px; border-radius: 10px; background: rgba(8, 18, 12, 0.9); border: 1px solid var(--amber); max-width: 92vw; }
+.handoff.exit .handoff-card { border-color: var(--warn); transform: translateY(-14vh); }
+.handoff-card small { display: block; font-size: 10px; letter-spacing: 0.26em; color: var(--amber); }
+.handoff-card b { display: block; font-size: 24px; letter-spacing: 0.22em; color: #fff; margin: 6px 0; }
+.handoff.exit .handoff-card b { color: var(--ph); }
+.handoff-card ul { list-style: none; margin: 0; padding: 0; font-size: 12px; letter-spacing: 0.12em; line-height: 1.7; }
+.ho-warn li { color: var(--warn); font-weight: 600; }
+.ho-warn li::before { content: '\26A0  '; }
+.ho-status li { color: #e8f3ea; }
+@media (max-height: 460px) {
+  .handoff-card { padding: 8px 18px; }
+  .handoff-card b { font-size: 18px; margin: 3px 0; }
+  .handoff-card ul { font-size: 11px; line-height: 1.5; }
+  .handoff.exit .handoff-card { transform: translateY(-8vh); }
+}
+.ops-panel > * { flex-shrink: 0; }
+#hud.mission .radar-state { display: none; }
+@media (max-width: 600px) {
+  .handoff-card { padding: 10px 14px; }
+  .handoff-card b { font-size: 19px; letter-spacing: 0.14em; }
+  .handoff-card ul { font-size: 11px; letter-spacing: 0.08em; }
 }

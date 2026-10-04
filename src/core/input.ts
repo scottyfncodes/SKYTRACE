@@ -4,7 +4,7 @@
  */
 import { applyVerticalMode, type VerticalMode } from './settings';
 
-export type Action = 'scan' | 'mark' | 'drop' | 'map' | 'pause' | 'rtb';
+export type Action = 'scan' | 'mark' | 'drop' | 'map' | 'pause' | 'rtb' | 'ops';
 
 export interface InputState {
   roll: number;
@@ -144,7 +144,7 @@ export class Input {
   private onKey(e: KeyboardEvent, down: boolean): void {
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     if (down && !e.repeat) {
-      const map: Record<string, Action> = { ' ': 'scan', m: 'mark', e: 'drop', Tab: 'map', i: 'map', Escape: 'pause', p: 'pause', r: 'rtb' };
+      const map: Record<string, Action> = { ' ': 'scan', m: 'mark', e: 'drop', Tab: 'map', i: 'map', Escape: 'pause', p: 'pause', r: 'rtb', o: 'ops', Enter: 'ops' };
       const a = map[k];
       if (a) {
         this.trigger(a);
