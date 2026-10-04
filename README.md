@@ -31,6 +31,8 @@ FLY → OBSERVE → SCAN → INVESTIGATE → IDENTIFY → MARK → RETURN → CO
 | Land (near base) | LAND | R |
 | Pause | II | Esc or P |
 
+Vertical stick direction can be switched between **Standard** (stick up / ↑ climbs) and **Inverted** (stick up / ↑ dives) under *Flight controls* in the pause menu. It applies to touch and keyboard, never to throttle, and is remembered across reloads and new cases.
+
 Progress is saved in the browser automatically.
 
 ## Development

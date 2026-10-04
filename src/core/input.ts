@@ -2,6 +2,8 @@
  * Unified input: keyboard for desktop, a virtual stick + buttons for touch.
  * Produces normalised axes every frame and edge-triggered actions.
  */
+import { applyVerticalMode, type VerticalMode } from './settings';
+
 export type Action = 'scan' | 'mark' | 'drop' | 'map' | 'pause' | 'rtb';
 
 export interface InputState {
@@ -18,6 +20,8 @@ export class Input {
   private stickVec = { x: 0, y: 0 };
   private throttleTouch: { id: number; startY: number; startValue: number } | null = null;
   readonly isTouch: boolean;
+  /** Player preference: sign applied to the vertical flight axis (stick and keyboard). */
+  verticalMode: VerticalMode = 'standard';
   /** Touch throttle sets this directly (0..1) instead of a delta. */
   touchThrottle: number | null = null;
   private throttleRef = 0.55;
@@ -170,6 +174,6 @@ export class Input {
       if (Math.abs(roll) < 0.08) roll = 0;
       if (Math.abs(pitch) < 0.08) pitch = 0;
     }
-    return { roll, pitch, throttleDelta };
+    return applyVerticalMode({ roll, pitch, throttleDelta }, this.verticalMode);
   }
 }

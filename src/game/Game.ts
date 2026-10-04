@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { AudioSystem } from '../core/audio';
 import { Input } from '../core/input';
 import { clamp } from '../core/math';
+import { loadPrefs, savePrefs, type Prefs, type VerticalMode } from '../core/settings';
 import { FLIGHT, initialAircraft, stepAircraft, type AircraftState } from '../flight/aircraft';
 import { AircraftMesh } from '../flight/aircraftMesh';
 import { ChaseCamera } from '../flight/camera';
@@ -79,6 +80,7 @@ export class Game {
   private el: Record<string, HTMLElement> = {};
   private raf = 0;
   private intelMode: 'debrief' | 'planning' | 'inflight' = 'planning';
+  private prefs: Prefs;
 
   constructor(root: HTMLElement) {
     const q = (id: string) => {
@@ -117,6 +119,8 @@ export class Game {
     this.bundle.scene.add(this.waypointBeam);
 
     this.input = new Input(this.el['stick-zone'], this.el['stick-knob'], this.el['throttle']);
+    this.prefs = loadPrefs(localStorage);
+    this.input.verticalMode = this.prefs.verticalMode;
     this.hud = new Hud(this.el['hud']);
     this.intel = new IntelMap(this.el['intel'], {
       onClose: () => this.closeIntel(),
@@ -174,6 +178,12 @@ export class Game {
       this.el['btn-sound-pause'].textContent = this.audio.muted ? 'SOUND OFF' : 'SOUND ON';
     });
 
+    // flight-control preference (lives in the pause card)
+    for (const b of root.querySelectorAll<HTMLElement>('[data-vert]')) {
+      b.addEventListener('click', () => this.setVerticalMode(b.dataset.vert as VerticalMode));
+    }
+    this.renderPrefs();
+
     window.addEventListener('resize', () => this.resize());
     window.addEventListener('orientationchange', () => setTimeout(() => this.resize(), 250));
     document.addEventListener('visibilitychange', () => {
@@ -200,6 +210,7 @@ export class Game {
       getAircraft: () => this.a,
       getMode: () => this.mode,
       getTime: () => this.sortieTime,
+      getPrefs: () => ({ ...this.prefs }),
       getTruck: () => ({ x: this.truck.x, z: this.truck.z, hidden: this.truck.hidden, moving: this.truck.moving }),
     };
     this.last = performance.now();
@@ -270,6 +281,26 @@ export class Game {
       this.startSortie();
     }
     this.updateWaypointBeam();
+  }
+
+  private setVerticalMode(mode: VerticalMode): void {
+    if (mode !== 'standard' && mode !== 'inverted') return;
+    this.prefs.verticalMode = mode;
+    this.input.verticalMode = mode; // takes effect on the very next frame
+    savePrefs(this.prefs, localStorage);
+    this.audio.click();
+    this.renderPrefs();
+  }
+
+  private renderPrefs(): void {
+    const mode = this.prefs.verticalMode;
+    for (const b of this.el['pause'].querySelectorAll<HTMLElement>('[data-vert]')) {
+      const on = b.dataset.vert === mode;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    }
+    const note = this.el['pause'].querySelector<HTMLElement>('#vert-note');
+    if (note) note.textContent = mode === 'inverted' ? 'Stick up / \u2191 dives \u00b7 stick down climbs' : 'Stick up / \u2191 climbs';
   }
 
   private togglePause(): void {
