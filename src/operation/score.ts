@@ -96,7 +96,7 @@ export function buildReport(m: MissionState, op: OperationState, def: MissionDef
   score = Math.max(0, Math.round(landed ? score : score * 0.25));
   const grade = gradeFor(score, landed, m.primaryComplete);
   const success = landed && m.primaryComplete;
-  const headline = success ? 'MISSION COMPLETE' : !landed ? (op.outcome === 'fuel' ? 'AIRCRAFT LOST · FUEL EXHAUSTED' : 'OPERATION ABORTED') : 'RETURNED · PRIMARY INCOMPLETE';
+  const headline = success ? 'MISSION COMPLETE' : !landed ? (op.outcome === 'fuel' ? 'AIRCRAFT LOST · FUEL EXHAUSTED' : op.outcome === 'destroyed' ? 'AIRCRAFT LOST · STORM DAMAGE' : 'OPERATION ABORTED') : 'RETURNED · PRIMARY INCOMPLETE';
   const truck = evidenceGrade(m.photos.truck);
   const rows: ReportRow[] = [
     { label: 'Primary objective', value: m.primaryComplete ? 'COMPLETE' : 'INCOMPLETE', tone: m.primaryComplete ? 'good' : 'bad' },
@@ -105,7 +105,7 @@ export function buildReport(m: MissionState, op: OperationState, def: MissionDef
     { label: 'Evidence quality', value: truck, tone: truck === 'EXCELLENT' || truck === 'GOOD' ? 'good' : truck === 'NONE' || truck === 'POOR' ? 'bad' : undefined },
     { label: 'Flight discipline', value: disciplineGrade(discipline), tone: discipline >= 70 ? 'good' : discipline < 45 ? 'bad' : undefined },
     { label: 'Fuel remaining', value: `${Math.round(fuel * 100)}%`, tone: fuel < 0.1 ? 'bad' : undefined },
-    { label: 'Equipment damage', value: damageGrade(op.damage), tone: op.damage < 0.02 ? 'good' : op.damage >= 0.25 ? 'bad' : undefined },
+    { label: 'Airframe damage', value: op.outcome === 'destroyed' ? 'DESTROYED' : damageGrade(op.damage), tone: op.damage < 0.02 ? 'good' : op.damage >= 0.25 ? 'bad' : undefined },
     { label: 'Flight time', value: `${mmss(op.time)} · ${mmss(timeOnStation)} on station` },
   ];
   return { stages: stageResults(m, op, def), headline, success, grade, score, rows, secondaries: sec, intelligence: intelligence(m), credits: Math.round(score / 5), xp: Math.round(score / 4) };

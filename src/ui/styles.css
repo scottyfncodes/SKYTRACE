@@ -790,3 +790,22 @@ img.thermal { filter: grayscale(1) invert(1) brightness(0.55) contrast(2.2); }
   .overlay .card.debrief-card { display: flex; flex-direction: column; }
   .db-photos img { width: 120px; }
 }
+
+/* ---- Weather & damage on screen (art direction: the weather is the enemy) */
+.fx { position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; --storm: 0; --hurt: 0;
+  background:
+    radial-gradient(ellipse at center, transparent 50%, rgba(70, 6, 0, calc(var(--hurt) * 0.6)) 100%),
+    radial-gradient(ellipse at center, transparent 58%, rgba(6, 10, 14, 0.32) 100%); }
+.fx::before { content: ''; position: absolute; inset: 0; background: rgba(14, 18, 26, calc(var(--storm) * 0.3)); }
+.fx .rain { position: absolute; inset: -10%; opacity: calc(var(--storm) * 0.7);
+  background-image:
+    repeating-linear-gradient(104deg, transparent 0 23px, rgba(205, 218, 240, 0.32) 23px 24px, transparent 24px 47px),
+    repeating-linear-gradient(98deg, transparent 0 37px, rgba(205, 218, 240, 0.22) 37px 38px, transparent 38px 71px);
+  background-size: 100% 140px, 100% 90px;
+  -webkit-mask-image: repeating-linear-gradient(180deg, #000 0 26px, transparent 26px 70px);
+  mask-image: repeating-linear-gradient(180deg, #000 0 26px, transparent 26px 70px);
+  animation: rainfall 0.32s linear infinite; }
+@keyframes rainfall { to { transform: translate(-14px, 70px); } }
+.fx.flash::after { content: ''; position: absolute; inset: 0; background: #eef3ff; animation: strike-flash 0.45s ease-out forwards; }
+@keyframes strike-flash { 0% { opacity: 0.9; } 30% { opacity: 0.25; } 45% { opacity: 0.6; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .fx .rain { animation: none; } }
