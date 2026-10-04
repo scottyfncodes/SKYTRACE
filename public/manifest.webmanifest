@@ -1,0 +1,11 @@
+{
+  "name": "SKYTRACE",
+  "short_name": "SKYTRACE",
+  "description": "An aerial reconnaissance mystery.",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b1410",
+  "theme_color": "#0b1410",
+  "icons": [{ "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml" }, { "src": "./icon-180.png", "sizes": "180x180", "type": "image/png" }]
+}
