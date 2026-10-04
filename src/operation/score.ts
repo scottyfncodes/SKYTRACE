@@ -15,7 +15,29 @@ export interface ReportRow {
   tone?: 'good' | 'bad';
 }
 
+/** One line per flown stage: did it go well, in one word. */
+export interface StageResult {
+  id: 'outbound' | 'recon' | 'return';
+  label: string;
+  ok: boolean;
+  word: string;
+}
+
+export function stageResults(m: MissionState, op: OperationState, def: MissionDef): StageResult[] {
+  const outStorm = totalExposure(op.outbound, def.outbound, 'storm');
+  const retRough = totalExposure(op.ret, def.return, 'storm') + totalExposure(op.ret, def.return, 'ceiling');
+  const outMissed = missedCount(op.outbound);
+  const landed = op.outcome === 'landed';
+  const evidence = evidenceGrade(m.photos.truck);
+  return [
+    { id: 'outbound', label: 'OUTBOUND', ok: !op.outbound.detected && outMissed === 0, word: op.outbound.detected ? 'SPOTTED' : outMissed ? 'OFF ROUTE' : outStorm > 2 ? 'BUMPY' : 'CLEAN' },
+    { id: 'recon', label: 'RECON', ok: m.primaryComplete, word: m.primaryComplete ? evidence : 'NO PHOTO' },
+    { id: 'return', label: 'RETURN', ok: landed && retRough <= 3, word: !landed ? 'LOST' : retRough > 3 ? 'ROUGH' : 'CLEAN' },
+  ];
+}
+
 export interface Report {
+  stages: StageResult[];
   headline: string;
   success: boolean;
   grade: Grade;
@@ -80,5 +102,5 @@ export function buildReport(m: MissionState, op: OperationState, def: MissionDef
     { label: 'Equipment damage', value: damageGrade(op.damage), tone: op.damage < 0.02 ? 'good' : op.damage >= 0.25 ? 'bad' : undefined },
     { label: 'Flight time', value: `${mmss(op.time)} · ${mmss(timeOnStation)} on station` },
   ];
-  return { headline, success, grade, score, rows, secondaries: sec, intelligence: intelligence(m), credits: Math.round(score / 5), xp: Math.round(score / 4) };
+  return { stages: stageResults(m, op, def), headline, success, grade, score, rows, secondaries: sec, intelligence: intelligence(m), credits: Math.round(score / 5), xp: Math.round(score / 4) };
 }

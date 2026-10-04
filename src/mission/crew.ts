@@ -126,6 +126,6 @@ export function buildHandover(h: HandoverInput): Handover {
   warnings.push(...h.notices);
   const dist = Math.hypot(h.baseX - h.x, h.baseZ - h.z);
   const hdg = String(bearingDeg(h.x, h.z, h.baseX, h.baseZ)).padStart(3, '0');
-  const status = [`RETURN HEADING ${hdg}° · BASE ${(dist / 1000).toFixed(1)} km`, `FUEL ${mmss(h.fuelSeconds)} · ${mmss(h.sessionTime)} ON STATION`];
+  const status = [`BASE ${hdg}° · ${(dist / 1000).toFixed(1)} km · FUEL ${mmss(h.fuelSeconds)}`];
   return { title: 'YOU HAVE CONTROL', warnings, status };
 }

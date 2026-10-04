@@ -135,23 +135,18 @@ export function canExtract(m: MissionState): boolean {
  */
 export function reconObjective(m: MissionState, ctx: StationContext = {}): Objective {
   const pilot = ctx.station === 'pilot';
-  const openMc = ctx.inArea ? 'OPEN MISSION CONTROL' : 'FLY BACK TO SECTOR 7 · THEN OPEN MISSION CONTROL';
+  const openMc = ctx.inArea ? 'OPEN MISSION CONTROL' : 'FLY BACK TO SECTOR 7';
   switch (m.phase) {
     case 'locate':
-      return { kicker: 'PRIMARY', title: 'LOCATE THE SUPPLY TRUCK', detail: pilot ? openMc : MISSION_01.intelShort, done: false };
+      return { kicker: 'PRIMARY', title: 'FIND THE SUPPLY TRUCK', detail: pilot ? openMc : MISSION_01.intelShort, done: false };
     case 'photograph':
-      return { kicker: 'PRIMARY', title: 'PHOTOGRAPH THE TRUCK', detail: pilot ? openMc : 'CAMERA ON RETURN C · TAKE A PHOTO', done: false };
+      return { kicker: 'PRIMARY', title: 'PHOTOGRAPH THE TRUCK', detail: pilot ? openMc : 'CAMERA ON C · TAKE PHOTO', done: false };
     case 'track':
-      return {
-        kicker: 'SECONDARY',
-        title: "CONFIRM THE TRUCK'S DESTINATION",
-        detail: pilot ? openMc : ctx.truckStopped ? 'TRUCK HAS STOPPED · HOLD A CAMERA ON IT' : 'KEEP A CAMERA ON THE TRUCK UNTIL IT STOPS',
-        done: false,
-      };
+      return { kicker: 'BONUS', title: 'FOLLOW THE TRUCK', detail: pilot ? openMc : ctx.truckStopped ? 'IT STOPPED · HOLD THE CAMERA ON IT' : 'KEEP THE CAMERA ON IT', done: false };
     case 'landing':
-      return { kicker: 'SECONDARY', title: 'PHOTOGRAPH THE BARGE', detail: pilot ? openMc : 'SELECT RETURN E · TAKE A PHOTO', done: false };
+      return { kicker: 'BONUS', title: 'PHOTOGRAPH THE BARGE', detail: pilot ? openMc : 'CAMERA ON E · TAKE PHOTO', done: false };
     case 'extract':
-      return { kicker: 'EXTRACTION', title: 'RETURN TO BASE', detail: '', done: true };
+      return { kicker: 'EXTRACT', title: 'FLY HOME', detail: '', done: true };
   }
 }
 
@@ -160,14 +155,13 @@ export function describeReturn(m: MissionState, id: ReturnId, x: number, z: numb
   const st = m.returns[id];
   const def = RETURN_BY_ID[id];
   const traits: string[] = [];
-  const noun = def.kind === 'vessel' ? 'VESSEL' : 'VEHICLE';
-  if (st.resolved) traits.push(def.count > 1 ? `${def.count} ${def.size.toUpperCase()} ${noun}S` : `${def.size.toUpperCase()} ${noun}`);
-  else traits.push('SIZE ? · USE A CAMERA');
-  traits.push(moving ? 'MOVING' : 'STATIONARY');
-  if (st.roadKnown) traits.push(def.kind === 'vessel' ? 'ON THE RIVER' : def.onRoad ? 'ON ROAD' : 'OFF ROAD');
-  if (st.heatKnown) traits.push(def.engine === 'running' ? 'ENGINE RUNNING' : 'ENGINE COLD');
-  if (st.radioKnown) traits.push(def.radio ? 'RADIO ACTIVE' : 'RADIO SILENT');
-  traits.push(inSector(x, z) ? 'IN SECTOR 7' : 'OUTSIDE SECTOR 7');
+  if (st.resolved) traits.push(def.kind === 'vessel' ? 'BOAT' : def.count > 1 ? `${def.count} SMALL` : def.size === 'large' ? 'LARGE' : 'SMALL');
+  else traits.push('SIZE ?');
+  traits.push(moving ? 'MOVING' : 'PARKED');
+  if (st.roadKnown) traits.push(def.kind === 'vessel' ? 'RIVER' : def.onRoad ? 'ON ROAD' : 'OFF ROAD');
+  if (st.heatKnown) traits.push(def.engine === 'running' ? 'ENGINE ON' : 'ENGINE COLD');
+  if (st.radioKnown) traits.push(def.radio ? 'RADIO ON' : 'RADIO DEAD');
+  traits.push(inSector(x, z) ? 'SECTOR 7' : 'OUT OF SECTOR');
   return { head: `RETURN ${id}`, traits, resolved: st.resolved };
 }
 
@@ -234,7 +228,7 @@ export function identify(m: MissionState, id: ReturnId): { result: 'correct' | '
     st.verdict = 'wrong';
     m.falsePositives += 1;
     m.wrongIds.push(id);
-    return { result: 'wrong', events: [{ type: 'wrong', title: 'NEGATIVE', text: `RETURN ${id} IS NOT THE SUPPLY TRUCK · CHECK THE INTEL`, id }] };
+    return { result: 'wrong', events: [{ type: 'wrong', title: 'NEGATIVE', text: `RETURN ${id} IS NOT THE TRUCK`, id }] };
   }
   st.verdict = 'correct';
   m.targetIdentified = true;
@@ -242,8 +236,8 @@ export function identify(m: MissionState, id: ReturnId): { result: 'correct' | '
   return {
     result: 'correct',
     events: [
-      { type: 'objective-complete', title: 'OBJECTIVE COMPLETE', text: 'Supply truck located.', id },
-      { type: 'new-objective', title: 'NEW OBJECTIVE', text: 'Photograph the truck as evidence.' },
+      { type: 'objective-complete', title: 'TARGET LOCKED', text: 'SUPPLY TRUCK', id },
+      { type: 'new-objective', title: 'NEXT', text: 'PHOTOGRAPH IT' },
     ],
   };
 }
@@ -267,7 +261,7 @@ export function evidenceGrade(q: number): 'EXCELLENT' | 'GOOD' | 'FAIR' | 'POOR'
 /** Take a photograph of an identified return. */
 export function photograph(m: MissionState, id: ReturnId, quality: number): { result: 'primary' | 'transfer' | 'improved' | 'untasked' | 'unidentified'; events: MissionEvent[] } {
   const st = m.returns[id];
-  if (!st.detected || !st.resolved) return { result: 'unidentified', events: [{ type: 'photo', title: 'NO PHOTO', text: `IDENTIFY RETURN ${id} WITH A CAMERA FIRST`, id }] };
+  if (!st.detected || !st.resolved) return { result: 'unidentified', events: [{ type: 'photo', title: 'NO PHOTO', text: 'IDENTIFY IT FIRST', id }] };
   m.photosTaken += 1;
   const grade = evidenceGrade(quality);
   if (id === TARGET.id && m.targetIdentified) {
@@ -279,12 +273,12 @@ export function photograph(m: MissionState, id: ReturnId, quality: number): { re
       return {
         result: 'primary',
         events: [
-          { type: 'objective-complete', title: 'PRIMARY OBJECTIVE COMPLETE', text: `Truck photographed · evidence ${grade}.`, id },
-          { type: 'objective-updated', title: 'OBJECTIVE UPDATED', text: 'The truck is pulling out. Track it and confirm where it stops.' },
+          { type: 'objective-complete', title: 'PRIMARY DONE', text: grade, id },
+          { type: 'objective-updated', title: 'IT\'S MOVING', text: 'FOLLOW THE TRUCK' },
         ],
       };
     }
-    return { result: 'improved', events: [{ type: 'photo', title: 'PHOTO', text: better ? `TRUCK RE-SHOT · EVIDENCE ${grade}` : `TRUCK PHOTO · ${grade} (KEEPING THE BETTER ONE)`, id }] };
+    return { result: 'improved', events: [{ type: 'photo', title: 'PHOTO', text: better ? `BETTER SHOT · ${grade}` : `${grade} · KEPT THE BEST`, id }] };
   }
   if (id === BARGE.id && !st.hidden) {
     m.photos.barge = Math.max(m.photos.barge, quality);
@@ -295,13 +289,13 @@ export function photograph(m: MissionState, id: ReturnId, quality: number): { re
       return {
         result: 'transfer',
         events: [
-          { type: 'objective-complete', title: 'OBJECTIVE COMPLETE', text: `Cargo transfer photographed · ${grade}.`, id },
-          { type: 'recon-complete', title: 'RECON COMPLETE', text: 'Extract. Fly home.' },
+          { type: 'objective-complete', title: 'TRANSFER CAUGHT', text: grade, id },
+          { type: 'recon-complete', title: 'RECON COMPLETE', text: 'HEAD HOME' },
         ],
       };
     }
   }
-  return { result: 'untasked', events: [{ type: 'photo', title: 'PHOTO', text: `RETURN ${id} PHOTOGRAPHED · NOT TASKED`, id }] };
+  return { result: 'untasked', events: [{ type: 'photo', title: 'PHOTO', text: 'NOT THE TARGET', id }] };
 }
 
 /** Track the truck to its stop: a camera has to be on it once it has stopped. */
@@ -319,8 +313,8 @@ export function updateDestination(m: MissionState, dt: number, truckArrived: boo
   e.detection = Math.max(e.detection, DETECT_THRESHOLD);
   e.lastKnown = { x: BARGE.route[0][0], z: BARGE.route[0][1] };
   return [
-    { type: 'objective-complete', title: 'OBJECTIVE COMPLETE', text: `Destination confirmed: ${DESTINATION.name}.` },
-    { type: 'objective-updated', title: 'OBJECTIVE UPDATED', text: "A barge at the landing is taking the truck's cargo. Photograph the barge (Return E)." },
+    { type: 'objective-complete', title: 'DESTINATION FOUND', text: DESTINATION.short },
+    { type: 'objective-updated', title: 'A BARGE!', text: 'PHOTOGRAPH IT · RETURN E' },
   ];
 }
 
@@ -330,7 +324,7 @@ export function extract(m: MissionState, reason: ExtractReason): MissionEvent[] 
   if (reason === 'manual' && !m.primaryComplete) return [];
   m.phase = 'extract';
   m.extractReason = reason;
-  const text = reason === 'weather' ? 'The weather front has arrived. Extract now.' : reason === 'fuel' ? 'Bingo fuel. Extract now.' : 'Extract. Fly home.';
+  const text = reason === 'manual' || reason === 'complete' ? 'HEAD HOME' : 'EXTRACT NOW';
   return [{ type: 'recon-complete', title: reason === 'weather' ? 'WEATHER FRONT' : reason === 'fuel' ? 'BINGO FUEL' : 'EXTRACTING', text }];
 }
 
@@ -343,9 +337,9 @@ export interface Secondary {
 
 export function secondaries(m: MissionState, detected: boolean): Secondary[] {
   return [
-    { label: 'Reach Sector 7 undetected', done: !detected, issued: true },
-    { label: "Confirm the truck's destination", done: m.destinationConfirmed, issued: m.primaryComplete },
-    { label: 'Photograph the cargo transfer', done: m.transferPhotographed, issued: m.destinationConfirmed },
+    { label: 'Undetected', done: !detected, issued: true },
+    { label: 'Followed the truck', done: m.destinationConfirmed, issued: m.primaryComplete },
+    { label: 'Caught the transfer', done: m.transferPhotographed, issued: m.destinationConfirmed },
   ];
 }
 

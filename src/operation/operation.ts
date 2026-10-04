@@ -121,8 +121,8 @@ export function flightObjective(op: OperationState, def: MissionDef, cap: Capabi
   const g = currentGate(leg.state, leg.def);
   if (!g) return null;
   const n = leg.def.gates.length;
-  const kicker = `${op.stage === 'outbound' ? 'OUTBOUND' : 'RETURN'} · GATE ${leg.state.index + 1} OF ${n}`;
-  const detail = g.kind === 'enterArea' && g.stealth ? `STAY BELOW ${cap.stealthCeiling} m · ${g.detail}` : g.detail;
+  const kicker = `${op.stage === 'outbound' ? 'OUTBOUND' : 'RETURN'} ${leg.state.index + 1}/${n}`;
+  const detail = g.kind === 'enterArea' && g.stealth ? `BELOW ${cap.stealthCeiling} m · ${g.detail}` : g.detail;
   return { kicker, title: g.objective, detail };
 }
 
