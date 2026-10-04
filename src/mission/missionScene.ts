@@ -160,6 +160,15 @@ class RingMesh {
   }
 }
 
+/**
+ * The next ring's look: a steady hoop (it only changes size as a contact clock
+ * closes it, smoothly) and a slow breathing glow. Urgency shows as colour and
+ * the closing hoop, never as shaking.
+ */
+export function activeRingLook(scale: number, t: number): { scale: number; halo: number } {
+  return { scale, halo: 0.3 + 0.15 * Math.sin(t * 2.4) };
+}
+
 interface Pose {
   setPose(x: number, z: number, heading: number, hf: HeightField): void;
   group: THREE.Group;
@@ -299,13 +308,13 @@ export class MissionScene {
       m.group.visible = show;
       if (!show) continue;
       if (k === 0) {
-        const pulse = 0.5 + 0.5 * Math.sin(t * (4 + urgency * 6));
-        m.group.scale.setScalar(scale * (1 + 0.04 * pulse));
+        const look = activeRingLook(scale, t);
+        m.group.scale.setScalar(look.scale);
         m.tube.material.color.copy(RING_AMBER).lerp(RING_RED, urgency);
         m.halo.material.color.copy(m.tube.material.color);
         m.fill.material.color.copy(m.tube.material.color);
         m.tube.material.opacity = 1;
-        m.halo.material.opacity = 0.25 + 0.25 * pulse;
+        m.halo.material.opacity = look.halo;
         m.fill.material.opacity = 0.07;
       } else {
         m.group.scale.setScalar(1);
