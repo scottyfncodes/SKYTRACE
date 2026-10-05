@@ -125,7 +125,9 @@ export class Preflight {
 
     // ---- one line: ready, or what is missing
     const chk = checkLoadout(l, unlocked);
-    this.el['pf-check'].innerHTML = chk.ok ? '<p class="ready">✓ READY</p>' : `<p class="why">${chk.reason}</p>`;
+    // ready, but with a blind spot: one look-alike can only be told apart by the optical camera
+    const advice = chk.ok && !l.equipment.includes('optical') ? `<p class="advice">⚠ NO OPTICAL · CAN'T CHECK ROADS</p>` : '';
+    this.el['pf-check'].innerHTML = chk.ok ? `<p class="ready">✓ READY</p>${advice}` : `<p class="why">${chk.reason}</p>`;
     this.el['btn-launch'].toggleAttribute('disabled', !chk.ok);
     this.el['btn-launch'].classList.toggle('disabled', !chk.ok);
   }
