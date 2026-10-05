@@ -146,6 +146,7 @@ export class Game {
   private shake = 0;
   private jolt = 0;
   private fxKey = '';
+  private pulseIn = 0;
   private visibility = 1;
   private sensorCam = new THREE.PerspectiveCamera(20, 1, 1, 4200);
   /** The operation plan and its derived rules. */
@@ -872,12 +873,12 @@ export class Game {
       switch (e.type) {
         case 'gate-passed': {
           if (e.id === 'land') break;
-          this.audio.mark();
+          this.audio.ring();
           this.hud.banner('GATE CLEARED', `RING ${e.text}`, 'done', 1.4);
           break;
         }
         case 'gate-missed':
-          this.audio.warn();
+          this.audio.ringMissed();
           this.hud.banner('MISSED', `RING ${e.text}`, 'bad', 1.2);
           break;
         case 'detected':
@@ -1167,6 +1168,7 @@ export class Game {
     if (this.crew.station === 'operator') handBack(this.crew);
     this.setFx(0, 0);
     this.missionScene.smoke.clear();
+    this.audio.updateWeather(0, 0, 0);
     this.mode = 'debrief';
     this.scanning = false;
     this.radarRing.visible = false;
@@ -1283,7 +1285,7 @@ export class Game {
       this.flashScreen();
       this.shake = 1;
       this.jolt = (Math.random() < 0.5 ? -1 : 1) * (0.8 + this.cap.weatherExposure);
-      this.audio.warn();
+      this.audio.strike();
       this.hud.banner('LIGHTNING STRIKE', `HULL ${Math.round((1 - this.op.damage) * 100)}%`, 'bad', 1.4);
     }
     const flying = activeLeg(this.op);
@@ -1381,6 +1383,7 @@ export class Game {
     }
 
     this.audio.updateFlight(this.a.throttle, this.a.speed, true, this.opsTool === 'radar');
+    this.audio.updateWeather(dt, 0, 0);
     this.hud.tickBanners(dt);
 
     // ---- console frame
@@ -1611,6 +1614,16 @@ export class Game {
     let near = 0;
     for (const h of hazards) if (h.kind === 'storm') near = Math.max(near, Math.min(1, Math.max(0, 1 - (Math.hypot(this.a.x - h.x, this.a.z - h.z) - h.r) / 260)));
     this.setFx(near, this.op.damage);
+    this.audio.updateWeather(dt, near, this.op.damage);
+    // RADAR CONTACT: a heartbeat that quickens as the ring closes
+    if (leg?.state.contact && leg.state.clock !== null && gate?.kind === 'ring') {
+      const urgency = 1 - Math.max(0, Math.min(1, leg.state.clock / Math.max(0.01, leg.state.clockMax)));
+      this.pulseIn -= dt;
+      if (this.pulseIn <= 0) {
+        this.audio.pulse(urgency);
+        this.pulseIn = 0.25 + 0.75 * (1 - urgency);
+      }
+    }
     this.audio.updateFlight(this.a.throttle, this.a.speed, true, false);
     const contacts: ScopeContact[] = [];
     for (const r of RETURNS) {
