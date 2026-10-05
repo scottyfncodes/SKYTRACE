@@ -425,3 +425,19 @@ describe('Mission 01 routes, flown through the real flight model', () => {
 });
 
 void FLIGHT;
+
+describe('the next ring holds still', () => {
+  it('never wobbles in size: it only shrinks with the clock; the glow breathes slowly', async () => {
+    const { activeRingLook } = await import('../src/mission/missionScene');
+    const halos: number[] = [];
+    for (let t = 0; t < 10; t += 0.01) {
+      for (const s of [1, 0.8, CLOSED_SCALE]) expect(activeRingLook(s, t).scale).toBe(s);
+      halos.push(activeRingLook(1, t).halo);
+    }
+    // a gentle breath: well over a second per cycle, never a flicker
+    let crossings = 0;
+    for (let i = 1; i < halos.length; i++) if ((halos[i - 1] - 0.3) * (halos[i] - 0.3) < 0) crossings++;
+    expect(crossings / 2 / 10).toBeLessThan(0.5); // under half a cycle per second
+    expect(Math.max(...halos) - Math.min(...halos)).toBeLessThanOrEqual(0.3);
+  });
+});

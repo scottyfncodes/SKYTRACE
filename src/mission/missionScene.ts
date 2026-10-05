@@ -3,6 +3,7 @@ import { box } from '../world/props';
 import type { HeightField } from '../world/terrain';
 import { TruckMesh } from '../world/truck';
 import { WATER_LEVEL } from '../world/worldData';
+import { SmokeTrail, StormCell } from '../world/weatherFx';
 import type { GateStatus, HazardDef, Ring, Route } from '../operation/gates';
 import { RETURNS, type ReturnId, type Sector } from './mission01';
 import type { MissionState } from './mission';
@@ -115,19 +116,6 @@ class BargeMesh {
   }
 }
 
-/** A storm cell: a dark column of cloud and rain. */
-function stormMesh(r: number): THREE.Group {
-  const g = new THREE.Group();
-  const outer = new THREE.Mesh(new THREE.CylinderGeometry(r, r * 0.85, 620, 28, 1, true), new THREE.MeshBasicMaterial({ color: 0x3b3f48, transparent: true, opacity: 0.38, side: THREE.DoubleSide, depthWrite: false }));
-  outer.position.y = 330;
-  const core = new THREE.Mesh(new THREE.CylinderGeometry(r * 0.6, r * 0.5, 600, 20, 1, true), new THREE.MeshBasicMaterial({ color: 0x23262d, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }));
-  core.position.y = 320;
-  const top = new THREE.Mesh(new THREE.CylinderGeometry(r * 1.25, r, 120, 28), new THREE.MeshBasicMaterial({ color: 0x4a4e57, transparent: true, opacity: 0.6, depthWrite: false }));
-  top.position.y = 660;
-  g.add(outer, core, top);
-  return g;
-}
-
 const RING_RED = new THREE.Color(0xff5a3c);
 const RING_AMBER = new THREE.Color(AMBER);
 const RING_DIM = new THREE.Color(0xf4f1e8);
@@ -160,6 +148,15 @@ class RingMesh {
   }
 }
 
+/**
+ * The next ring's look: a steady hoop (it only changes size as a contact clock
+ * closes it, smoothly) and a slow breathing glow. Urgency shows as colour and
+ * the closing hoop, never as shaking.
+ */
+export function activeRingLook(scale: number, t: number): { scale: number; halo: number } {
+  return { scale, halo: 0.3 + 0.15 * Math.sin(t * 2.4) };
+}
+
 interface Pose {
   setPose(x: number, z: number, heading: number, hf: HeightField): void;
   group: THREE.Group;
@@ -171,7 +168,8 @@ export class MissionScene {
   private vehicles = new Map<ReturnId, Pose>();
   private pins = new Map<ReturnId, THREE.Group>();
   readonly destinationMarker: THREE.Mesh;
-  private storms = new Map<string, THREE.Group>();
+  private storms = new Map<string, StormCell>();
+  readonly smoke = new SmokeTrail();
   private deck: THREE.Mesh;
   private waypoint: THREE.Mesh;
   private rings: RingMesh[] = [];
@@ -208,6 +206,7 @@ export class MissionScene {
     this.waypoint = new THREE.Mesh(new THREE.CylinderGeometry(6, 10, 520, 10, 1, true), new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: 0.32, depthWrite: false, side: THREE.DoubleSide }));
     this.waypoint.visible = false;
     this.group.add(this.waypoint);
+    this.group.add(this.smoke.group);
     this.group.visible = false;
   }
 
@@ -223,14 +222,14 @@ export class MissionScene {
       }
       want.add(h.id);
       if (!this.storms.has(h.id)) {
-        const m = stormMesh(h.r);
-        m.position.set(h.x, 0, h.z);
+        const m = new StormCell(h.r, this.storms.size + 11);
+        m.group.position.set(h.x, this.hf.sample(h.x, h.z), h.z);
         this.storms.set(h.id, m);
-        this.group.add(m);
+        this.group.add(m.group);
       }
-      this.storms.get(h.id)!.visible = true;
+      this.storms.get(h.id)!.group.visible = true;
     }
-    for (const [id, m] of this.storms) if (!want.has(id)) m.visible = false;
+    for (const [id, m] of this.storms) if (!want.has(id)) m.group.visible = false;
   }
 
   setWaypoint(p: { x: number; z: number } | null): void {
@@ -299,13 +298,13 @@ export class MissionScene {
       m.group.visible = show;
       if (!show) continue;
       if (k === 0) {
-        const pulse = 0.5 + 0.5 * Math.sin(t * (4 + urgency * 6));
-        m.group.scale.setScalar(scale * (1 + 0.04 * pulse));
+        const look = activeRingLook(scale, t);
+        m.group.scale.setScalar(look.scale);
         m.tube.material.color.copy(RING_AMBER).lerp(RING_RED, urgency);
         m.halo.material.color.copy(m.tube.material.color);
         m.fill.material.color.copy(m.tube.material.color);
         m.tube.material.opacity = 1;
-        m.halo.material.opacity = 0.25 + 0.25 * pulse;
+        m.halo.material.opacity = look.halo;
         m.fill.material.opacity = 0.07;
       } else {
         m.group.scale.setScalar(1);
@@ -330,8 +329,23 @@ export class MissionScene {
     return Math.min(index, this.rings.length);
   }
 
-  animate(t: number): void {
-    for (const m of this.storms.values()) m.rotation.y = t * 0.05;
+  animate(t: number, dt: number): void {
+    for (const m of this.storms.values()) if (m.group.visible) m.animate(t, dt);
+  }
+
+  /** Lightning from the nearest storm cell into the aircraft. */
+  strikeAt(x: number, y: number, z: number): void {
+    let best: StormCell | null = null;
+    let bd = Infinity;
+    for (const m of this.storms.values()) {
+      if (!m.group.visible) continue;
+      const d = Math.hypot(m.group.position.x - x, m.group.position.z - z);
+      if (d < bd) {
+        bd = d;
+        best = m;
+      }
+    }
+    if (best) best.strike({ x: x - best.group.position.x, y: y - best.group.position.y, z: z - best.group.position.z });
   }
 
   sync(movers: Map<ReturnId, RouteMover>, m: MissionState, t: number): void {

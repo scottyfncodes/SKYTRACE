@@ -71,7 +71,7 @@ import { MissionScene } from '../mission/missionScene';
 import { RouteMover } from '../mission/vehicles';
 import { CREW_BY_ID } from '../operation/catalog';
 import { capabilities as loadoutCapabilities, checkLoadout, defaultLoadout, seatCrew, toggleEquipment, withAircraft, type Capabilities, type Loadout } from '../operation/loadout';
-import { activeLeg, beginReturn, endOperation, flightObjective, landAtBase, launch, newOperation, reconVisibility, tickOperation, windowLeft, type OperationState } from '../operation/operation';
+import { activeLeg, beginReturn, damagedPerf, endOperation, flightObjective, landAtBase, launch, newOperation, reconVisibility, tickOperation, windowLeft, type OperationState } from '../operation/operation';
 import { currentGate, inHazard, ringScale, type LegEvent } from '../operation/gates';
 import { buildReport, type Report } from '../operation/score';
 import { isUnlocked, loadCareer, recordOperation, saveCareer, type Career, type UnlockDef } from '../operation/career';
@@ -138,6 +138,10 @@ export class Game {
   private autoOps = 0;
   /** RETURN TO BASE is waiting for the hand-back card to clear. */
   private returnCue = false;
+  /** Camera shake (0..1, decays) and a roll jolt from the last lightning strike. */
+  private shake = 0;
+  private jolt = 0;
+  private fxKey = '';
   private visibility = 1;
   private sensorCam = new THREE.PerspectiveCamera(20, 1, 1, 4200);
   /** The operation plan and its derived rules. */
@@ -157,7 +161,7 @@ export class Game {
       if (!e) throw new Error(`missing #${id}`);
       return e;
     };
-    for (const id of ['gl', 'hud', 'intel', 'title', 'pause', 'hint', 'btn-begin', 'btn-continue', 'btn-newcase-title', 'stick-zone', 'stick-knob', 'throttle', 'btn-scan', 'btn-mark', 'btn-drop', 'btn-map', 'btn-pause', 'btn-rtb', 'btn-resume-pause', 'btn-map-pause', 'btn-end-sortie', 'btn-sound-pause', 'loading', 'btn-mission', 'btn-open-case', 'btn-case-back', 'mission-card', 'case-card', 'mission-brief', 'debrief', 'btn-fly-again', 'btn-debrief-menu', 'db-headline', 'db-rows-more', 'db-stages', 'db-photos', 'db-findings', 'pause-objective', 'btn-ops', 'handoff', 'ops', 'preflight', 'career-line', 'db-grade', 'db-aircraft', 'db-secondaries', 'db-rewards']) {
+    for (const id of ['gl', 'hud', 'intel', 'title', 'pause', 'hint', 'btn-begin', 'btn-continue', 'btn-newcase-title', 'stick-zone', 'stick-knob', 'throttle', 'btn-scan', 'btn-mark', 'btn-drop', 'btn-map', 'btn-pause', 'btn-rtb', 'btn-resume-pause', 'btn-map-pause', 'btn-end-sortie', 'btn-sound-pause', 'loading', 'btn-mission', 'btn-open-case', 'btn-case-back', 'mission-card', 'case-card', 'mission-brief', 'debrief', 'btn-fly-again', 'btn-debrief-menu', 'db-headline', 'db-rows-more', 'db-stages', 'db-photos', 'db-findings', 'pause-objective', 'btn-ops', 'handoff', 'ops', 'preflight', 'career-line', 'db-grade', 'db-aircraft', 'db-secondaries', 'db-rewards', 'fx']) {
       this.el[id] = q(id);
     }
     this.el['app'] = root;
@@ -351,6 +355,7 @@ export class Game {
     this.el['debrief'].classList.add('hidden');
     this.el['pause'].classList.add('hidden');
     this.missionScene.group.visible = false;
+    this.setFx(0, 0);
     this.leaveMissionStations();
     this.preflight.hide();
     const c = this.career;
@@ -764,6 +769,10 @@ export class Game {
     this.op = newOperation(def, this.loadout, (x, z) => this.bundle.heightField.sample(x, z));
     this.autoOps = 0;
     this.returnCue = false;
+    this.shake = 0;
+    this.jolt = 0;
+    this.missionScene.smoke.clear();
+    this.setFx(0, 0);
     launch(this.op);
     this.mission = newMission();
     this.crew = newCrew();
@@ -1089,11 +1098,30 @@ export class Game {
     else this.hud.message(`BASE IS ${(d / 1000).toFixed(1)} km AWAY · RETURN WITHIN 480 m TO LAND`, 'warn');
   }
 
-  private endMission(reason: 'landed' | 'fuel' | 'aborted'): void {
+  /** Screen weather: storm darkening and rain (0..1 by proximity), damage vignette (0..1). */
+  private setFx(storm: number, hurt: number): void {
+    const key = `${storm.toFixed(2)}|${hurt.toFixed(2)}`;
+    if (key === this.fxKey) return;
+    this.fxKey = key;
+    const fx = this.el['fx'];
+    fx.style.setProperty('--storm', storm.toFixed(2));
+    fx.style.setProperty('--hurt', hurt.toFixed(2));
+  }
+
+  private flashScreen(): void {
+    const f = this.el['fx'];
+    f.classList.remove('flash');
+    void f.offsetWidth;
+    f.classList.add('flash');
+  }
+
+  private endMission(reason: 'landed' | 'fuel' | 'aborted' | 'destroyed'): void {
     if (this.mode !== 'flight' && this.mode !== 'paused') return;
     if (reason === 'landed') this.legEvents(landAtBase(this.op, MISSION_01));
     else endOperation(this.op, reason);
     if (this.crew.station === 'operator') handBack(this.crew);
+    this.setFx(0, 0);
+    this.missionScene.smoke.clear();
     this.mode = 'debrief';
     this.scanning = false;
     this.radarRing.visible = false;
@@ -1184,7 +1212,7 @@ export class Game {
     }
     for (const mv of this.movers.values()) mv.step(dt);
     this.plane.sync(this.a, this.t);
-    this.missionScene.animate(this.t);
+    this.missionScene.animate(this.t, dt);
     if (this.handoffTimer > 0) {
       this.handoffTimer -= dt;
       if (this.handoffTimer <= 0) this.el['handoff'].classList.remove('on');
@@ -1196,8 +1224,23 @@ export class Game {
     }
 
     // ---- the operation: gates, weather, the recon window
-    const { events, frontArrived } = tickOperation(this.op, def, { x: this.a.x, z: this.a.z, y: this.a.y, agl: this.a.agl }, dt, this.cap);
+    const { events, frontArrived, hits } = tickOperation(this.op, def, { x: this.a.x, z: this.a.z, y: this.a.y, agl: this.a.agl }, dt, this.cap);
     if (events.length) this.legEvents(events);
+    for (const h of hits) {
+      if (h.type === 'destroyed') {
+        this.missionScene.strikeAt(this.a.x, this.a.y, this.a.z);
+        this.flashScreen();
+        this.endMission('destroyed');
+        return;
+      }
+      // lightning: a bolt into the airframe, a white flash, a jolt, a chunk of hull gone
+      this.missionScene.strikeAt(this.a.x, this.a.y, this.a.z);
+      this.flashScreen();
+      this.shake = 1;
+      this.jolt = (Math.random() < 0.5 ? -1 : 1) * (0.8 + this.cap.weatherExposure);
+      this.audio.warn();
+      this.hud.banner('LIGHTNING STRIKE', `HULL ${Math.round((1 - this.op.damage) * 100)}%`, 'bad', 1.4);
+    }
     const flying = activeLeg(this.op);
     const legView = flying ?? { def: this.op.routes.outbound, state: this.op.outbound };
     const urgency = legView.state.contact && legView.state.clock !== null ? 1 - Math.max(0, Math.min(1, legView.state.clock / Math.max(0.01, legView.state.clockMax))) : 0;
@@ -1479,6 +1522,7 @@ export class Game {
     const R = leg?.def.radar;
     if (R && !leg!.state.detected && this.a.agl > this.cap.stealthCeiling - 40 && this.a.x > R.x0 - 300 && this.a.x < R.x1 + 300 && this.a.z > R.z0 - 300 && this.a.z < R.z1 + 300) chips.push({ text: `TOO HIGH · BELOW ${this.cap.stealthCeiling} m`, cls: 'bad' });
     if (leg?.state.contact && leg.state.clock !== null && gate?.kind === 'ring') chips.push({ text: `⏱ ${Math.max(0, Math.ceil(leg.state.clock))} s`, cls: leg.state.clock < 3 ? 'bad' : 'caution' });
+    if (this.op.damage >= 0.02) chips.push({ text: `HULL ${Math.round((1 - this.op.damage) * 100)}%`, cls: this.op.damage > 0.55 ? 'bad' : 'caution' });
     if (this.op.stage === 'recon') chips.push({ text: `FRONT ${formatTime(windowLeft(this.op, def))}`, cls: windowLeft(this.op, def) < 60 ? 'bad' : 'caution' });
 
     // ---- contextual hint: always says what to do next
@@ -1493,6 +1537,18 @@ export class Game {
 
     // ---- camera, audio, HUD
     this.chase.update(this.bundle.camera, this.a, dt, false, (x, z) => hf.sample(x, z));
+    // turbulence and strikes shake the camera; damage trails smoke
+    if (this.shake > 0) {
+      const amp = this.shake * this.shake * 2.6;
+      this.bundle.camera.position.x += (Math.random() - 0.5) * amp;
+      this.bundle.camera.position.y += (Math.random() - 0.5) * amp;
+      this.bundle.camera.position.z += (Math.random() - 0.5) * amp;
+      this.shake = Math.max(0, this.shake - dt * 1.4);
+    }
+    this.missionScene.smoke.update(dt, this.a.x, this.a.y, this.a.z, -Math.sin(this.a.yaw), -Math.cos(this.a.yaw), this.op.damage);
+    let near = 0;
+    for (const h of hazards) if (h.kind === 'storm') near = Math.max(near, Math.min(1, Math.max(0, 1 - (Math.hypot(this.a.x - h.x, this.a.z - h.z) - h.r) / 260)));
+    this.setFx(near, this.op.damage);
     this.audio.updateFlight(this.a.throttle, this.a.speed, true, false);
     const contacts: ScopeContact[] = [];
     for (const r of RETURNS) {
@@ -1580,17 +1636,25 @@ export class Game {
     // ---- controls
     // the operator never flies: the autopilot supplies the controls
     const operator = this.play === 'mission' && this.crew.station === 'operator' && this.crew.orbit;
-    const perf = this.play === 'mission' ? this.cap.perf : FLIGHT;
+    const perf = this.play === 'mission' ? damagedPerf(this.cap.perf, this.op.damage) : FLIGHT;
     const inp = operator ? orbitInput(this.a, this.crew.orbit!, (x, z) => hf.sample(x, z), perf) : this.input.read();
     // storm cells shake the aircraft (light airframes more) and burn fuel
     let stormBurn = 1;
     if (this.play === 'mission') {
       const leg = activeLeg(this.op, MISSION_01);
       if (leg && leg.def.hazards.some((h) => h.kind === 'storm' && inHazard(h, this.a))) {
-        const k = 0.35 + this.cap.weatherExposure;
-        inp.roll += (Math.random() - 0.5) * 1.6 * k + Math.sin(this.t * 3.1) * 0.35 * k;
-        inp.pitch += (Math.random() - 0.5) * 1.2 * k;
-        stormBurn = 1.6;
+        // violent: the stick is fought for, the airframe is thrown about
+        const k = 0.6 + 1.4 * this.cap.weatherExposure;
+        inp.roll += (Math.random() - 0.5) * 2.2 * k + Math.sin(this.t * 3.1) * 0.5 * k;
+        inp.pitch += (Math.random() - 0.5) * 1.8 * k - 0.25 * k * Math.max(0, Math.sin(this.t * 1.7));
+        stormBurn = 1.8;
+        this.shake = Math.max(this.shake, 0.35);
+      }
+      // a strike throws the wings over
+      if (this.jolt !== 0) {
+        inp.roll += this.jolt;
+        this.jolt *= Math.max(0, 1 - dt * 3);
+        if (Math.abs(this.jolt) < 0.02) this.jolt = 0;
       }
     }
     if (this.input.touchThrottle !== null) {

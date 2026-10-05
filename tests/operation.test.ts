@@ -3,7 +3,7 @@ import { AIRCRAFT, AIRCRAFT_BY_ID, CREW, EQUIPMENT } from '../src/operation/cata
 import { capabilities, checkLoadout, defaultLoadout, seatCrew, toggleEquipment, withAircraft, type Loadout } from '../src/operation/loadout';
 import { currentGate, legComplete, missedCount, newLeg, passLanding, placeRoute, rings, tickLeg, totalExposure, type LegDef } from '../src/operation/gates';
 import { threadRings } from './helpers';
-import { activeLeg, beginReturn, endOperation, flightObjective, landAtBase, launch, newOperation, reconVisibility, tickOperation, windowLeft } from '../src/operation/operation';
+import { activeLeg, beginReturn, damagedPerf, endOperation, STRIKE_EVERY, stormDamagePerSecond, flightObjective, landAtBase, launch, newOperation, reconVisibility, tickOperation, windowLeft } from '../src/operation/operation';
 import { buildReport, disciplineScore, gradeFor } from '../src/operation/score';
 import { CAREER_KEY, isUnlocked, loadCareer, newCareer, nextUnlock, recordOperation, saveCareer, UNLOCKS } from '../src/operation/career';
 import { MISSION_01 } from '../src/mission/mission01';
@@ -166,17 +166,77 @@ describe('operation stages', () => {
     expect(reconVisibility(op, def)).toBeCloseTo(def.reconVisibilityEnd, 5);
   });
 
-  it('storm cells damage light aircraft more than heavy ones', () => {
-    const run = (l: Loadout) => {
+  it('storm cells are destructive: a steady pounding plus lightning on a rhythm, worst for light airframes', () => {
+    const inStorm = (l: Loadout, seconds: number, dt = 0.1) => {
       const op = newOperation(def, l);
       launch(op);
-      for (let t = 0; t < 10; t += 0.5) tickOperation(op, def, fix(-80, 480), 0.5, capabilities(l));
-      return op.damage;
+      const strikes: number[] = [];
+      for (let t = 0; t < seconds && op.stage !== 'debrief'; t += dt) {
+        const { hits } = tickOperation(op, def, fix(-80, 480), dt, capabilities(l));
+        if (hits.some((h) => h.type === 'strike')) strikes.push(op.stormTime);
+      }
+      return { op, strikes };
     };
-    const kd = run(defaultLoadout());
-    const hd = run(withAircraft(defaultLoadout(), 'heron'));
-    expect(kd).toBeGreaterThan(0.2);
-    expect(hd).toBeLessThan(kd / 2);
+    // strikes: the first a moment after entering, then every STRIKE_EVERY seconds
+    const { strikes } = inStorm(withAircraft(defaultLoadout(), 'albatross'), 8);
+    expect(strikes[0]).toBeGreaterThan(0.5);
+    expect(strikes[0]).toBeLessThan(1.2);
+    expect(strikes[1] - strikes[0]).toBeCloseTo(STRIKE_EVERY, 0);
+    // five seconds in a storm: the KESTREL is badly hurt, the ALBATROSS shrugs it off better
+    const k5 = inStorm(defaultLoadout(), 5).op.damage;
+    const a5 = inStorm(withAircraft(defaultLoadout(), 'albatross'), 5).op.damage;
+    expect(k5).toBeGreaterThan(0.35);
+    expect(a5).toBeLessThan(k5 * 0.6);
+    expect(stormDamagePerSecond(capabilities(defaultLoadout()).weatherExposure)).toBeGreaterThan(stormDamagePerSecond(capabilities(withAircraft(defaultLoadout(), 'heron')).weatherExposure));
+  });
+
+  it('stay in a storm and the aircraft breaks up: AIRCRAFT LOST', () => {
+    const lost = (id: 'kestrel' | 'heron' | 'albatross') => {
+      const l = withAircraft(defaultLoadout(), id);
+      const op = newOperation(def, l);
+      launch(op);
+      let t = 0;
+      let destroyed = false;
+      for (; t < 120 && op.stage !== 'debrief'; t += 0.1) destroyed = tickOperation(op, def, fix(-80, 480), 0.1, capabilities(l)).hits.some((h) => h.type === 'destroyed') || destroyed;
+      expect(destroyed).toBe(true);
+      expect(op.stage).toBe('debrief');
+      expect(op.outcome).toBe('destroyed');
+      expect(op.damage).toBe(1);
+      return t;
+    };
+    const k = lost('kestrel');
+    const h = lost('heron');
+    const a = lost('albatross');
+    expect(k).toBeLessThan(15);
+    expect(k).toBeLessThan(h);
+    expect(h).toBeLessThan(a);
+    const op = newOperation(def, defaultLoadout());
+    launch(op);
+    for (let t = 0; t < 30 && op.stage !== 'debrief'; t += 0.1) tickOperation(op, def, fix(-80, 480), 0.1, cap);
+    const r = buildReport(newMission(), op, def, 0.5, 0);
+    expect(r.headline).toBe('AIRCRAFT LOST · STORM DAMAGE');
+    expect(r.grade).toBe('F');
+    expect(r.rows.find((x) => x.label === 'Airframe damage')!.value).toBe('DESTROYED');
+  });
+
+  it('a damaged airframe flies worse (the flight model itself is unchanged)', () => {
+    const P = capabilities(defaultLoadout()).perf;
+    expect(damagedPerf(P, 0)).toBe(P);
+    const half = damagedPerf(P, 0.5);
+    const worst = damagedPerf(P, 1);
+    for (const k of ['maxSpeed', 'rollRate', 'pitchRate', 'turnGain'] as const) {
+      expect(half[k]).toBeLessThan(P[k]);
+      expect(worst[k]).toBeLessThan(half[k]);
+    }
+    expect(worst.maxSpeed).toBeGreaterThan(P.minSpeed);
+    expect(P.maxSpeed).toBe(92); // the original profile is never mutated
+  });
+
+  it('outside the storms nothing hurts', () => {
+    const op = newOperation(def, defaultLoadout());
+    launch(op);
+    for (let t = 0; t < 30; t += 0.5) expect(tickOperation(op, def, fix(-600, 700), 0.5, cap).hits).toEqual([]);
+    expect(op.damage).toBe(0);
   });
 
   it('landing home early off-route misses the remaining rings; fuel ends the operation', () => {
@@ -234,7 +294,7 @@ describe('report, rewards and career', () => {
     expect(v('Evidence quality')).toBe('EXCELLENT');
     expect(v('Flight discipline')).toBe('EXCELLENT');
     expect(v('Fuel remaining')).toBe('50%');
-    expect(v('Equipment damage')).toBe('NONE');
+    expect(v('Airframe damage')).toBe('NONE');
     expect(['S', 'A']).toContain(r.grade);
     expect(r.credits).toBeGreaterThan(0);
     expect(r.xp).toBeGreaterThan(0);

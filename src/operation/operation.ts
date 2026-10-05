@@ -12,6 +12,7 @@ import type { MissionDef } from '../mission/missionDef';
 import { currentGate, inHazard, joinRing, legComplete, newLeg, passLanding, placeRoute, ringOrdinal, tickLeg, type AircraftFix, type LegEvent, type LegState, type Route } from './gates';
 import { BASE } from '../world/worldData';
 import type { Capabilities, Loadout } from './loadout';
+import type { FlightPerf } from '../flight/aircraft';
 
 export type Stage = 'preflight' | 'outbound' | 'recon' | 'return' | 'debrief';
 
@@ -33,9 +34,11 @@ export interface OperationState {
   /** Seconds since arriving on station (the recon window runs from here). */
   reconElapsed: number;
   frontArrived: boolean;
-  /** Airframe damage 0..1 from weather. */
+  /** Airframe damage 0..1 from weather (1: the aircraft breaks up). */
   damage: number;
-  outcome: 'landed' | 'fuel' | 'aborted' | null;
+  /** Seconds inside storm cells (lightning strikes on a fixed rhythm). */
+  stormTime: number;
+  outcome: 'landed' | 'fuel' | 'aborted' | 'destroyed' | null;
   /** Seconds since take-off. */
   time: number;
 }
@@ -46,7 +49,7 @@ const flat: Ground = () => 0;
 export function newOperation(def: MissionDef, loadout: Loadout, ground: Ground = flat): OperationState {
   const outbound = placeRoute(def.outbound, ground, BASE);
   const ret = placeRoute(def.return, ground, { x: (def.operations.area.x0 + def.operations.area.x1) / 2, z: (def.operations.area.z0 + def.operations.area.z1) / 2 });
-  return { stage: 'preflight', loadout, routes: { outbound, return: ret }, outbound: newLeg(outbound), ret: newLeg(ret), reconElapsed: 0, frontArrived: false, damage: 0, outcome: null, time: 0 };
+  return { stage: 'preflight', loadout, routes: { outbound, return: ret }, outbound: newLeg(outbound), ret: newLeg(ret), reconElapsed: 0, frontArrived: false, damage: 0, stormTime: 0, outcome: null, time: 0 };
 }
 
 export function launch(op: OperationState): void {
@@ -64,15 +67,53 @@ export function activeLeg(op: OperationState, _def?: MissionDef): { def: Route; 
   return null;
 }
 
+/**
+ * Storm cells are destructive. Inside one the airframe takes a steady
+ * pounding, and lightning strikes on a fixed rhythm take a big bite out of
+ * it. Light airframes suffer most. At full damage the aircraft breaks up.
+ */
+export const STORM_WEAR = 0.045;
+export const STRIKE_EVERY = 2.2;
+export const STRIKE_DAMAGE = 0.1;
+
+export function stormDamagePerSecond(weatherExposure: number): number {
+  return STORM_WEAR * weatherExposure + (STRIKE_DAMAGE * (0.5 + weatherExposure)) / STRIKE_EVERY;
+}
+
+/** A damaged airframe flies worse: slower, more sluggish in roll and pitch. */
+export function damagedPerf(P: FlightPerf, damage: number): FlightPerf {
+  const d = Math.max(0, Math.min(1, damage));
+  if (d === 0) return P;
+  return { ...P, maxSpeed: Math.max(P.minSpeed + 8, P.maxSpeed * (1 - 0.3 * d)), rollRate: P.rollRate * (1 - 0.4 * d), pitchRate: P.pitchRate * (1 - 0.3 * d), turnGain: P.turnGain * (1 - 0.25 * d) };
+}
+
+export type WeatherHit = { type: 'strike'; damage: number } | { type: 'destroyed' };
+
 /** One frame of flight: gates, hazards, weather damage, and the recon window. */
-export function tickOperation(op: OperationState, def: MissionDef, a: AircraftFix, dt: number, cap: Capabilities): { events: LegEvent[]; frontArrived: boolean } {
-  if (!isFlying(op)) return { events: [], frontArrived: false };
+export function tickOperation(op: OperationState, def: MissionDef, a: AircraftFix, dt: number, cap: Capabilities): { events: LegEvent[]; frontArrived: boolean; hits: WeatherHit[] } {
+  if (!isFlying(op)) return { events: [], frontArrived: false, hits: [] };
+  const hits: WeatherHit[] = [];
   op.time += dt;
   const events: LegEvent[] = [];
   const leg = activeLeg(op, def);
   if (leg) {
     events.push(...tickLeg(leg.state, leg.def, a, dt, cap.stealthCeiling));
-    for (const h of leg.def.hazards) if (h.kind === 'storm' && inHazard(h, a)) op.damage = Math.min(1, op.damage + dt * 0.03 * cap.weatherExposure);
+    if (leg.def.hazards.some((h) => h.kind === 'storm' && inHazard(h, a))) {
+      op.stormTime += dt;
+      op.damage = Math.min(1, op.damage + dt * STORM_WEAR * cap.weatherExposure);
+      // the first strike lands a moment after entering, then on the rhythm
+      if (Math.floor((op.stormTime + STRIKE_EVERY * 0.6) / STRIKE_EVERY) > Math.floor((op.stormTime - dt + STRIKE_EVERY * 0.6) / STRIKE_EVERY)) {
+        const bite = STRIKE_DAMAGE * (0.5 + cap.weatherExposure);
+        op.damage = Math.min(1, op.damage + bite);
+        hits.push({ type: 'strike', damage: bite });
+      }
+      if (op.damage >= 1) {
+        op.stage = 'debrief';
+        op.outcome = 'destroyed';
+        hits.push({ type: 'destroyed' });
+        return { events, frontArrived: false, hits };
+      }
+    }
     if (op.stage === 'outbound' && legComplete(op.outbound, op.routes.outbound)) op.stage = 'recon';
   }
   let front = false;
@@ -83,7 +124,7 @@ export function tickOperation(op: OperationState, def: MissionDef, a: AircraftFi
       front = true;
     }
   }
-  return { events, frontArrived: front };
+  return { events, frontArrived: front, hits };
 }
 
 /**
@@ -120,7 +161,7 @@ export function landAtBase(op: OperationState, def: MissionDef): LegEvent[] {
   return ev;
 }
 
-export function endOperation(op: OperationState, outcome: 'fuel' | 'aborted'): void {
+export function endOperation(op: OperationState, outcome: 'fuel' | 'aborted' | 'destroyed'): void {
   if (!isFlying(op)) return;
   op.stage = 'debrief';
   op.outcome = outcome;
