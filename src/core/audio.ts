@@ -12,6 +12,10 @@ export class AudioSystem {
   private windGain: GainNode | null = null;
   private windFilter: BiquadFilterNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
+  private rainGain: GainNode | null = null;
+  private rumbleGain: GainNode | null = null;
+  private thunderIn = 3;
+  private creakIn = 4;
   muted = false;
   private started = false;
 
@@ -69,6 +73,29 @@ export class AudioSystem {
       this.windGain.gain.value = 0;
       wind.connect(this.windFilter).connect(this.windGain).connect(this.master);
       wind.start();
+
+      // storm bed: hiss of rain on the canopy, a low rumble under it
+      const rain = ctx.createBufferSource();
+      rain.buffer = buf;
+      rain.loop = true;
+      const rainF = ctx.createBiquadFilter();
+      rainF.type = 'highpass';
+      rainF.frequency.value = 2600;
+      this.rainGain = ctx.createGain();
+      this.rainGain.gain.value = 0;
+      rain.connect(rainF).connect(this.rainGain).connect(this.master);
+      rain.start();
+      const rumble = ctx.createBufferSource();
+      rumble.buffer = buf;
+      rumble.loop = true;
+      rumble.playbackRate.value = 0.5;
+      const rumbleF = ctx.createBiquadFilter();
+      rumbleF.type = 'lowpass';
+      rumbleF.frequency.value = 110;
+      this.rumbleGain = ctx.createGain();
+      this.rumbleGain.gain.value = 0;
+      rumble.connect(rumbleF).connect(this.rumbleGain).connect(this.master);
+      rumble.start();
       this.started = true;
     } catch {
       this.ctx = null;
@@ -93,6 +120,100 @@ export class AudioSystem {
     const w = active ? 0.02 + (speed / 95) * 0.14 : 0.015;
     this.windGain.gain.setTargetAtTime(w * (scanning ? 0.5 : 1), t, tc);
     this.windFilter.frequency.setTargetAtTime(350 + speed * 6, t, tc);
+  }
+
+  /**
+   * Weather around the aircraft: storm proximity 0..1 (1 = inside), airframe
+   * damage 0..1. Rain and rumble swell as a cell closes in, thunder rolls
+   * at random (nearer, louder, sooner), and a hurt airframe creaks.
+   */
+  updateWeather(dt: number, storm: number, damage: number): void {
+    if (!this.ctx || !this.rainGain || !this.rumbleGain) return;
+    const t = this.ctx.currentTime;
+    this.rainGain.gain.setTargetAtTime(storm * storm * 0.22, t, 0.4);
+    this.rumbleGain.gain.setTargetAtTime(storm * 0.55, t, 0.6);
+    if (storm > 0.15) {
+      this.thunderIn -= dt;
+      if (this.thunderIn <= 0) {
+        this.thunder(storm);
+        this.thunderIn = 2.5 + Math.random() * 6 * (1.4 - storm);
+      }
+    }
+    if (damage > 0.35) {
+      this.creakIn -= dt;
+      if (this.creakIn <= 0) {
+        this.creak(damage);
+        this.creakIn = 2 + Math.random() * 5 * (1.2 - damage);
+      }
+    }
+  }
+
+  /** A roll of thunder; `near` 0..1 brings it closer: louder, sharper, a crack on top. */
+  thunder(near = 0.5): void {
+    if (!this.ctx || !this.master || !this.noiseBuffer) return;
+    const t = this.ctx.currentTime;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.noiseBuffer;
+    src.playbackRate.value = 0.6;
+    const f = this.ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.setValueAtTime(300 + near * 900, t);
+    f.frequency.exponentialRampToValueAtTime(55, t + 3);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.25 + near * 0.55, t + 0.08 + (1 - near) * 0.4);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 3.2);
+    src.connect(f).connect(g).connect(this.master);
+    src.start(t);
+    src.stop(t + 3.3);
+    if (near > 0.7) this.noise(0.18, 0.35 * near, 3200, 'highpass');
+  }
+
+  /** Lightning into the airframe: a crack, a metallic bang, and the thunder right on top. */
+  strike(): void {
+    this.noise(0.25, 0.7, 4000, 'highpass');
+    this.tone(140, 0.5, 0.3, 'square');
+    this.tone(97, 0.8, 0.25, 'sawtooth', 0.02);
+    this.thunder(1);
+  }
+
+  /** The airframe groaning under load. */
+  creak(damage: number): void {
+    if (!this.ctx || !this.master) return;
+    const t = this.ctx.currentTime;
+    const o = this.ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.setValueAtTime(70 + Math.random() * 40, t);
+    o.frequency.linearRampToValueAtTime(45 + Math.random() * 20, t + 0.7);
+    const f = this.ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 380;
+    f.Q.value = 6;
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.linearRampToValueAtTime(0.08 + damage * 0.12, t + 0.15);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+    o.connect(f).connect(g).connect(this.master);
+    o.start(t);
+    o.stop(t + 0.85);
+  }
+
+  /** Through a ring: a rush of air and a bright two-note chime. */
+  ring(): void {
+    this.noise(0.35, 0.3, 2600, 'bandpass', 500);
+    this.tone(988, 0.12, 0.13, 'triangle', 0.04);
+    this.tone(1480, 0.3, 0.12, 'triangle', 0.13);
+  }
+
+  /** Wide of a ring: a flat buzz. */
+  ringMissed(): void {
+    this.tone(196, 0.28, 0.14, 'sawtooth');
+    this.tone(185, 0.28, 0.1, 'square', 0.02);
+  }
+
+  /** RADAR CONTACT heartbeat; urgency 0..1 sharpens it. */
+  pulse(urgency: number): void {
+    this.tone(880 + urgency * 440, 0.06, 0.06 + urgency * 0.08, 'square');
   }
 
   private tone(freq: number, dur: number, gain = 0.2, type: OscillatorType = 'sine', when = 0): void {
