@@ -843,3 +843,6 @@ img.thermal { filter: grayscale(1) invert(1) brightness(0.55) contrast(2.2); }
   .ops-panel .btn.next { min-height: 42px; font-size: 12px; }
   .ops-cue { padding: 6px; }
 }
+/* the next action never scrolls away */
+.ops-panel .btn.next, .ops-cue { position: sticky; top: 0; z-index: 2; }
+.ops-cue { background: #0b1510; }
