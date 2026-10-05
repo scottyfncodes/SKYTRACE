@@ -48,6 +48,14 @@ describe('the aircraft', () => {
     }
   });
 
+  it('every part of every airframe is drawable geometry', () => {
+    for (const s of styles)
+      new AircraftMesh(s).group.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh) expect(m.geometry?.attributes.position.count, s).toBeGreaterThan(0);
+      });
+  });
+
   it('switching airframe rebuilds the model', () => {
     const m = new AircraftMesh('kestrel');
     const k = m.stats().triangles;
@@ -112,5 +120,13 @@ describe('the countryside', () => {
     expect(total).toBeLessThan(12000);
     // instanced: a handful of draw calls, not thousands
     expect(c.group.children.length).toBeLessThan(8);
+    // every part is real geometry the renderer can draw
+    c.group.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh || (o as THREE.LineSegments).isLineSegments) {
+        expect(m.geometry, o.type).toBeTruthy();
+        expect(m.geometry.attributes.position.count, o.type).toBeGreaterThan(0);
+      }
+    });
   });
 });

@@ -108,7 +108,7 @@ export function buildCountryside(hf: HeightField): Countryside {
       // walk the two edges of this cell that start at its corner
       for (const edge of [0, 1]) {
         const len = edge === 0 ? CELL_W : CELL_D;
-        for (let s = 0; s < len; s += 7) {
+        for (let s = 0; s < len; s += 4.5) {
           const a = edge === 0 ? i * CELL_W + s : i * CELL_W;
           const b = edge === 0 ? j * CELL_D : j * CELL_D + s;
           const x = a * COS - b * SIN;
@@ -140,7 +140,9 @@ export function buildCountryside(hf: HeightField): Countryside {
     const s = 6 + r() * 7;
     broadleaf.push({ x, y: h - 0.2, z, s: [s * 0.8, s, s * 0.8], r: r() * 6, c: col(r() < 0.15 ? 0x8a8a34 : 0x4f7a30, 0.35) });
   }
-  const leafy = mergeGeometries([colored(new THREE.CylinderGeometry(0.06, 0.09, 0.45, 5).translate(0, 0.22, 0), 0.36, 0.27, 0.18), colored(new THREE.IcosahedronGeometry(0.42, 0).translate(0, 0.62, 0), 1, 1, 1)], false)!;
+  // (merging needs both parts non-indexed: the icosahedron already is)
+  const leafy = mergeGeometries([colored(new THREE.CylinderGeometry(0.06, 0.09, 0.45, 5).translate(0, 0.22, 0).toNonIndexed(), 0.36, 0.27, 0.18), colored(new THREE.IcosahedronGeometry(0.42, 0).translate(0, 0.62, 0), 1, 1, 1)], false);
+  if (!leafy) throw new Error('broadleaf geometry failed to merge');
   const lambert = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
   g.add(instanced(new THREE.IcosahedronGeometry(0.5, 0).translate(0, 0.4, 0), new THREE.MeshLambertMaterial({ flatShading: true }), hedges));
   g.add(instanced(leafy, lambert, broadleaf));
@@ -177,7 +179,8 @@ export function buildCountryside(hf: HeightField): Countryside {
       carry = s + 48 - len;
     }
   }
-  const pole = mergeGeometries([new THREE.CylinderGeometry(0.16, 0.22, 10, 6).translate(0, 5, 0), new THREE.BoxGeometry(2.4, 0.18, 0.18).translate(0, 9.4, 0)], false)!;
+  const pole = mergeGeometries([new THREE.CylinderGeometry(0.16, 0.22, 10, 6).translate(0, 5, 0), new THREE.BoxGeometry(2.4, 0.18, 0.18).translate(0, 9.4, 0)], false);
+  if (!pole) throw new Error('pole geometry failed to merge');
   g.add(instanced(pole, new THREE.MeshLambertMaterial(), poles));
   const wire: number[] = [];
   for (let k = 0; k < tops.length - 1; k++) {
