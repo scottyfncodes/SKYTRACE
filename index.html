@@ -126,7 +126,7 @@
           <button id="btn-ops-pause" class="icon" aria-label="Pause">II</button>
           <button id="btn-take" class="btn take">TAKE CONTROLS</button>
         </header>
-        <div class="ops-objective"><i class="reticle"></i><div><small id="ops-obj-kicker" class="k"></small><b id="ops-obj-title"></b><small id="ops-obj-detail"></small><div class="obj-progress"><i id="ops-obj-progress"></i></div></div></div>
+        <div class="ops-objective"><i class="reticle"></i><div><small id="ops-obj-kicker" class="k"></small><b id="ops-obj-title"></b><small id="ops-obj-detail"></small><div class="obj-progress"><i id="ops-obj-progress"></i></div><ol id="ops-steps" class="ops-steps"></ol></div></div>
         <div class="ops-body">
           <div id="ops-display" class="ops-display">
             <canvas id="ops-radar"></canvas>
@@ -135,6 +135,9 @@
             <div id="ops-photo" class="photo-pop hidden"><img alt="" /><b></b></div>
           </div>
           <aside class="ops-panel">
+            <button id="btn-ops-next" class="btn next hidden"></button>
+            <div id="ops-cue" class="ops-cue"></div>
+            <div id="ops-match" class="ops-match hidden"></div>
             <div id="ops-tools" class="ops-tools" role="tablist" aria-label="Sensor"></div>
             <div id="ops-tool-note" class="ops-tool-note"></div>
             <div id="ops-returns" class="ops-returns"></div>

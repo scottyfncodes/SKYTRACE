@@ -2,6 +2,7 @@ import type { Orbit } from '../flight/autopilot';
 import type { OperationsArea } from '../mission/missionDef';
 import type { ReturnId } from '../mission/mission01';
 import { RIVER, ROADS, type Pt } from '../world/worldData';
+import type { ClueCheck, Guide, GuideAction, Verdict } from '../mission/reconGuide';
 
 export type OpsTool = 'radar' | 'optical' | 'thermal' | 'sigint';
 /** Tools that show the camera feed. */
@@ -43,6 +44,10 @@ export interface OpsFrame {
   bearings: { bearing: number; strength: number }[];
   hint: string;
   displayHint: string;
+  /** The recon loop: step strip and the one next action. */
+  guide: Guide;
+  /** The brief's clues against what is known about the selected return. */
+  clues: { id: ReturnId; checks: { clue: string; check: ClueCheck }[]; verdict: Verdict } | null;
 }
 
 export interface OpsPhoto {
@@ -54,6 +59,7 @@ export interface OpsPhoto {
 
 export interface OpsHandlers {
   onTool(t: OpsTool): void;
+  onNext(a: GuideAction): void;
   onSelect(id: ReturnId): void;
   onMark(): void;
   onPhoto(): void;
@@ -91,6 +97,8 @@ export class OpsConsole {
   private toolsKey = '';
   private popTimer = 0;
   private active = false;
+  private stepsHtml = '';
+  private matchHtml = '';
 
   constructor(root: HTMLElement, private h: OpsHandlers) {
     this.root = root;
@@ -99,7 +107,7 @@ export class OpsConsole {
       if (!e) throw new Error(`missing #${id}`);
       return e;
     };
-    for (const id of ['ops-orbit', 'ops-fuel', 'ops-time', 'ops-front', 'ops-control', 'ops-obj-kicker', 'ops-obj-title', 'ops-obj-detail', 'ops-obj-progress', 'ops-cam', 'ops-cam-label', 'ops-cam-acq', 'ops-display-hint', 'ops-tools', 'ops-tool-note', 'ops-returns', 'btn-ops-mark', 'btn-ops-photo', 'btn-ops-extract', 'ops-hint', 'btn-take', 'btn-ops-pause']) this.el[id] = q(id);
+    for (const id of ['ops-orbit', 'ops-fuel', 'ops-time', 'ops-front', 'ops-control', 'ops-obj-kicker', 'ops-obj-title', 'ops-obj-detail', 'ops-obj-progress', 'ops-cam', 'ops-cam-label', 'ops-cam-acq', 'ops-display-hint', 'ops-tools', 'ops-tool-note', 'ops-returns', 'btn-ops-mark', 'btn-ops-photo', 'btn-ops-extract', 'ops-hint', 'btn-take', 'btn-ops-pause', 'ops-steps', 'btn-ops-next', 'ops-cue', 'ops-match']) this.el[id] = q(id);
     this.display = q('ops-display');
     this.radar = q('ops-radar') as HTMLCanvasElement;
     this.ctx = this.radar.getContext('2d')!;
@@ -107,6 +115,10 @@ export class OpsConsole {
     this.el['ops-tools'].addEventListener('click', (e) => {
       const b = (e.target as HTMLElement).closest<HTMLElement>('[data-tool]');
       if (b) h.onTool(b.dataset.tool as OpsTool);
+    });
+    this.el['btn-ops-next'].addEventListener('click', () => {
+      const a = this.last?.guide.next?.action;
+      if (a) h.onNext(a);
     });
     this.el['btn-ops-mark'].addEventListener('click', () => h.onMark());
     this.el['btn-ops-photo'].addEventListener('click', () => h.onPhoto());
@@ -123,6 +135,7 @@ export class OpsConsole {
       const k = e.key.toLowerCase();
       const n = Number(k);
       if (n >= 1 && n <= (this.last?.tools.length ?? 0)) h.onTool(this.last!.tools[n - 1]);
+      else if (k === 'enter' && this.last?.guide.next?.action) h.onNext(this.last.guide.next.action);
       else if (k === 'p') h.onPhoto();
       else if (k === 'x' && this.last?.canExtract) h.onExtract();
       else if (['a', 'b', 'c', 'd', 'e'].includes(k) && this.last?.returns.some((r) => r.id === k.toUpperCase())) h.onSelect(k.toUpperCase() as ReturnId);
@@ -242,6 +255,29 @@ export class OpsConsole {
     this.el['ops-cam-acq'].style.width = `${Math.round((f.camera.acquire ?? 0) * 100)}%`;
     this.el['ops-display-hint'].textContent = f.displayHint;
     this.el['ops-hint'].textContent = f.hint;
+    // ---- the recon loop: steps, the next action, the clue card
+    const steps = f.guide.steps ? f.guide.steps.map((st, i) => `<li class="${st.done ? 'done' : ''}${st.on ? ' on' : ''}"><i>${st.done ? '✓' : i + 1}</i>${st.label}</li>`).join('') : '';
+    if (steps !== this.stepsHtml) {
+      this.stepsHtml = steps;
+      this.el['ops-steps'].innerHTML = steps;
+    }
+    const nx = f.guide.next;
+    const btn = this.el['btn-ops-next'];
+    btn.classList.toggle('hidden', !nx?.action);
+    this.el['ops-cue'].textContent = nx && !nx.action ? nx.label : '';
+    if (nx?.action) {
+      if (btn.textContent !== nx.label) btn.textContent = nx.label;
+      btn.dataset.action = nx.action;
+    }
+    const mark = f.clues ? `<div class="mh"><b>${f.clues.id}</b><span>${f.clues.verdict === 'match' ? 'FITS THE BRIEF' : f.clues.verdict === 'mismatch' ? 'DOES NOT FIT' : 'CHECK WITH A CAMERA'}</span></div><div class="mc">${f.clues.checks.map((c) => `<i class="${c.check}">${c.check === 'yes' ? '✓' : c.check === 'no' ? '✕' : '?'} ${c.clue}</i>`).join('')}</div>` : '';
+    if (mark !== this.matchHtml) {
+      this.matchHtml = mark;
+      this.el['ops-match'].innerHTML = mark;
+      this.el['ops-match'].className = `ops-match ${f.clues ? f.clues.verdict : 'hidden'}`;
+    }
+    // the guide's button replaces its twin below
+    this.el['btn-ops-mark'].classList.toggle('dup', nx?.action === 'mark');
+    this.el['btn-ops-photo'].classList.toggle('dup', nx?.action === 'photo');
     this.el['btn-ops-mark'].classList.toggle('disabled', !f.canMark);
     this.el['btn-ops-mark'].toggleAttribute('disabled', !f.canMark);
     this.el['btn-ops-photo'].classList.toggle('hidden', !cam);
@@ -378,6 +414,7 @@ export class OpsConsole {
     ctx.fill();
     ctx.restore();
     // returns
+    const pick = f.guide.steps?.find((st) => st.on)?.id === 'pick';
     ctx.font = 'bold 12px ui-monospace, Menlo, monospace';
     for (const r of f.returns) {
       const [x, y] = P(r.x, r.z);
@@ -386,6 +423,16 @@ export class OpsConsole {
       ctx.beginPath();
       ctx.arc(x, y, 5, 0, Math.PI * 2);
       ctx.fill();
+      if (pick && r.verdict === 'none' && r.id !== f.selected) {
+        // "tap me": a ring breathing out of each return still to check
+        const k = (performance.now() / 1100) % 1;
+        ctx.strokeStyle = `rgba(124,255,154,${0.8 * (1 - k)})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(x, y, 7 + k * 16, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.lineWidth = 1;
+      }
       if (r.id === f.selected) {
         ctx.strokeStyle = '#f2a93b';
         ctx.lineWidth = 2;
