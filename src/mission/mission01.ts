@@ -61,7 +61,8 @@ const MINE_ROAD: readonly Pt[] = [
   [720, -230],
 ];
 
-export const RETURNS: readonly ReturnDef[] = [
+/** The fixed cast (the original Mission 01): the title screen, the tests and `?roll=fixed`. */
+export const DEFAULT_RETURNS: readonly ReturnDef[] = [
   {
     id: 'A',
     size: 'large',
@@ -154,6 +155,70 @@ export const RETURNS: readonly ReturnDef[] = [
     truth: 'A river barge, engines running, taking the truck\'s cargo off the landing.',
   },
 ];
+
+/** The returns this operation is played with (re-rolled at every take-off). */
+export let RETURNS: readonly ReturnDef[] = DEFAULT_RETURNS;
+export function setReturns(defs: readonly ReturnDef[]): void {
+  RETURNS = defs;
+}
+
+type Decoy = Omit<ReturnDef, 'id'>;
+const by = (id: ReturnId) => DEFAULT_RETURNS.find((r) => r.id === id)!;
+const strip = ({ id: _id, ...rest }: ReturnDef): Decoy => rest;
+
+/**
+ * The look-alikes. Each fits the brief on every point but one, and each is
+ * caught out by a different sensor: radar (parked, outside the sector), a
+ * camera (three small vehicles), or only the OPTICAL camera (off the road).
+ */
+export const DECOYS: Record<'parked' | 'scouts' | 'west' | 'field', Decoy> = {
+  parked: strip(by('A')),
+  scouts: strip(by('B')),
+  west: strip(by('D')),
+  field: {
+    size: 'large',
+    count: 1,
+    moving: true,
+    onRoad: false,
+    route: [
+      [900, 280],
+      [950, 120],
+      [930, -60],
+      [880, -200],
+    ],
+    speed: 8,
+    start: 0,
+    signature: 0.7,
+    concealment: 0.1,
+    isTarget: false,
+    engine: 'running',
+    radio: false,
+    truth: 'A tractor-trailer cutting across the fields east of the mine road: off road the whole time.',
+  },
+};
+
+const routeLength = (pts: readonly Pt[]) => pts.slice(1).reduce((t, p, i) => t + Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]), 0);
+
+/**
+ * A fresh puzzle for each operation: three of the four look-alikes, the
+ * letters A–D shuffled, everything starting at a different point on its
+ * road. The truck is always on the mine road (the recon that follows needs
+ * it there); the barge is always E.
+ */
+export function rollReturns(rand: () => number): ReturnDef[] {
+  const pool = Object.values(DECOYS);
+  // drop one look-alike at random
+  pool.splice(Math.floor(rand() * pool.length), 1);
+  const cast: Decoy[] = [strip(by('C')), ...pool];
+  const letters: ReturnId[] = ['A', 'B', 'C', 'D'];
+  for (let i = letters.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [letters[i], letters[j]] = [letters[j], letters[i]];
+  }
+  const rolled = cast.map((d, i) => ({ ...d, id: letters[i], start: d.route.length > 1 ? rand() * routeLength(d.route) : 0 }) as ReturnDef);
+  rolled.push(by('E'));
+  return rolled.sort((a, b) => a.id.localeCompare(b.id));
+}
 
 /** Where the truck goes once it has been found: back down the mine road, along the main road to the landing. */
 export const DESTINATION = { name: 'Sallow river landing', short: 'RIVER LANDING', x: 520, z: 495 } as const;

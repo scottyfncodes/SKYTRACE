@@ -13,7 +13,7 @@
  * count, road; best photos; haze hurts), thermal (size, count, engine heat;
  * sees through haze; fair photos), SIGINT (radio on or off).
  */
-import { DESTINATION, DESTINATION_TAIL, MINE_ROAD_PTS, MISSION_01, RETURNS, SECTOR_7, type ReturnDef, type ReturnId, type Sector } from './mission01';
+import { DESTINATION, DESTINATION_TAIL, MINE_ROAD_PTS, MISSION_01, RETURNS, SECTOR_7, setReturns, type ReturnDef, type ReturnId, type Sector } from './mission01';
 import type { Pt } from '../world/worldData';
 import { DETECT_THRESHOLD } from '../sensors/radar';
 
@@ -92,9 +92,18 @@ export interface StationContext {
   truckStopped?: boolean;
 }
 
-export const RETURN_BY_ID: Readonly<Record<ReturnId, ReturnDef>> = Object.fromEntries(RETURNS.map((r) => [r.id, r])) as Record<ReturnId, ReturnDef>;
-export const TARGET: ReturnDef = RETURNS.find((r) => r.isTarget)!;
-export const BARGE: ReturnDef = RETURN_BY_ID.E;
+const index = (defs: readonly ReturnDef[]) => Object.fromEntries(defs.map((r) => [r.id, r])) as Record<ReturnId, ReturnDef>;
+export let RETURN_BY_ID: Readonly<Record<ReturnId, ReturnDef>> = index(RETURNS);
+export let TARGET: ReturnDef = RETURNS.find((r) => r.isTarget)!;
+export let BARGE: ReturnDef = RETURN_BY_ID.E;
+
+/** Play this operation with these returns (a fresh roll, or the fixed cast). */
+export function useReturns(defs: readonly ReturnDef[]): void {
+  setReturns(defs);
+  RETURN_BY_ID = index(defs);
+  TARGET = defs.find((r) => r.isTarget)!;
+  BARGE = RETURN_BY_ID.E;
+}
 
 export function newMission(): MissionState {
   const returns = {} as Record<ReturnId, ReturnState>;

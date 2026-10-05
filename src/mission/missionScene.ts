@@ -5,7 +5,7 @@ import { TruckMesh } from '../world/truck';
 import { WATER_LEVEL } from '../world/worldData';
 import { SmokeTrail, StormCell } from '../world/weatherFx';
 import type { GateStatus, HazardDef, Ring, Route } from '../operation/gates';
-import { RETURNS, type ReturnId, type Sector } from './mission01';
+import { RETURNS, type ReturnDef, type ReturnId, type Sector } from './mission01';
 import type { MissionState } from './mission';
 import type { RouteMover } from './vehicles';
 
@@ -177,7 +177,30 @@ export class MissionScene {
 
   constructor(sector: Sector, private hf: HeightField) {
     this.group.add(sectorCurtain(sector, hf));
-    for (const r of RETURNS) {
+    this.setCast(RETURNS);
+    this.destinationMarker = new THREE.Mesh(new THREE.RingGeometry(26, 30, 40), new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }));
+    this.destinationMarker.rotation.x = -Math.PI / 2;
+    this.destinationMarker.visible = false;
+    this.group.add(this.destinationMarker);
+    // weather + route markers (shown per leg)
+    this.deck = new THREE.Mesh(new THREE.PlaneGeometry(3200, 3200), new THREE.MeshBasicMaterial({ color: 0x9aa0a8, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
+    this.deck.rotation.x = -Math.PI / 2;
+    this.deck.visible = false;
+    this.group.add(this.deck);
+    this.waypoint = new THREE.Mesh(new THREE.CylinderGeometry(6, 10, 520, 10, 1, true), new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: 0.32, depthWrite: false, side: THREE.DoubleSide }));
+    this.waypoint.visible = false;
+    this.group.add(this.waypoint);
+    this.group.add(this.smoke.group);
+    this.group.visible = false;
+  }
+
+  /** Build the vehicles (and their marker pins) for this operation's cast. */
+  setCast(cast: readonly ReturnDef[]): void {
+    for (const v of this.vehicles.values()) this.group.remove(v.group);
+    for (const p of this.pins.values()) this.group.remove(p);
+    this.vehicles.clear();
+    this.pins.clear();
+    for (const r of cast) {
       const m: Pose = r.kind === 'vessel' ? new BargeMesh() : r.size === 'small' ? new ScoutMesh() : new TruckMesh();
       this.vehicles.set(r.id, m);
       this.group.add(m.group);
@@ -194,20 +217,6 @@ export class MissionScene {
       this.pins.set(r.id, pin);
       this.group.add(pin);
     }
-    this.destinationMarker = new THREE.Mesh(new THREE.RingGeometry(26, 30, 40), new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }));
-    this.destinationMarker.rotation.x = -Math.PI / 2;
-    this.destinationMarker.visible = false;
-    this.group.add(this.destinationMarker);
-    // weather + route markers (shown per leg)
-    this.deck = new THREE.Mesh(new THREE.PlaneGeometry(3200, 3200), new THREE.MeshBasicMaterial({ color: 0x9aa0a8, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }));
-    this.deck.rotation.x = -Math.PI / 2;
-    this.deck.visible = false;
-    this.group.add(this.deck);
-    this.waypoint = new THREE.Mesh(new THREE.CylinderGeometry(6, 10, 520, 10, 1, true), new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: 0.32, depthWrite: false, side: THREE.DoubleSide }));
-    this.waypoint.visible = false;
-    this.group.add(this.waypoint);
-    this.group.add(this.smoke.group);
-    this.group.visible = false;
   }
 
   /** Show exactly these hazards (storm cells, cloud deck). */

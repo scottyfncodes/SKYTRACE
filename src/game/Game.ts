@@ -33,7 +33,7 @@ import { buildProps, buildTrees, updateProps, type WorldProps } from '../world/p
 import { createScene, type SceneBundle } from '../world/scene';
 import { TruckMesh, TruckSim } from '../world/truck';
 import { BASE, RUNWAY, gridRef } from '../world/worldData';
-import { DESTINATION, MISSION_01, RETURNS, TARGET_SPEED_TO_DESTINATION, type ReturnId } from '../mission/mission01';
+import { DEFAULT_RETURNS, DESTINATION, MISSION_01, RETURNS, rollReturns, TARGET_SPEED_TO_DESTINATION, type ReturnId } from '../mission/mission01';
 import {
   BARGE,
   CAMERA_RANGE,
@@ -58,6 +58,7 @@ import {
   SIGINT_RANGE,
   TARGET,
   updateDestination,
+  useReturns,
   type MissionEvent,
   type MissionState,
   type StationContext,
@@ -66,7 +67,7 @@ import { BINGO_FUEL, buildHandover, engageOperator, forcedHandback, handBack, ne
 import { inArea } from '../mission/missionDef';
 import { orbitInput } from '../flight/autopilot';
 import { isCameraTool, OpsConsole, type OpsFrame, type OpsPhoto, type OpsReturn, type OpsTool } from '../ui/opsConsole';
-import { checkClues, clueVerdict, reconGuide, type GuideAction, type Verdict } from '../mission/reconGuide';
+import { blindClues, checkClues, clueVerdict, nextCheck, reconGuide, type GuideAction, type Sensor, type Verdict } from '../mission/reconGuide';
 import { Preflight } from '../ui/preflight';
 import { MissionScene } from '../mission/missionScene';
 import { RouteMover } from '../mission/vehicles';
@@ -137,6 +138,8 @@ export class Game {
   private handbackTimer = -1;
   /** Seconds until Mission Control opens itself after arriving on station (0: off). */
   private autoOps = 0;
+  /** The clue the guide wants settled next, and the sensor that can. */
+  private guideCheck: { clue: string; sensor: Sensor } | null = null;
   /** RETURN TO BASE is waiting for the hand-back card to clear. */
   private returnCue = false;
   /** Camera shake (0..1, decays) and a roll jolt from the last lightning strike. */
@@ -329,6 +332,7 @@ export class Game {
         if (leg) leg.state.prev = null;
       },
       getRoute: () => activeLeg(this.op)?.def ?? null,
+      getCast: () => RETURNS.map((r) => ({ id: r.id, truth: r.truth, target: r.isTarget, start: r.start })),
       getState: () => this.state,
       getAircraft: () => this.a,
       getMode: () => this.mode,
@@ -776,6 +780,9 @@ export class Game {
     this.missionScene.smoke.clear();
     this.setFx(0, 0);
     launch(this.op);
+    // a fresh puzzle every operation: which letter is the truck, which look-alikes are out there
+    useReturns(new URLSearchParams(location.search).get('roll') === 'fixed' ? DEFAULT_RETURNS : rollReturns(Math.random));
+    this.missionScene.setCast(RETURNS);
     this.mission = newMission();
     this.crew = newCrew();
     this.report = null;
@@ -1047,6 +1054,8 @@ export class Game {
     else if (a === 'look') {
       if (!this.opsSelected && (m.phase === 'photograph' || m.phase === 'landing')) this.opsSelected = m.phase === 'landing' ? BARGE.id : TARGET.id;
       this.lookAt();
+    } else if (a === 'check') {
+      if (this.guideCheck) this.setOpsTool(this.guideCheck.sensor);
     } else if (a === 'mark') this.opsMark();
     else if (a === 'photo') this.opsPhoto();
     else if (a === 'next') {
@@ -1192,7 +1201,7 @@ export class Game {
       .join('');
     // the evidence the crew brought home
     this.el['db-photos'].innerHTML = this.shots.length
-      ? this.shots.map((p) => `<figure><img src="${p.url}" alt="" class="${p.sensor}" /><figcaption>${p.id === 'C' ? 'THE TRUCK' : p.id === 'E' ? 'THE BARGE' : `RETURN ${p.id}`} · <b class="g-${p.grade}">${p.grade}</b></figcaption></figure>`).join('')
+      ? this.shots.map((p) => `<figure><img src="${p.url}" alt="" class="${p.sensor}" /><figcaption>${p.id === TARGET.id ? 'THE TRUCK' : p.id === BARGE.id ? 'THE BARGE' : `RETURN ${p.id}`} · <b class="g-${p.grade}">${p.grade}</b></figcaption></figure>`).join('')
       : '';
     this.el['db-rewards'].innerHTML =
       `<div class="rw"><b data-count="${r.credits}">+0</b><small>CREDITS</small></div><div class="rw"><b data-count="${r.xp}">+0</b><small>XP</small></div>` +
@@ -1418,15 +1427,18 @@ export class Game {
     const displayHint = !cam ? (this.opsTool === 'radar' && !anyDetected ? 'TAP TO MOVE' : this.opsTool === 'sigint' ? `${bearings.length} RADIO${bearings.length === 1 ? '' : 'S'} HEARD` : '') : sel ? '' : 'PICK A RETURN';
     let clues: OpsFrame['clues'] = null;
     let verdict: Verdict = 'unchecked';
+    this.guideCheck = null;
     if (sel && selSt && m.phase === 'locate') {
       const r = returns.find((x) => x.id === sel);
       if (r) {
+        const fitted = this.opsTools();
         const checks = checkClues(MISSION_01.clues, r.traits);
-        verdict = clueVerdict(checks, selSt.resolved);
-        clues = { id: sel, checks, verdict };
+        verdict = clueVerdict(checks, selSt.resolved, fitted);
+        this.guideCheck = verdict === 'check' ? nextCheck(checks, fitted) : null;
+        clues = { id: sel, checks, verdict, blind: blindClues(checks, fitted) };
       }
     }
-    const guide = reconGuide({ phase: m.phase, anyDetected, selected: sel, camera: cam, resolved: !!selSt?.resolved, marked: selSt?.verdict ?? 'none', verdict });
+    const guide = reconGuide({ phase: m.phase, anyDetected, selected: sel, camera: cam, resolved: !!selSt?.resolved, marked: selSt?.verdict ?? 'none', verdict, check: this.guideCheck });
     if (m.phase === 'locate' && !(this.visibility < 0.75 && this.opsTool === 'optical' && hasThermal)) hint = '';
     this.ops.update({
       guide,

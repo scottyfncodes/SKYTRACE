@@ -47,7 +47,7 @@ export interface OpsFrame {
   /** The recon loop: step strip and the one next action. */
   guide: Guide;
   /** The brief's clues against what is known about the selected return. */
-  clues: { id: ReturnId; checks: { clue: string; check: ClueCheck }[]; verdict: Verdict } | null;
+  clues: { id: ReturnId; checks: { clue: string; check: ClueCheck }[]; verdict: Verdict; blind: string[] } | null;
 }
 
 export interface OpsPhoto {
@@ -269,7 +269,7 @@ export class OpsConsole {
       if (btn.textContent !== nx.label) btn.textContent = nx.label;
       btn.dataset.action = nx.action;
     }
-    const mark = f.clues ? `<div class="mh"><b>${f.clues.id}</b><span>${f.clues.verdict === 'match' ? 'FITS THE BRIEF' : f.clues.verdict === 'mismatch' ? 'DOES NOT FIT' : 'CHECK WITH A CAMERA'}</span></div><div class="mc">${f.clues.checks.map((c) => `<i class="${c.check}">${c.check === 'yes' ? '✓' : c.check === 'no' ? '✕' : '?'} ${c.clue}</i>`).join('')}</div>` : '';
+    const mark = f.clues ? `<div class="mh"><b>${f.clues.id}</b><span>${f.clues.verdict === 'match' ? 'FITS THE BRIEF' : f.clues.verdict === 'mismatch' ? 'DOES NOT FIT' : f.clues.verdict === 'check' ? 'NOT SURE YET' : 'CHECK WITH A CAMERA'}</span></div><div class="mc">${f.clues.checks.map((c) => `<i class="${c.check}${f.clues!.blind.includes(c.clue) ? ' blind' : ''}">${c.check === 'yes' ? '✓' : c.check === 'no' ? '✕' : '?'} ${c.clue}</i>`).join('')}</div>${f.clues.blind.length ? `<p class="mb">DASHED ? = CAN'T CHECK WITH THIS KIT</p>` : ''}` : '';
     if (mark !== this.matchHtml) {
       this.matchHtml = mark;
       this.el['ops-match'].innerHTML = mark;

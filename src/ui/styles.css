@@ -846,3 +846,8 @@ img.thermal { filter: grayscale(1) invert(1) brightness(0.55) contrast(2.2); }
 /* the next action never scrolls away */
 .ops-panel .btn.next, .ops-cue { position: sticky; top: 0; z-index: 2; }
 .ops-cue { background: #0b1510; }
+.ops-match .mc i.blind { border-style: dashed; color: rgba(232, 243, 234, 0.4); }
+.ops-match .mb { margin: 5px 0 0; font-size: 9px; letter-spacing: 0.12em; color: rgba(232, 243, 234, 0.45); }
+.ops-match.check { border-color: rgba(242, 169, 59, 0.6); }
+.ops-match.check .mh span { color: var(--amber); }
+.pf-check .advice { margin: 4px 0 0; font-size: 10px; letter-spacing: 0.14em; color: var(--amber); }
