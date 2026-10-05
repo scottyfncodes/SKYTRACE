@@ -65,7 +65,8 @@ import {
 import { BINGO_FUEL, buildHandover, engageOperator, forcedHandback, handBack, newCrew, operatorAvailability, retaskOrbit, tickCrew, type CrewState, type HandbackReason } from '../mission/crew';
 import { inArea } from '../mission/missionDef';
 import { orbitInput } from '../flight/autopilot';
-import { isCameraTool, OpsConsole, type OpsPhoto, type OpsReturn, type OpsTool } from '../ui/opsConsole';
+import { isCameraTool, OpsConsole, type OpsFrame, type OpsPhoto, type OpsReturn, type OpsTool } from '../ui/opsConsole';
+import { checkClues, clueVerdict, reconGuide, type GuideAction, type Verdict } from '../mission/reconGuide';
 import { Preflight } from '../ui/preflight';
 import { MissionScene } from '../mission/missionScene';
 import { RouteMover } from '../mission/vehicles';
@@ -200,6 +201,7 @@ export class Game {
     this.hud = new Hud(root);
     this.ops = new OpsConsole(this.el['ops'], {
       onTool: (t) => this.setOpsTool(t),
+      onNext: (a) => this.opsNext(a),
       onSelect: (id) => this.opsSelect(id),
       onMark: () => this.opsMark(),
       onPhoto: () => this.opsPhoto(),
@@ -1025,6 +1027,40 @@ export class Game {
     this.opsSelected = id;
     this.camSettle = 0;
     this.audio.click();
+    // picking a return is asking to see it: the camera comes up on it
+    const m = this.mission;
+    if (!isCameraTool(this.opsTool) && (m.phase === 'locate' || m.phase === 'photograph' || m.phase === 'landing') && m.returns[id].verdict !== 'wrong') this.lookAt();
+  }
+
+  /** Bring up the best camera for the conditions. */
+  private lookAt(): void {
+    const cams = this.opsTools().filter(isCameraTool);
+    if (!cams.length) return;
+    const haze = this.visibility < 0.75 && cams.includes('thermal');
+    this.setOpsTool(haze ? 'thermal' : cams[0]);
+  }
+
+  /** The guide's one button: whatever the recon loop needs next. */
+  private opsNext(a: GuideAction): void {
+    const m = this.mission;
+    if (a === 'radar') this.setOpsTool('radar');
+    else if (a === 'look') {
+      if (!this.opsSelected && (m.phase === 'photograph' || m.phase === 'landing')) this.opsSelected = m.phase === 'landing' ? BARGE.id : TARGET.id;
+      this.lookAt();
+    } else if (a === 'mark') this.opsMark();
+    else if (a === 'photo') this.opsPhoto();
+    else if (a === 'next') {
+      // the next return still to check, else back to the radar to find more
+      const ids = RETURNS.map((r) => r.id).filter((id) => m.returns[id].detected && !m.returns[id].hidden);
+      const from = this.opsSelected ? ids.indexOf(this.opsSelected) : -1;
+      const order = [...ids.slice(from + 1), ...ids.slice(0, from + 1)];
+      const nxt = order.find((id) => id !== this.opsSelected && m.returns[id].verdict === 'none' && !m.returns[id].resolved);
+      if (nxt) this.opsSelect(nxt);
+      else {
+        this.opsSelected = null;
+        this.setOpsTool('radar');
+      }
+    }
   }
 
   private opsMark(): void {
@@ -1380,7 +1416,21 @@ export class Game {
     if (this.visibility < 0.75 && this.opsTool === 'optical' && hasThermal && m.phase !== 'extract') hint = 'Haze! THERMAL sees through it.';
     void hasSigint;
     const displayHint = !cam ? (this.opsTool === 'radar' && !anyDetected ? 'TAP TO MOVE' : this.opsTool === 'sigint' ? `${bearings.length} RADIO${bearings.length === 1 ? '' : 'S'} HEARD` : '') : sel ? '' : 'PICK A RETURN';
+    let clues: OpsFrame['clues'] = null;
+    let verdict: Verdict = 'unchecked';
+    if (sel && selSt && m.phase === 'locate') {
+      const r = returns.find((x) => x.id === sel);
+      if (r) {
+        const checks = checkClues(MISSION_01.clues, r.traits);
+        verdict = clueVerdict(checks, selSt.resolved);
+        clues = { id: sel, checks, verdict };
+      }
+    }
+    const guide = reconGuide({ phase: m.phase, anyDetected, selected: sel, camera: cam, resolved: !!selSt?.resolved, marked: selSt?.verdict ?? 'none', verdict });
+    if (m.phase === 'locate' && !(this.visibility < 0.75 && this.opsTool === 'optical' && hasThermal)) hint = '';
     this.ops.update({
+      guide,
+      clues,
       tool: this.opsTool,
       tools: this.opsTools(),
       control: this.cap.flightControl.label,

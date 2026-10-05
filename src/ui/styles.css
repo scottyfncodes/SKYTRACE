@@ -809,3 +809,37 @@ img.thermal { filter: grayscale(1) invert(1) brightness(0.55) contrast(2.2); }
 .fx.flash::after { content: ''; position: absolute; inset: 0; background: #eef3ff; animation: strike-flash 0.45s ease-out forwards; }
 @keyframes strike-flash { 0% { opacity: 0.9; } 30% { opacity: 0.25; } 45% { opacity: 0.6; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .fx .rain { animation: none; } }
+
+/* ---- Recon guide: FIND → PICK → LOOK → MATCH → MARK */
+.ops-steps { display: flex; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none; flex-wrap: wrap; }
+.ops-steps:empty { display: none; }
+.ops-steps li { display: flex; align-items: center; gap: 4px; font-size: 9px; letter-spacing: 0.16em; padding: 3px 7px 3px 3px; border-radius: 10px; border: 1px solid rgba(232, 243, 234, 0.18); color: rgba(232, 243, 234, 0.45); }
+.ops-steps li i { display: grid; place-items: center; width: 15px; height: 15px; border-radius: 50%; font-style: normal; font-size: 9px; letter-spacing: 0; background: rgba(232, 243, 234, 0.1); }
+.ops-steps li.done { color: var(--ph); border-color: rgba(124, 255, 154, 0.35); }
+.ops-steps li.done i { background: rgba(124, 255, 154, 0.25); color: var(--ph); }
+.ops-steps li.on { color: #10140f; background: var(--amber); border-color: var(--amber); font-weight: 700; animation: step-on 1.4s ease-in-out infinite; }
+.ops-steps li.on i { background: rgba(0, 0, 0, 0.18); color: #10140f; }
+@keyframes step-on { 50% { box-shadow: 0 0 0 4px rgba(242, 169, 59, 0.25); } }
+.ops-panel .btn.next { min-height: 52px; font-size: 13px; letter-spacing: 0.12em; font-weight: 700; color: #10140f; background: var(--amber); border-color: var(--amber); animation: next-go 1.6s ease-in-out infinite; }
+.ops-panel .btn.next[data-action='next'] { color: #fff; background: rgba(255, 90, 60, 0.18); border-color: var(--warn); animation: none; }
+@keyframes next-go { 50% { box-shadow: 0 0 0 5px rgba(242, 169, 59, 0.28); } }
+.ops-cue { font-size: 11px; letter-spacing: 0.16em; color: var(--amber); text-align: center; padding: 10px 6px; border: 1px dashed rgba(242, 169, 59, 0.5); border-radius: 6px; }
+.ops-cue:empty { display: none; }
+.ops-match { border: 1px solid rgba(232, 243, 234, 0.2); border-radius: 8px; padding: 7px 8px; background: rgba(232, 243, 234, 0.03); }
+.ops-match .mh { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.ops-match .mh b { font-size: 18px; color: var(--amber); }
+.ops-match .mh span { font-size: 10px; letter-spacing: 0.18em; color: rgba(232, 243, 234, 0.7); }
+.ops-match.match { border-color: rgba(124, 255, 154, 0.6); }
+.ops-match.match .mh span { color: var(--ph); }
+.ops-match.mismatch { border-color: rgba(255, 90, 60, 0.6); }
+.ops-match.mismatch .mh span { color: var(--warn); }
+.ops-match .mc { display: flex; flex-wrap: wrap; gap: 4px; }
+.ops-match .mc i { font-style: normal; font-size: 10px; letter-spacing: 0.08em; padding: 3px 6px; border-radius: 4px; border: 1px solid rgba(232, 243, 234, 0.2); color: rgba(232, 243, 234, 0.6); }
+.ops-match .mc i.yes { border-color: rgba(124, 255, 154, 0.55); color: var(--ph); }
+.ops-match .mc i.no { border-color: var(--warn); color: var(--warn); background: rgba(255, 90, 60, 0.1); }
+.ops-panel .btn.dup { display: none; }
+@media (max-height: 460px) and (orientation: landscape) {
+  .ops-steps { margin-top: 3px; }
+  .ops-panel .btn.next { min-height: 42px; font-size: 12px; }
+  .ops-cue { padding: 6px; }
+}
