@@ -65,8 +65,39 @@ export class TruckMesh {
     bed.position.y = 1.2;
     const cab = box(2.2, 2.2, 2.4, 0x3b4a50);
     cab.position.set(3.8, 1.2, 0);
-    const load = box(4.6, 1.5, 2.2, 0x5f6b47);
+    // a canvas tilt over the load: a half-round cover on hoops
+    const load = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.15, 4.8, 10, 1, false, 0, Math.PI), new THREE.MeshLambertMaterial({ color: 0x5f6b47, flatShading: true }));
+    load.rotation.z = Math.PI / 2;
+    load.rotation.y = Math.PI / 2;
     load.position.set(-0.6, 1.5, 0);
+    const sides = box(4.8, 1.0, 2.3, 0x56603f);
+    sides.position.set(-0.6, 2.0, 0);
+    for (const x of [-2.6, -0.6, 1.4]) {
+      const hoop = box(0.12, 0.2, 2.35, 0x3f4632);
+      hoop.position.set(x, 3.0, 0);
+      this.group.add(hoop);
+    }
+    const glass = new THREE.MeshLambertMaterial({ color: 0x23323a, emissive: 0x0b1418 });
+    const screen = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.8, 2.0), glass);
+    screen.position.set(4.92, 1.75, 0);
+    const sideWin = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.7, 2.46), glass);
+    sideWin.position.set(4.1, 1.75, 0);
+    const grille = box(0.1, 0.7, 1.8, 0x22231f);
+    grille.position.set(4.95, 0.75, 0);
+    const bumper = box(0.25, 0.25, 2.6, 0x2b2b27);
+    bumper.position.set(5.0, 0.35, 0);
+    const lamp = new THREE.MeshBasicMaterial({ color: 0xfff1c4 });
+    for (const z of [-0.95, 0.95]) {
+      const l = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.22, 0.32), lamp);
+      l.position.set(5.0, 0.8, z);
+      this.group.add(l);
+    }
+    for (const x of [3, -2.25]) {
+      const guard = box(x > 0 ? 1.4 : 2.6, 0.12, 2.9, 0x2e2f2a);
+      guard.position.set(x, 1.12, 0);
+      this.group.add(guard);
+    }
+    this.group.add(sides, screen, sideWin, grille, bumper);
     for (const [x, z] of [
       [3, 1.2],
       [3, -1.2],

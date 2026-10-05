@@ -77,11 +77,29 @@ class ScoutMesh {
   constructor() {
     for (let i = 0; i < 3; i++) {
       const car = new THREE.Group();
-      const body = box(4, 1.3, 2, 0x56603f);
-      body.position.y = 0.9;
-      const top = box(2, 0.9, 1.8, 0x485236);
+      const body = box(4, 1.1, 2, 0x56603f);
+      body.position.y = 0.95;
+      const top = box(2, 0.85, 1.8, 0x485236);
       top.position.set(-0.4, 1.9, 0);
-      car.add(body, top);
+      const screen = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.7, 1.7), new THREE.MeshLambertMaterial({ color: 0x23323a }));
+      screen.position.set(0.62, 1.9, 0);
+      const spare = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 0.25, 8), new THREE.MeshLambertMaterial({ color: 0x1e1e1c }));
+      spare.rotation.z = Math.PI / 2;
+      spare.position.set(-2.1, 1.2, 0);
+      const aerial = box(0.05, 2.2, 0.05, 0x1e1e1c);
+      aerial.position.set(-1.6, 2.7, 0.8);
+      car.add(body, top, screen, spare, aerial);
+      for (const [x, z] of [
+        [1.3, 1],
+        [1.3, -1],
+        [-1.3, 1],
+        [-1.3, -1],
+      ]) {
+        const w = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.35, 8), new THREE.MeshLambertMaterial({ color: 0x1e1e1c }));
+        w.rotation.x = Math.PI / 2;
+        w.position.set(x, 0.45, z);
+        car.add(w);
+      }
       this.cars.push(car);
       this.group.add(car);
     }
@@ -108,7 +126,28 @@ class BargeMesh {
     deck.position.set(-2, 2.4, 0);
     const cabin = box(4, 3.4, 5, 0x8a8478);
     cabin.position.set(9, 3.2, 0);
-    this.group.add(hull, deck, cabin);
+    const glass = new THREE.MeshLambertMaterial({ color: 0x23323a, emissive: 0x0b1418 });
+    const windows = new THREE.Mesh(new THREE.BoxGeometry(4.1, 0.8, 5.1), glass);
+    windows.position.set(9, 4.1, 0);
+    const funnel = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.55, 2.2, 8), new THREE.MeshLambertMaterial({ color: 0x2b2b27 }));
+    funnel.position.set(10.2, 5.9, 1.2);
+    this.group.add(hull, deck, cabin, windows, funnel);
+    // the cargo coming off the truck: crates and a tarp
+    const crate = [0x7a5a36, 0x6b4e30, 0x857049];
+    for (let i = 0; i < 6; i++) {
+      const c = box(2.2, 1.6, 2.2, crate[i % 3]);
+      c.position.set(-7 + (i % 3) * 2.6, 3.9, i < 3 ? -1.3 : 1.3);
+      this.group.add(c);
+    }
+    const tarp = box(3, 1.2, 4.6, 0x4f5a3c);
+    tarp.position.set(1.8, 3.8, 0);
+    this.group.add(tarp);
+    // rails along the gunwales
+    for (const z of [-3.4, 3.4]) {
+      const rail = box(23, 0.12, 0.12, 0xb8b2a4);
+      rail.position.set(0, 2.6, z);
+      this.group.add(rail);
+    }
   }
   setPose(x: number, z: number, _heading: number, hf: HeightField): void {
     this.group.position.set(x, Math.max(hf.sample(x, z), WATER_LEVEL) + 0.2, z);

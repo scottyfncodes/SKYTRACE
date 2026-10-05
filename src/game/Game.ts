@@ -4,7 +4,7 @@ import { Input } from '../core/input';
 import { clamp } from '../core/math';
 import { loadPrefs, savePrefs, type Prefs, type VerticalMode } from '../core/settings';
 import { FLIGHT, initialAircraft, stepAircraft, type AircraftState } from '../flight/aircraft';
-import { AircraftMesh } from '../flight/aircraftMesh';
+import { AircraftMesh, type AircraftStyle } from '../flight/aircraftMesh';
 import { ChaseCamera } from '../flight/camera';
 import { BRIEFING, CONTACTS, CONTACT_BY_ID } from '../intel/scenario';
 import {
@@ -30,6 +30,7 @@ import { canObserve, canResolve, detectionGain, DETECT_THRESHOLD, radarParams, R
 import { Hud, type HudFrame, type ScopeContact } from '../ui/hud';
 import { IntelMap } from '../ui/intelMap';
 import { buildProps, buildTrees, updateProps, type WorldProps } from '../world/props';
+import { buildCountryside } from '../world/countryside';
 import { createScene, type SceneBundle } from '../world/scene';
 import { TruckMesh, TruckSim } from '../world/truck';
 import { BASE, RUNWAY, gridRef } from '../world/worldData';
@@ -176,6 +177,7 @@ export class Game {
     this.props = buildProps(hf);
     this.bundle.scene.add(this.props.group);
     this.bundle.scene.add(buildTrees(hf));
+    this.bundle.scene.add(buildCountryside(hf).group);
     this.bundle.scene.add(this.truckMesh.group);
     this.bundle.scene.add(this.plane.group);
     this.missionScene = new MissionScene(MISSION_01.operations.area, hf);
@@ -362,6 +364,7 @@ export class Game {
     this.el['debrief'].classList.add('hidden');
     this.el['pause'].classList.add('hidden');
     this.missionScene.group.visible = false;
+    this.plane.setStyle('kestrel');
     this.setFx(0, 0);
     this.leaveMissionStations();
     this.preflight.hide();
@@ -773,6 +776,7 @@ export class Game {
     this.audio.unlock();
     this.play = 'mission';
     this.cap = loadoutCapabilities(this.loadout);
+    this.plane.setStyle(this.loadout.aircraft as AircraftStyle);
     this.op = newOperation(def, this.loadout, (x, z) => this.bundle.heightField.sample(x, z));
     this.autoOps = 0;
     this.returnCue = false;

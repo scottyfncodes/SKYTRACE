@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { clamp, fbm, rng } from '../core/math';
 import { forestAt, getHeightField, type HeightField } from './terrain';
+import { tintFarmland } from './countryside';
 import { ROADS, RUNWAY, WATER_LEVEL, WORLD_HALF, WORLD_SIZE, type Pt } from './worldData';
 
 export const PALETTE = {
@@ -84,7 +85,7 @@ export function createScene(canvas: HTMLCanvasElement): SceneBundle {
 }
 
 function buildTerrain(hf: HeightField): THREE.Mesh {
-  const seg = 192;
+  const seg = 240;
   const geo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, seg, seg);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position as THREE.BufferAttribute;
@@ -97,6 +98,7 @@ function buildTerrain(hf: HeightField): THREE.Mesh {
   const crest = new THREE.Color(0x938b80);
   const sand = new THREE.Color(0xc4b58c);
   const forestFloor = new THREE.Color(0x40602e);
+  const scratch = new THREE.Color();
   const marsh = new THREE.Color(0x5b7a44);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
@@ -114,6 +116,8 @@ function buildTerrain(hf: HeightField): THREE.Mesh {
       c.copy(grassLow).lerp(meadow, clamp(v * 1.4, 0, 1)).lerp(upland, Math.pow(t, 1.3));
       if (h > 150) c.lerp(crest, clamp((h - 150) / 80, 0, 1));
     }
+    // the patchwork of fields on the open lowland
+    if (h >= 7) tintFarmland(x, z, h, slope, c, scratch);
     c.lerp(rock, clamp((slope - 0.12) * 3.2, 0, 1));
     c.lerp(forestFloor, f * 0.8);
     // gentle valley shading for a diorama feel
