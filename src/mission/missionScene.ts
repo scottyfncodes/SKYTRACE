@@ -158,6 +158,8 @@ class BargeMesh {
 const RING_RED = new THREE.Color(0xff5a3c);
 const RING_AMBER = new THREE.Color(AMBER);
 const RING_DIM = new THREE.Color(0xf4f1e8);
+/** Opportunity rings (Mission Control's reward): ice blue, never mistaken for the route. */
+const RING_BONUS = new THREE.Color(0x8fd0ff);
 
 /** One hoop of the route: a bright tube, a soft halo, a faint fill so it reads as a doorway. */
 class RingMesh {
@@ -334,7 +336,8 @@ export class MissionScene {
         if (!m.group.visible) continue;
         m.group.scale.setScalar(st === 'passed' ? 1 + f * 0.7 : 1 - f * 0.3);
         if (st === 'missed') m.group.position.y = m.ring.y - f * 25;
-        m.tube.material.color.copy(st === 'passed' ? RING_AMBER : RING_RED);
+        m.tube.material.color.copy(st === 'passed' ? (m.ring.bonus ? RING_BONUS : RING_AMBER) : RING_RED);
+        if (m.ring.bonus && st === 'missed') m.tube.material.color.copy(RING_DIM);
         m.tube.material.opacity = 1 - f;
         m.halo.material.opacity = 0.5 * (1 - f);
         m.fill.material.opacity = st === 'passed' ? 0.25 * (1 - f) : 0;
@@ -348,7 +351,7 @@ export class MissionScene {
       if (k === 0) {
         const look = activeRingLook(scale, t);
         m.group.scale.setScalar(look.scale);
-        m.tube.material.color.copy(RING_AMBER).lerp(RING_RED, urgency);
+        m.tube.material.color.copy(m.ring.bonus ? RING_BONUS : RING_AMBER).lerp(RING_RED, urgency);
         m.halo.material.color.copy(m.tube.material.color);
         m.fill.material.color.copy(m.tube.material.color);
         m.tube.material.opacity = 1;
@@ -356,8 +359,8 @@ export class MissionScene {
         m.fill.material.opacity = 0.07;
       } else {
         m.group.scale.setScalar(1);
-        m.tube.material.color.copy(RING_DIM);
-        m.halo.material.color.copy(RING_DIM);
+        m.tube.material.color.copy(m.ring.bonus ? RING_BONUS : RING_DIM);
+        m.halo.material.color.copy(m.ring.bonus ? RING_BONUS : RING_DIM);
         m.tube.material.opacity = k === 1 ? 0.55 : 0.28;
         m.halo.material.opacity = 0.06;
         m.fill.material.opacity = 0;

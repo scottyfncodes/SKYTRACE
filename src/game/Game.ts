@@ -34,53 +34,38 @@ import { buildCountryside } from '../world/countryside';
 import { createScene, type SceneBundle } from '../world/scene';
 import { TruckMesh, TruckSim } from '../world/truck';
 import { BASE, RUNWAY, gridRef } from '../world/worldData';
-import { DEFAULT_RETURNS, DESTINATION, MISSION_01, RETURNS, rollReturns, TARGET_SPEED_TO_DESTINATION, type ReturnId } from '../mission/mission01';
-import {
-  BARGE,
-  CAMERA_RANGE,
-  CAMERA_SECONDS,
-  canExtract,
-  describeReturn,
-  destinationRoute,
-  evidenceGrade,
-  extract as extractMission,
-  formatTime,
-  identify,
-  inspectReturn,
-  listenReturn,
-  MISSION_RATE,
-  newMission,
-  operatorWork,
-  photograph,
-  photoQuality,
-  reconObjective,
-  RETURN_BY_ID,
-  scanReturn,
-  SIGINT_RANGE,
-  TARGET,
-  updateDestination,
-  useReturns,
-  type MissionEvent,
-  type MissionState,
-  type StationContext,
-} from '../mission/mission';
-import { BINGO_FUEL, buildHandover, engageOperator, forcedHandback, handBack, newCrew, operatorAvailability, retaskOrbit, tickCrew, type CrewState, type HandbackReason } from '../mission/crew';
+import { DEFAULT_RETURNS, DESTINATION, MISSION_01, RETURNS, rollReturns, SECTOR_7, TARGET_SPEED_TO_DESTINATION, type ReturnDef, type ReturnId } from '../mission/mission01';
+import { BARGE, destinationRoute, evidenceGrade, newMission, TARGET, useReturns, type MissionState } from '../mission/mission';
+import { buildHandover, engageOperator, handBack, newCrew, operatorAvailability, tickCrew, type CrewState } from '../mission/crew';
 import { inArea } from '../mission/missionDef';
 import { orbitInput } from '../flight/autopilot';
-import { isCameraTool, OpsConsole, type OpsFrame, type OpsPhoto, type OpsReturn, type OpsTool } from '../ui/opsConsole';
-import { blindClues, checkClues, clueVerdict, nextCheck, reconGuide, type GuideAction, type Sensor, type Verdict } from '../mission/reconGuide';
+import { allCells, ASSET_ORDER, ASSETS, assetFitted, belief, canUse, chooseCorridor, clueChecks, isKnown as cellKnown, mark, newBoard, ruledOut, scoreBoard, traits, useAsset, type AssetId, type BoardEvent, type BoardState, type ControlResult, type Target } from '../control/board';
+import { buildExit, TIER_LABEL, type ExitProfile } from '../control/exit';
+import { CONTROL_01 } from '../mission/mission01Control';
+import { MissionBoard, type BoardAction, type BoardFrame } from '../ui/missionBoard';
 import { Preflight } from '../ui/preflight';
 import { MissionScene } from '../mission/missionScene';
 import { RouteMover } from '../mission/vehicles';
 import { CREW_BY_ID } from '../operation/catalog';
 import { capabilities as loadoutCapabilities, checkLoadout, defaultLoadout, seatCrew, toggleEquipment, withAircraft, type Capabilities, type Loadout } from '../operation/loadout';
-import { activeLeg, beginReturn, damagedPerf, endOperation, flightObjective, landAtBase, launch, newOperation, reconVisibility, tickOperation, windowLeft, type OperationState } from '../operation/operation';
-import { currentGate, inHazard, ringScale, type LegEvent } from '../operation/gates';
+import { activeLeg, beginReturn, damagedPerf, endOperation, flightObjective, landAtBase, launch, newOperation, tickOperation, type OperationState } from '../operation/operation';
+import { bonusTaken, currentGate, inHazard, ringScale, type LegEvent } from '../operation/gates';
 import { buildReport, type Report } from '../operation/score';
 import { isUnlocked, loadCareer, recordOperation, saveCareer, type Career, type UnlockDef } from '../operation/career';
 import { pauseTransition, type Mode } from './modes';
 
 const SORTIE_FUEL = 330; // seconds of flight on the standard fit
+
+/** A photograph in the evidence strip. */
+interface Shot {
+  id: ReturnId;
+  url: string;
+  grade: string;
+  sensor: 'optical' | 'thermal';
+}
+
+/** A vehicle is in the sector if its whole road is (decoys never cross the line). */
+const inSector = (r: ReturnDef) => r.route.every(([x, z]) => x >= SECTOR_7.x0 && x <= SECTOR_7.x1 && z >= SECTOR_7.z0 && z <= SECTOR_7.z1);
 
 export class Game {
   private bundle: SceneBundle;
@@ -132,15 +117,22 @@ export class Game {
   private missionScene: MissionScene;
   /** Which crew station the player occupies (mission play). */
   private crew: CrewState = newCrew();
-  private ops: OpsConsole;
-  private opsTool: OpsTool = 'radar';
-  private opsSelected: ReturnId | null = null;
-  private camSettle = 0;
-  private handbackTimer = -1;
+  /** Mission Control: the board, its state, and what EXECUTE produced. */
+  private board: MissionBoard;
+  private control: BoardState = newBoard(CONTROL_01, DEFAULT_RETURNS, ['radar', 'optical'], Math.random);
+  private controlResult: ControlResult | null = null;
+  private exit: ExitProfile | null = null;
+  /** The board action playing out (a drone in the air, a camera closing in). */
+  private pending: { asset: AssetId; target: Target; t: number; dur: number } | null = null;
+  /** Seconds until the front forces EXECUTE (0: off). */
+  private forceExec = 0;
+  private rankSounded = false;
+  private forecastCache: { key: string; value: BoardFrame['forecast'] } = { key: '', value: null };
+  private lastTier = '';
+  /** Prints from the board's camera and drone looks. */
+  private photos = new Map<ReturnId, { url: string; thermal: boolean; quality: number }>();
   /** Seconds until Mission Control opens itself after arriving on station (0: off). */
   private autoOps = 0;
-  /** The clue the guide wants settled next, and the sensor that can. */
-  private guideCheck: { clue: string; sensor: Sensor } | null = null;
   /** RETURN TO BASE is waiting for the hand-back card to clear. */
   private returnCue = false;
   /** Camera shake (0..1, decays) and a roll jolt from the last lightning strike. */
@@ -157,9 +149,8 @@ export class Game {
   private career: Career;
   private preflight: Preflight;
   private report: Report | null = null;
-  /** Photographs taken this operation (evidence), and one waiting to be captured from the next frame. */
-  private shots: OpsPhoto[] = [];
-  private pendingShot: Omit<OpsPhoto, 'url'> | null = null;
+  /** Photographs taken this operation (evidence). */
+  private shots: Shot[] = [];
 
   constructor(root: HTMLElement) {
     const q = (id: string) => {
@@ -167,7 +158,7 @@ export class Game {
       if (!e) throw new Error(`missing #${id}`);
       return e;
     };
-    for (const id of ['gl', 'hud', 'intel', 'title', 'pause', 'hint', 'btn-begin', 'btn-continue', 'btn-newcase-title', 'stick-zone', 'stick-knob', 'throttle', 'btn-scan', 'btn-mark', 'btn-drop', 'btn-map', 'btn-pause', 'btn-rtb', 'btn-resume-pause', 'btn-map-pause', 'btn-end-sortie', 'btn-sound-pause', 'loading', 'btn-mission', 'btn-open-case', 'btn-case-back', 'mission-card', 'case-card', 'mission-brief', 'debrief', 'btn-fly-again', 'btn-debrief-menu', 'db-headline', 'db-rows-more', 'db-stages', 'db-photos', 'db-findings', 'pause-objective', 'btn-ops', 'handoff', 'ops', 'preflight', 'career-line', 'db-grade', 'db-aircraft', 'db-secondaries', 'db-rewards', 'fx']) {
+    for (const id of ['gl', 'hud', 'intel', 'title', 'pause', 'hint', 'btn-begin', 'btn-continue', 'btn-newcase-title', 'stick-zone', 'stick-knob', 'throttle', 'btn-scan', 'btn-mark', 'btn-drop', 'btn-map', 'btn-pause', 'btn-rtb', 'btn-resume-pause', 'btn-map-pause', 'btn-end-sortie', 'btn-sound-pause', 'loading', 'btn-mission', 'btn-open-case', 'btn-case-back', 'mission-card', 'case-card', 'mission-brief', 'debrief', 'btn-fly-again', 'btn-debrief-menu', 'db-headline', 'db-rows-more', 'db-stages', 'db-photos', 'db-findings', 'pause-objective', 'btn-ops', 'handoff', 'board', 'db-control', 'preflight', 'career-line', 'db-grade', 'db-aircraft', 'db-secondaries', 'db-rewards', 'fx']) {
       this.el[id] = q(id);
     }
     this.el['app'] = root;
@@ -205,20 +196,18 @@ export class Game {
     this.prefs = loadPrefs(localStorage);
     this.input.verticalMode = this.prefs.verticalMode;
     this.hud = new Hud(root);
-    this.ops = new OpsConsole(this.el['ops'], {
-      onTool: (t) => this.setOpsTool(t),
-      onNext: (a) => this.opsNext(a),
-      onSelect: (id) => this.opsSelect(id),
-      onMark: () => this.opsMark(),
-      onPhoto: () => this.opsPhoto(),
-      onExtract: () => this.opsExtract(),
-      onRetask: (x, z) => {
-        retaskOrbit(this.crew, x, z);
-        if (isCameraTool(this.opsTool)) this.opsSelected = null;
+    this.board = new MissionBoard(this.el['board'], {
+      onUse: (a, t) => this.boardUse(a, t),
+      onMark: (id) => this.boardMark(id),
+      onCorridor: (id) => {
+        if (this.control.executed) return;
+        chooseCorridor(this.control, CONTROL_01, id);
         this.audio.click();
       },
-      onTakeControls: () => this.takeControls('manual'),
+      onExecute: () => this.executeBoard(),
+      onFlyOut: () => this.flyOut(),
       onPause: () => this.togglePause(),
+      onTap: () => this.audio.click(),
     });
     this.career = loadCareer(localStorage);
     this.preflight = new Preflight(this.el['preflight'], {
@@ -347,7 +336,16 @@ export class Game {
       getReturns: () => [...this.movers].map(([id, m]) => ({ id, x: m.x, z: m.z, moving: m.moving, arrived: m.arrived })),
       getFuel: () => this.fuel,
       getCrew: () => ({ ...this.crew, orbit: this.crew.orbit && { ...this.crew.orbit } }),
-      getOps: () => ({ tool: this.opsTool, selected: this.opsSelected }),
+      // Mission Control: read the board, and play it through the same handlers as the UI
+      getBoard: () => this.control,
+      getControlResult: () => this.controlResult,
+      getExit: () => this.exit,
+      boardUse: (a: AssetId, t: Target) => this.boardUse(a, t),
+      boardMark: (id: ReturnId) => this.boardMark(id),
+      boardRoute: (id: string) => chooseCorridor(this.control, CONTROL_01, id),
+      boardExecute: () => this.executeBoard(),
+      boardFlyOut: () => this.flyOut(),
+      boardPending: () => !!this.pending,
       getVisibility: () => this.visibility,
       getOperation: () => this.op,
       getLoadout: () => this.loadout,
@@ -393,12 +391,11 @@ export class Game {
     this.bundle.camera.lookAt(200, 40, -100);
   }
 
-  /** Leaving mission play: back to the pilot's seat, clear weather, no console. */
   private leaveMissionStations(): void {
     if (this.crew.station === 'operator') handBack(this.crew);
-    this.ops.hide();
+    this.board.hide();
+    this.pending = null;
     this.hideHandoff();
-    this.el['app'].classList.remove('sensor-feed', 'thermal-feed');
     this.setVisibility(1);
     this.missionScene.setWaypoint(null);
   }
@@ -588,8 +585,7 @@ export class Game {
   private toggleScan(): void {
     if (this.mode !== 'flight') return;
     if (this.play === 'mission') {
-      if (this.crew.station === 'operator') this.setOpsTool('radar');
-      else this.hud.message('RECON SYSTEMS RUN FROM MISSION CONTROL', 'sys');
+      if (this.crew.station !== 'operator') this.hud.message('RECON SYSTEMS RUN FROM MISSION CONTROL', 'sys');
       return;
     }
     this.scanning = !this.scanning;
@@ -613,8 +609,7 @@ export class Game {
   private doMark(): void {
     if (this.mode !== 'flight') return;
     if (this.play === 'mission') {
-      if (this.crew.station === 'operator') this.opsMark();
-      else this.hud.message('MARK TARGETS FROM MISSION CONTROL', 'sys');
+      if (this.crew.station !== 'operator') this.hud.message('MARK TARGETS FROM MISSION CONTROL', 'sys');
       return;
     }
     const n = this.nearContact();
@@ -790,14 +785,18 @@ export class Game {
     this.missionScene.setCast(RETURNS);
     this.mission = newMission();
     this.crew = newCrew();
+    // a fresh board: the ways home and what is on them are dealt again
+    this.control = newBoard(CONTROL_01, RETURNS, this.loadout.equipment, Math.random);
+    this.controlResult = null;
+    this.exit = null;
+    this.pending = null;
+    this.forceExec = 0;
+    this.rankSounded = false;
+    this.lastTier = '';
+    this.forecastCache = { key: '', value: null };
+    this.photos.clear();
     this.report = null;
     this.shots = [];
-    this.pendingShot = null;
-    this.ops.setEvidence([]);
-    this.opsTool = 'radar';
-    this.opsSelected = null;
-    this.camSettle = 0;
-    this.handbackTimer = -1;
     this.setVisibility(1);
     this.movers.clear();
     for (const r of RETURNS) this.movers.set(r.id, new RouteMover(r.route, r.speed, r.start, true));
@@ -823,7 +822,7 @@ export class Game {
     this.missionScene.showDestination(DESTINATION.x, DESTINATION.z, false);
     this.missionScene.sync(this.movers, this.mission, this.t);
     for (const id of ['title', 'debrief', 'pause', 'preflight']) this.el[id].classList.add('hidden');
-    this.ops.hide();
+    this.board.hide();
     this.hideHandoff();
     this.el['hud'].classList.add('mission');
     this.el['hud'].classList.remove('hidden');
@@ -835,41 +834,6 @@ export class Game {
     this.last = performance.now();
   }
 
-  private missionEvents(events: MissionEvent[]): void {
-    for (const e of events) {
-      switch (e.type) {
-        // on station the console lists every return; the flight feed is for the pilot
-        case 'detected':
-          if (this.crew.station === 'pilot') this.hud.message(e.text, '');
-          this.audio.contact();
-          break;
-        case 'resolved':
-          if (this.crew.station === 'pilot') this.hud.message(e.text, 'good');
-          this.audio.resolved();
-          break;
-        case 'photo':
-          this.hud.banner(e.title, e.text, '', 1.8);
-          break;
-        case 'wrong':
-          this.hud.banner(e.title, e.text, 'bad', 2.6);
-          this.audio.warn();
-          break;
-        case 'objective-complete':
-          this.hud.banner(e.title, e.text, 'done', 2.6);
-          this.audio.unlockSound();
-          break;
-        case 'new-objective':
-        case 'objective-updated':
-          this.hud.banner(e.title, e.text, 'obj', 3.6);
-          break;
-        case 'recon-complete':
-          this.hud.banner(e.title, e.text, e.title === 'RECON COMPLETE' || e.title === 'EXTRACTING' ? 'done' : 'bad', 2.6);
-          break;
-        default:
-          break;
-      }
-    }
-  }
 
   /** Ring and hazard events from the flying legs: every ring flown through is stamped. */
   private legEvents(events: LegEvent[]): void {
@@ -877,11 +841,23 @@ export class Game {
       switch (e.type) {
         case 'gate-passed': {
           if (e.id === 'land') break;
+          const op = this.exit?.opportunities.find((o) => o.ringId === e.id);
+          if (op) {
+            // an opportunity Mission Control earned: the photo pass
+            this.audio.unlockSound();
+            this.hud.banner('OPPORTUNITY', `${op.label} · PHOTOGRAPHED`, 'done', 2.2);
+            if (op.kind === 'barge') this.mission.transferPhotographed = true;
+            break;
+          }
           this.audio.ring();
           this.hud.banner('GATE CLEARED', `RING ${e.text}`, 'done', 1.4);
           break;
         }
         case 'gate-missed':
+          if (this.exit?.opportunities.some((o) => o.ringId === e.id)) {
+            this.hud.message('OPPORTUNITY PASSED BY', 'warn');
+            break;
+          }
           this.audio.ringMissed();
           this.hud.banner('MISSED', `RING ${e.text}`, 'bad', 1.2);
           break;
@@ -914,29 +890,22 @@ export class Game {
     return inArea(MISSION_01.operations.area, this.a.x, this.a.z);
   }
 
-  private stationContext(): StationContext {
-    return { station: this.crew.station, inArea: this.inOpsArea(), truckStopped: !!this.movers.get(TARGET.id)?.arrived };
-  }
 
   /** What the player should be doing right now, whichever seat they are in. */
   private currentObjective(): { kicker: string; title: string; detail: string } {
     const fo = flightObjective(this.op, MISSION_01, this.cap);
     if (fo) return fo;
-    const ro = reconObjective(this.mission, this.stationContext());
-    return { kicker: `RECON · ${ro.kicker}`, title: ro.title, detail: ro.detail };
+    if (this.crew.station === 'operator') return { kicker: 'MISSION CONTROL', title: this.control.marked ? 'PLAN THE WAY HOME' : 'FIND THE SUPPLY TRUCK', detail: `FRONT IN ${this.control.minutes} MIN` };
+    return { kicker: 'RECON', title: 'MISSION CONTROL', detail: this.inOpsArea() ? 'OPEN MISSION CONTROL' : `FLY BACK TO ${MISSION_01.operations.area.label}` };
   }
 
   private reconWork(): boolean {
-    return this.op.stage === 'recon' && operatorWork(this.mission);
+    return this.op.stage === 'recon' && !this.control.executed;
   }
 
-  /** The OPS key / button: switch jobs inside the aircraft. */
+  /** The OPS key / button: sit down at Mission Control (the autopilot or copilot flies). */
   private opsAction(): void {
-    if (this.mode !== 'flight' || this.play !== 'mission') return;
-    if (this.crew.station === 'operator') {
-      this.takeControls('manual');
-      return;
-    }
+    if (this.mode !== 'flight' || this.play !== 'mission' || this.crew.station === 'operator') return;
     const av = operatorAvailability(this.crew, {
       inArea: this.inOpsArea(),
       operatorWork: this.reconWork(),
@@ -950,58 +919,60 @@ export class Game {
     const o = this.cap.orbit;
     engageOperator(this.crew, this.a.x, this.a.z, o.agl);
     this.crew.orbit!.r = o.r;
-    this.camSettle = 0;
-    this.setOpsTool(this.opsTool);
     this.el['hud'].classList.add('hidden');
-    this.ops.show();
+    // the flight's calls stay with the flight: the board starts clean
+    this.hud.clearBanners();
+    this.board.show();
     this.audio.radarOn();
     const crewFlies = this.cap.flightControl.mode === 'crew';
-    this.showHandoff('enter', crewFlies ? this.cap.flightControl.label : 'AUTOPILOT ENGAGED', 'MISSION CONTROL', [], ['HANDS OFF · RUN THE SENSORS'], 1.6);
+    this.showHandoff('enter', crewFlies ? this.cap.flightControl.label : 'AUTOPILOT ENGAGED', 'MISSION CONTROL', [], [`THE FRONT ARRIVES IN ${this.control.minutes} MIN`], 1.6);
   }
 
-  /** Recon is over: the return leg begins, in the weather the front brought. */
+  /** The flight out: the leg Mission Control's Exit Profile generated. */
   private startReturnLeg(): void {
-    if (this.op.stage !== 'recon' && this.op.stage !== 'outbound') return;
-    beginReturn(this.op, MISSION_01, { x: this.a.x, y: this.a.y, z: this.a.z, yaw: this.a.yaw }, (x, z) => this.bundle.heightField.sample(x, z));
+    if (this.op.stage !== 'recon' || !this.exit) return;
+    const ex = this.exit;
+    beginReturn(this.op, { return: ex.leg }, { x: this.a.x, y: this.a.y, z: this.a.z, yaw: this.a.yaw }, (x, z) => this.bundle.heightField.sample(x, z), ex.contactFromStart);
+    // the first ring is laid wherever the aircraft happens to be: never start in a storm, never fly into one at once
+    const join = this.op.routes.return.gates[0];
+    const clear = (h: { x: number; z: number; r: number }) => Math.hypot(h.x - this.a.x, h.z - this.a.z) > h.r + 80 && (join?.kind !== 'ring' || Math.hypot(h.x - join.x, h.z - join.z) > h.r + 50);
+    this.op.routes.return.hazards = this.op.routes.return.hazards.filter((h) => h.kind !== 'storm' || clear(h));
+    this.fuel = Math.min(this.fuelMax, ex.fuelSeconds);
     this.autoOps = 0;
-    this.setVisibility(MISSION_01.return.visibility);
-    this.missionScene.setHazards(MISSION_01.return.hazards);
+    this.setVisibility(ex.leg.visibility);
+    this.missionScene.setHazards(this.op.routes.return.hazards);
     this.missionScene.setRoute(this.op.routes.return);
     // suddenly flying again: the first ring is already right ahead (the call goes up once the hand-back card clears)
     this.returnCue = true;
   }
 
-  /** Hand the aircraft back to the pilot. The hand-back is a gameplay event. */
-  private takeControls(reason: HandbackReason | 'weather'): void {
-    if (this.crew.station !== 'operator') return;
+  /** TAKE CONTROLS after EXECUTE: the Exit Profile becomes the flight. */
+  private flyOut(): void {
+    if (this.crew.station !== 'operator' || !this.control.executed || !this.exit) return;
     const session = this.crew.sessionTime;
     handBack(this.crew);
-    this.handbackTimer = -1;
     this.scanning = false;
     this.radarRing.visible = false;
-    this.el['app'].classList.remove('sensor-feed', 'thermal-feed');
-    const extracting = this.mission.phase === 'extract';
-    const notices: string[] = [];
-    if (extracting) {
-      this.startReturnLeg();
-      const deck = MISSION_01.return.hazards.find((h) => h.kind === 'ceiling');
-      if (deck && this.a.y > deck.y) notices.push('IN CLOUD · DESCEND');
-      notices.push(...MISSION_01.return.notices);
-    }
-    const ho = buildHandover({ reason: reason === 'weather' ? 'complete' : reason, x: this.a.x, z: this.a.z, agl: this.a.agl, fuelSeconds: this.fuel, sessionTime: session, baseX: BASE.x, baseZ: BASE.z, terrainWarning: this.a.terrainWarning, notices });
-    this.ops.hide();
+    this.startReturnLeg();
+    // opportunities are good news: they go with the status, not the warnings
+    const notices = this.exit.leg.notices.filter((n) => !n.startsWith('OPPORTUNITY'));
+    const good = this.exit.leg.notices.filter((n) => n.startsWith('OPPORTUNITY'));
+    const deck = this.op.routes.return.hazards.find((h) => h.kind === 'ceiling');
+    if (deck && deck.kind === 'ceiling' && this.a.y > deck.y) notices.unshift('IN CLOUD · DESCEND');
+    const ho = buildHandover({ reason: 'complete', x: this.a.x, z: this.a.z, agl: this.a.agl, fuelSeconds: this.fuel, sessionTime: session, baseX: BASE.x, baseZ: BASE.z, terrainWarning: this.a.terrainWarning, notices });
+    this.board.hide();
     this.chase.reset();
     this.el['hud'].classList.remove('hidden');
     this.audio.radarOff();
-    this.audio.warn();
-    const who = this.cap.flightControl.mode === 'crew' ? 'COPILOT' : 'AUTOPILOT';
-    const kicker = reason === 'manual' ? `${who} OFF` : reason === 'fuel' ? 'BINGO FUEL' : reason === 'weather' ? 'WEATHER FRONT' : 'RECON COMPLETE';
-    this.showHandoff('exit', kicker, ho.title, ho.warnings, ho.status, 4);
+    if (this.exit.tier === 'scramble' || this.exit.contactFromStart) this.audio.warn();
+    else this.audio.unlockSound();
+    const calm = this.exit.tier === 'optimal' || this.exit.tier === 'standard';
+    this.showHandoff(calm ? 'calm' : 'exit', `EXIT · ${TIER_LABEL[this.exit.tier]}`, ho.title, ho.warnings, [...good, ...ho.status], 3.2);
     this.last = performance.now();
   }
 
   private handoffTimer = 0;
-  private showHandoff(kind: 'enter' | 'exit', kicker: string, title: string, warnings: string[], status: string[], seconds: number): void {
+  private showHandoff(kind: 'enter' | 'exit' | 'calm', kicker: string, title: string, warnings: string[], status: string[], seconds: number): void {
     const el = this.el['handoff'];
     el.querySelector('#ho-kicker')!.textContent = kicker;
     el.querySelector('#ho-title')!.textContent = title;
@@ -1018,117 +989,14 @@ export class Game {
     this.el['handoff'].className = 'handoff hidden';
   }
 
-  private opsTools(): OpsTool[] {
-    const order: OpsTool[] = ['radar', 'optical', 'thermal', 'sigint'];
-    return order.filter((t) => this.cap.sensors.has(t));
-  }
 
-  private setOpsTool(t: OpsTool): void {
-    if (!this.cap.sensors.has(t)) return;
-    this.opsTool = t;
-    this.camSettle = 0;
-    this.scanning = t === 'radar';
-    const operator = this.crew.station === 'operator';
-    this.el['app'].classList.toggle('sensor-feed', t === 'optical' && operator);
-    this.el['app'].classList.toggle('thermal-feed', t === 'thermal' && operator);
-    if (operator) this.audio.click();
-  }
 
-  private opsSelect(id: ReturnId): void {
-    if (!this.mission.returns[id].detected) return;
-    this.opsSelected = id;
-    this.camSettle = 0;
-    this.audio.click();
-    // picking a return is asking to see it: the camera comes up on it
-    const m = this.mission;
-    if (!isCameraTool(this.opsTool) && (m.phase === 'locate' || m.phase === 'photograph' || m.phase === 'landing') && m.returns[id].verdict !== 'wrong') this.lookAt();
-  }
 
-  /** Bring up the best camera for the conditions. */
-  private lookAt(): void {
-    const cams = this.opsTools().filter(isCameraTool);
-    if (!cams.length) return;
-    const haze = this.visibility < 0.75 && cams.includes('thermal');
-    this.setOpsTool(haze ? 'thermal' : cams[0]);
-  }
 
-  /** The guide's one button: whatever the recon loop needs next. */
-  private opsNext(a: GuideAction): void {
-    const m = this.mission;
-    if (a === 'radar') this.setOpsTool('radar');
-    else if (a === 'look') {
-      if (!this.opsSelected && (m.phase === 'photograph' || m.phase === 'landing')) this.opsSelected = m.phase === 'landing' ? BARGE.id : TARGET.id;
-      this.lookAt();
-    } else if (a === 'check') {
-      if (this.guideCheck) this.setOpsTool(this.guideCheck.sensor);
-    } else if (a === 'mark') this.opsMark();
-    else if (a === 'photo') this.opsPhoto();
-    else if (a === 'next') {
-      // the next return still to check, else back to the radar to find more
-      const ids = RETURNS.map((r) => r.id).filter((id) => m.returns[id].detected && !m.returns[id].hidden);
-      const from = this.opsSelected ? ids.indexOf(this.opsSelected) : -1;
-      const order = [...ids.slice(from + 1), ...ids.slice(0, from + 1)];
-      const nxt = order.find((id) => id !== this.opsSelected && m.returns[id].verdict === 'none' && !m.returns[id].resolved);
-      if (nxt) this.opsSelect(nxt);
-      else {
-        this.opsSelected = null;
-        this.setOpsTool('radar');
-      }
-    }
-  }
 
-  private opsMark(): void {
-    const id = this.opsSelected;
-    if (!id) {
-      this.hud.banner('NO TARGET', 'SELECT A RETURN FIRST', 'bad', 1.8);
-      return;
-    }
-    const { result, events } = identify(this.mission, id);
-    if (result === 'already') this.hud.banner('ALREADY MARKED', `RETURN ${id}`, 'bad', 1.6);
-    if (result === 'correct') {
-      this.audio.mark();
-      // keep an imaging sensor on the truck: the next objective is to photograph it
-      const cam = this.opsTools().find(isCameraTool);
-      if (cam && !isCameraTool(this.opsTool)) this.setOpsTool(cam);
-    }
-    this.missionEvents(events);
-  }
 
-  /** Is the selected return in the camera's view right now? */
-  private cameraOn(): { id: ReturnId; slant: number } | null {
-    const sel = this.opsSelected;
-    if (!sel || !isCameraTool(this.opsTool) || !this.mission.returns[sel].detected || this.camSettle < 0.6) return null;
-    const mv = this.movers.get(sel)!;
-    const slant = this.slant(mv.x, mv.z);
-    return slant < CAMERA_RANGE ? { id: sel, slant } : null;
-  }
 
-  private opsPhoto(): void {
-    const on = this.cameraOn();
-    if (!on) {
-      this.hud.banner('NO PHOTO', isCameraTool(this.opsTool) ? 'SELECT A RETURN IN CAMERA RANGE' : 'SWITCH TO A CAMERA FIRST', 'bad', 1.8);
-      return;
-    }
-    const q = photoQuality({ sensor: this.opsTool === 'thermal' ? 'thermal' : 'optical', slant: on.slant, visibility: this.visibility, bonus: this.cap.photoBonus });
-    const { result, events } = photograph(this.mission, on.id, q);
-    this.ops.flash();
-    this.audio.click();
-    if (result !== 'unidentified') this.pendingShot = { id: on.id, grade: evidenceGrade(q), sensor: this.opsTool === 'thermal' ? 'thermal' : 'optical' };
-    if (result === 'primary') {
-      const mv = this.movers.get(TARGET.id)!;
-      mv.setRoute(destinationRoute(mv.x, mv.z, mv.segment), false);
-      mv.speed = TARGET_SPEED_TO_DESTINATION;
-    }
-    if (result === 'transfer') this.handbackTimer = -1;
-    this.missionEvents(events);
-  }
 
-  private opsExtract(): void {
-    const ev = extractMission(this.mission, 'manual');
-    if (!ev.length) return;
-    this.missionEvents(ev);
-    this.handbackTimer = 0.6;
-  }
 
   /** Haze / visibility the crew is working in (1 = clear). */
   private setVisibility(v: number): void {
@@ -1176,15 +1044,17 @@ export class Game {
     this.mode = 'debrief';
     this.scanning = false;
     this.radarRing.visible = false;
-    this.el['app'].classList.remove('sensor-feed', 'thermal-feed');
-    this.ops.hide();
+    this.board.hide();
+    this.pending = null;
     this.hideHandoff();
     this.audio.updateFlight(0, 0, false, false);
     this.audio.land();
     this.el['pause'].classList.add('hidden');
     this.el['hud'].classList.add('hidden');
     this.hud.clearBanners();
-    const r = buildReport(this.mission, this.op, MISSION_01, this.fuel / this.fuelMax, this.crew.timeOnStation);
+    this.shots = this.evidence();
+    const cr = this.controlResult;
+    const r = buildReport(this.mission, this.op, MISSION_01, this.fuel / this.fuelMax, (this.control.maxMinutes - this.control.minutes) * 60, cr ? { total: cr.total, rank: cr.rank } : undefined);
     const unlocks = recordOperation(this.career, MISSION_01.id, r);
     saveCareer(this.career, localStorage);
     this.report = r;
@@ -1208,6 +1078,14 @@ export class Game {
     // the evidence the crew brought home
     this.el['db-photos'].innerHTML = this.shots.length
       ? this.shots.map((p) => `<figure><img src="${p.url}" alt="" class="${p.sensor}" /><figcaption>${p.id === TARGET.id ? 'THE TRUCK' : p.id === BARGE.id ? 'THE BARGE' : `RETURN ${p.id}`} · <b class="g-${p.grade}">${p.grade}</b></figcaption></figure>`).join('')
+      : '';
+    // Mission Control: the score, the rank, the best, and the hook to play it again
+    const cr = this.controlResult;
+    const best = this.career.controlBest[MISSION_01.id];
+    const taken = bonusTaken(this.op.ret, this.op.routes.return).length;
+    const offered = this.exit?.opportunities.length ?? 0;
+    this.el['db-control'].innerHTML = cr && this.exit
+      ? `<small>MISSION CONTROL</small><b>${cr.total.toLocaleString('en-US')}</b><span class="mr-rank r-${cr.rank}">${cr.rank}</span><small>EXIT ${TIER_LABEL[this.exit.tier]}${offered ? ` · ${taken}/${offered} OPPORTUNIT${offered > 1 ? 'IES' : 'Y'}` : ''}</small><span class="best">PERSONAL BEST ${(best ?? cr.total).toLocaleString('en-US')}</span><p>${this.replayHook()}</p>`
       : '';
     this.el['db-rewards'].innerHTML =
       `<div class="rw"><b data-count="${r.credits}">+0</b><small>CREDITS</small></div><div class="rw"><b data-count="${r.xp}">+0</b><small>XP</small></div>` +
@@ -1247,11 +1125,6 @@ export class Game {
     (this.radarDisc.material as THREE.MeshBasicMaterial).opacity = 0.04 + quality * 0.06;
   }
 
-  /** Slant range from the aircraft to a ground point. */
-  private slant(x: number, z: number): number {
-    const g = this.bundle.heightField.sample(x, z);
-    return Math.hypot(x - this.a.x, z - this.a.z, this.a.y - g);
-  }
 
   private updateMission(dt: number): void {
     const m = this.mission;
@@ -1274,8 +1147,8 @@ export class Game {
       if (this.op.ret.contact) this.hud.banner('RADAR CONTACT', 'THE RINGS ARE CLOSING', 'bad', 2.4);
     }
 
-    // ---- the operation: gates, weather, the recon window
-    const { events, frontArrived, hits } = tickOperation(this.op, def, { x: this.a.x, z: this.a.z, y: this.a.y, agl: this.a.agl }, dt, this.cap);
+    // ---- the operation: gates and weather (on station, Mission Control keeps its own clock)
+    const { events, hits } = tickOperation(this.op, def, { x: this.a.x, z: this.a.z, y: this.a.y, agl: this.a.agl }, dt, this.cap);
     if (events.length) this.legEvents(events);
     for (const h of hits) {
       if (h.type === 'destroyed') {
@@ -1296,243 +1169,324 @@ export class Game {
     const legView = flying ?? { def: this.op.routes.outbound, state: this.op.outbound };
     const urgency = legView.state.contact && legView.state.clock !== null ? 1 - Math.max(0, Math.min(1, legView.state.clock / Math.max(0.01, legView.state.clockMax))) : 0;
     this.missionScene.updateRoute(legView.state.index, legView.state.status, ringScale(legView.state), urgency, dt, this.t);
-    if (this.op.stage === 'recon') this.setVisibility(reconVisibility(this.op, def));
-    if (frontArrived && m.phase !== 'extract') {
-      this.missionEvents(extractMission(m, 'weather'));
-      if (this.crew.station === 'operator') this.takeControls('weather');
-    }
-    // bingo fuel ends the recon wherever the player is sitting
-    if (this.op.stage === 'recon' && m.phase !== 'extract' && this.fuel / this.fuelMax <= BINGO_FUEL) {
-      this.missionEvents(extractMission(m, 'fuel'));
-      if (this.crew.station === 'operator') this.takeControls('fuel');
-    }
-    if (this.crew.station === 'pilot' && m.phase === 'extract' && this.op.stage === 'recon') {
-      this.startReturnLeg();
-    }
 
-    if (this.crew.station === 'operator') this.updateOperator(dt);
+    if (this.crew.station === 'operator') this.updateBoard(dt);
     else this.updatePilot(dt);
     this.missionScene.sync(this.movers, m, this.t);
   }
 
-  // ---- OPERATOR: the autopilot or copilot flies, the player runs the sensors
-  private updateOperator(dt: number): void {
+  // ---- MISSION CONTROL: the autopilot or copilot orbits; the player plays the board
+  private boardUse(asset: AssetId, target: Target): void {
+    if (this.pending || this.control.executed || this.crew.station !== 'operator') return;
+    const ok = canUse(this.control, RETURNS, asset, target);
+    if (!ok.ok) {
+      this.board.events([{ type: 'nothing', title: ASSETS[asset].label, text: ok.reason }]);
+      this.audio.warn();
+      return;
+    }
+    if (target.kind !== 'none') this.board.select(target);
+    this.pending = { asset, target, t: 0, dur: ASSETS[asset].seconds };
+    if (asset === 'drone' || asset === 'scouts') this.audio.drop();
+    else if (asset === 'sigint') this.audio.link();
+    else if (asset === 'shadow') this.audio.contact();
+    else this.audio.radarOn();
+  }
+
+  private boardMark(id: ReturnId): void {
+    if (this.pending || this.control.executed || this.crew.station !== 'operator') return;
+    const before = this.control.minutes;
+    const ev = mark(this.control, RETURNS, id);
+    this.burnBoardFuel(before - this.control.minutes);
+    this.boardEvents(ev);
+  }
+
+  /** Board minutes are flying time: the autopilot keeps orbiting on the tank. */
+  private burnBoardFuel(minutes: number): void {
+    if (minutes > 0) this.fuel = Math.max(1, this.fuel - minutes * CONTROL_01.fuelPerMinute * this.fuelMax);
+  }
+
+  private boardEvents(ev: BoardEvent[]): void {
+    if (!ev.length) return;
+    const types = new Set(ev.map((e) => e.type));
+    if (types.has('locked')) this.audio.mark();
+    else if (types.has('barge') || types.has('opportunity')) this.audio.unlockSound();
+    else if (types.has('wrong') || types.has('contradiction') || types.has('front')) this.audio.warn();
+    else if (types.has('reveal') || types.has('ruled-out')) this.audio.resolved();
+    this.board.events(ev);
+    if (this.control.frontCaught && !this.control.executed && !this.forceExec) this.forceExec = 1.2;
+  }
+
+  /** The action has played out: apply it. */
+  private resolvePending(): void {
+    const p = this.pending!;
+    this.pending = null;
+    const before = this.control.minutes;
+    const ev = useAsset(this.control, RETURNS, inSector, CONTROL_01.clues, p.asset, p.target);
+    this.burnBoardFuel(before - this.control.minutes);
+    if (p.target.kind === 'return' && (p.asset === 'optical' || p.asset === 'thermal' || p.asset === 'drone')) {
+      // the look leaves a print: the last frame of the telephoto feed
+      const q = { optical: 0.92, drone: 0.8, thermal: 0.72 }[p.asset] + this.cap.photoBonus;
+      const old = this.photos.get(p.target.id);
+      if (!old || q >= old.quality) {
+        try {
+          this.photos.set(p.target.id, { url: this.board.feed.toDataURL('image/jpeg', 0.8), thermal: p.asset === 'thermal', quality: q });
+        } catch {
+          /* a tainted or empty canvas: no print, the facts still count */
+        }
+      }
+    }
+    if (p.asset === 'shadow') {
+      // the truck sets off for the river landing, where the barge is waiting
+      const mv = this.movers.get(TARGET.id)!;
+      mv.setRoute(destinationRoute(mv.x, mv.z, mv.segment), false);
+      mv.speed = TARGET_SPEED_TO_DESTINATION;
+      this.missionScene.showDestination(DESTINATION.x, DESTINATION.z, true);
+    }
+    this.boardEvents(ev);
+  }
+
+  /** EXECUTE: score the board, generate the Exit Profile, show the result. */
+  private executeBoard(): void {
+    const b = this.control;
+    if (b.executed || this.pending || this.crew.station !== 'operator') return;
+    if (!b.corridor) {
+      if (!b.frontCaught) return;
+      chooseCorridor(b, CONTROL_01, 'centre'); // caught by the front: the straight way home
+    }
+    b.executed = true;
+    this.forceExec = 0;
+    const res = scoreBoard(b, CONTROL_01, RETURNS, inSector);
+    this.controlResult = res;
+    this.exit = buildExit({ board: b, def: CONTROL_01, result: res, fuel: this.fuel, fuelMax: this.fuelMax, cruise: this.cap.perf.maxSpeed * 0.7, ground: (x, z) => this.bundle.heightField.sample(x, z) });
+    this.applyBoardToMission();
+    const prev = this.career.controlBest[MISSION_01.id] ?? null;
+    const isBest = prev === null || res.total > prev;
+    if (isBest) {
+      this.career.controlBest[MISSION_01.id] = res.total;
+      saveCareer(this.career, localStorage);
+    }
+    this.rankSounded = false;
+    this.board.showResult(res, this.exit, prev, isBest && prev !== null, this.replayHook());
+    this.audio.click();
+  }
+
+  /** "I can do that better": what a better board would have found. */
+  private replayHook(): string {
+    const b = this.control;
+    const res = this.controlResult!;
+    if (res.rank !== 'ACE') return 'Can you create a cleaner exit?';
+    const cache = allCells(CONTROL_01).find((c) => b.cells[c.id].truth === 'cache');
+    if (cache && belief(b.cells[cache.id]) !== 'cache') return 'Something else was out there. Did you see it?';
+    if (!b.shadowed) return 'Where was the truck going?';
+    return `A clean board. Can you do it with more than ${b.minutes} min to spare?`;
+  }
+
+  /** The board's findings become the recon the report reads. */
+  private applyBoardToMission(): void {
     const m = this.mission;
-    const crew = this.crew;
-    tickCrew(crew, dt);
-    const target = this.movers.get(TARGET.id)!;
-    const sel = this.opsSelected;
-    const selMover = sel ? this.movers.get(sel)! : null;
-    const cam = isCameraTool(this.opsTool);
-
-    // the orbit is slaved to the camera's target: the operator directs, never flies
-    if (cam && selMover) retaskOrbit(crew, selMover.x, selMover.z);
-
-    // ---- radar: finds and tracks; cannot identify
-    const params = radarParams(this.a.agl, 1);
-    if (this.opsTool === 'radar') {
-      this.updateRadarVisual(dt, params.radius, params.quality);
-      const events: MissionEvent[] = [];
-      for (const [id, mv] of this.movers) {
-        const gain = detectionGain(dt, params, Math.hypot(mv.x - this.a.x, mv.z - this.a.z), RETURN_BY_ID[id], false, MISSION_RATE);
-        events.push(...scanReturn(m, id, gain, mv.x, mv.z));
-      }
-      if (events.length) this.missionEvents(events);
+    const b = this.control;
+    for (const r of RETURNS) {
+      const k = b.returns[r.id]!;
+      const st = m.returns[r.id];
+      const mv = this.movers.get(r.id)!;
+      const visible = !r.hidden || b.shadowed;
+      st.hidden = !visible;
+      st.detected = visible;
+      st.resolved = k.size;
+      st.roadKnown = k.road;
+      st.heatKnown = k.engine;
+      st.radioKnown = k.radio;
+      st.verdict = b.marked === r.id ? 'correct' : b.wrong.includes(r.id) ? 'wrong' : 'none';
+      st.lastKnown = { x: mv.x, z: mv.z };
     }
+    m.falsePositives = b.wrong.length;
+    m.wrongIds = [...b.wrong];
+    m.targetIdentified = m.primaryComplete = !!b.marked;
+    m.destinationConfirmed = b.shadowed;
+    // the evidence: the best look at the truck, or a frame grabbed on the pass
+    m.photos.truck = b.marked ? (this.photos.get(TARGET.id)?.quality ?? 0.5) : 0;
+    m.photosTaken = this.photos.size;
+    m.phase = 'extract';
+    m.extractReason = b.frontCaught ? 'weather' : 'complete';
+  }
 
-    // ---- SIGINT: bearings to transmitters, radio on/off for known returns
-    const bearings: { bearing: number; strength: number }[] = [];
-    if (this.opsTool === 'sigint') {
-      const events: MissionEvent[] = [];
-      for (const [id, mv] of this.movers) {
-        const d = Math.hypot(mv.x - this.a.x, mv.z - this.a.z);
-        if (d > SIGINT_RANGE) continue;
-        if (RETURN_BY_ID[id].radio) bearings.push({ bearing: Math.atan2(mv.x - this.a.x, -(mv.z - this.a.z)), strength: 1 - d / SIGINT_RANGE });
-        events.push(...listenReturn(m, id, true));
-      }
-      if (events.length) this.missionEvents(events);
+  /** Prints for the debrief, best first. */
+  private evidence(): Shot[] {
+    return [...this.photos].map(([id, p]) => ({ id, url: p.url, grade: evidenceGrade(Math.min(1, p.quality)), sensor: p.thermal ? 'thermal' : 'optical' }));
+  }
+
+  private updateBoard(dt: number): void {
+    tickCrew(this.crew, dt);
+    if (this.pending) {
+      this.pending.t += dt;
+      if (this.pending.t >= this.pending.dur) this.resolvePending();
     }
-
-    // ---- cameras: identify the selected return when it is in range
-    this.camSettle += dt;
-    const on = this.cameraOn();
-    if (on && selMover) {
-      m.returns[on.id].lastKnown = { x: selMover.x, z: selMover.z };
-      const sensor = this.opsTool === 'thermal' ? 'thermal' : 'optical';
-      const seconds = (CAMERA_SECONDS * this.cap.identifyTime) / (sensor === 'optical' ? Math.max(0.35, this.visibility) : 1);
-      const ev = inspectReturn(m, on.id, dt, true, sensor, seconds);
-      if (ev.length) this.missionEvents(ev);
-    }
-
-    // ---- destination: hold a camera on the stopped truck
-    if (m.phase === 'track') {
-      const ev = updateDestination(m, dt, target.arrived, !!on && on.id === TARGET.id);
-      this.missionScene.showDestination(DESTINATION.x, DESTINATION.z, target.arrived);
-      if (ev.length) {
-        this.missionEvents(ev);
-        // the barge is the new task: put the camera on it
-        this.opsSelected = BARGE.id;
-        this.camSettle = 0;
+    if (this.forceExec > 0) {
+      this.forceExec -= dt;
+      if (this.forceExec <= 0 && !this.pending) {
+        this.forceExec = 0;
+        this.executeBoard();
       }
     }
-
-    // ---- hand back when the work is done (after the console has announced it)
-    if (forcedHandback(crew, { fuelFraction: this.fuel / this.fuelMax, operatorWork: operatorWork(m) }) === 'complete') {
-      if (this.handbackTimer < 0) this.handbackTimer = 1;
-      if (!this.hud.bannerActive) this.handbackTimer -= dt;
-      if (this.handbackTimer <= 0) {
-        this.takeControls('complete');
-        return;
-      }
+    if (!this.rankSounded && this.board.resultStage === 'ranked') {
+      this.rankSounded = true;
+      if (this.controlResult?.rank === 'ACE' || this.controlResult?.rank === 'SOLID') this.audio.unlockSound();
+      else this.audio.warn();
     }
-
-    this.audio.updateFlight(this.a.throttle, this.a.speed, true, this.opsTool === 'radar');
+    this.audio.updateFlight(this.a.throttle, this.a.speed, true, false);
     this.audio.updateWeather(dt, 0, 0);
     this.hud.tickBanners(dt);
-
-    // ---- console frame
-    const ro = reconObjective(m, this.stationContext());
-    const returns: OpsReturn[] = [];
-    for (const r of RETURNS) {
-      const st = m.returns[r.id];
-      if (!st.detected || !st.lastKnown) continue;
-      const mv = this.movers.get(r.id)!;
-      returns.push({ id: r.id, x: st.lastKnown.x, z: st.lastKnown.z, traits: describeReturn(m, r.id, st.lastKnown.x, st.lastKnown.z, mv.moving).traits, verdict: st.verdict, resolved: st.resolved });
-    }
-    const selSt = sel ? m.returns[sel] : null;
-    const slant = selMover ? this.slant(selMover.x, selMover.z) : Infinity;
-    let camLabel = 'NO TARGET';
-    let acquire: number | null = null;
-    if (sel && selSt) {
-      const rng = `${Math.round(slant)} m`;
-      if (slant >= CAMERA_RANGE) camLabel = `${sel} · ${rng} · MOVING IN`;
-      else if (!selSt.resolved) camLabel = `${sel} · ${rng} · IDENTIFYING`;
-      else camLabel = `${sel} · ${rng} · ${describeReturn(m, sel, 0, 0, true).traits[0]}`;
-      if (on && !selSt.resolved) acquire = selSt.look / ((CAMERA_SECONDS * this.cap.identifyTime) / (this.opsTool === 'optical' ? Math.max(0.35, this.visibility) : 1));
-      if (m.phase === 'track' && sel === TARGET.id && target.arrived) {
-        acquire = m.confirm;
-        camLabel = `${sel} · STOPPED · CONFIRMING`;
-      }
-      if (this.opsTool === 'optical' && this.visibility < 0.8) camLabel += ' · HAZE';
-    }
-    const anyDetected = returns.length > 0;
-    const hasThermal = this.cap.sensors.has('thermal');
-    const hasSigint = this.cap.sensors.has('sigint');
-    let hint = '';
-    if (m.phase === 'locate') {
-      if (!anyDetected) hint = this.opsTool === 'radar' ? 'Sweep the roads. Tap the map to move.' : 'Switch to RADAR to search.';
-      else if (!sel) hint = 'Pick a return to check.';
-      else if (!selSt!.resolved && !cam) hint = `Use a camera on ${sel}.`;
-      else if (!selSt!.resolved) hint = 'Hold steady…';
-      else if (selSt!.verdict === 'none') hint = `Is ${sel} the truck? Check the clues.`;
-      else hint = 'Try another return.';
-    } else if (m.phase === 'photograph') hint = cam ? 'Take the photo. Closer is better.' : 'Switch to a camera.';
-    else if (m.phase === 'track') hint = target.arrived ? 'It stopped. Hold the camera on it.' : 'Follow it with the camera.';
-    else if (m.phase === 'landing') hint = 'Photograph the barge.';
-    if (this.visibility < 0.75 && this.opsTool === 'optical' && hasThermal && m.phase !== 'extract') hint = 'Haze! THERMAL sees through it.';
-    void hasSigint;
-    const displayHint = !cam ? (this.opsTool === 'radar' && !anyDetected ? 'TAP TO MOVE' : this.opsTool === 'sigint' ? `${bearings.length} RADIO${bearings.length === 1 ? '' : 'S'} HEARD` : '') : sel ? '' : 'PICK A RETURN';
-    let clues: OpsFrame['clues'] = null;
-    let verdict: Verdict = 'unchecked';
-    this.guideCheck = null;
-    if (sel && selSt && m.phase === 'locate') {
-      const r = returns.find((x) => x.id === sel);
-      if (r) {
-        const fitted = this.opsTools();
-        const checks = checkClues(MISSION_01.clues, r.traits);
-        verdict = clueVerdict(checks, selSt.resolved, fitted);
-        this.guideCheck = verdict === 'check' ? nextCheck(checks, fitted) : null;
-        clues = { id: sel, checks, verdict, blind: blindClues(checks, fitted) };
-      }
-    }
-    const guide = reconGuide({ phase: m.phase, anyDetected, selected: sel, camera: cam, resolved: !!selSt?.resolved, marked: selSt?.verdict ?? 'none', verdict, check: this.guideCheck });
-    if (m.phase === 'locate' && !(this.visibility < 0.75 && this.opsTool === 'optical' && hasThermal)) hint = '';
-    this.ops.update({
-      guide,
-      clues,
-      tool: this.opsTool,
-      tools: this.opsTools(),
-      control: this.cap.flightControl.label,
-      frontSeconds: windowLeft(this.op, MISSION_01),
-      objective: { kicker: ro.kicker, title: ro.title, detail: ro.detail, progress: m.phase === 'track' && target.arrived ? m.confirm : null },
-      orbit: crew.orbit!,
-      aircraft: { x: this.a.x, z: this.a.z, yaw: this.a.yaw, agl: this.a.agl },
-      footprint: params.radius,
-      sweep: this.sweep,
-      fuelSeconds: this.fuel,
-      timeOnStation: crew.timeOnStation,
-      area: MISSION_01.operations.area,
-      returns,
-      selected: sel,
-      camera: { label: camLabel, acquire },
-      canMark: m.phase === 'locate' && !!selSt && selSt.verdict === 'none',
-      canPhoto: !!on && m.returns[on.id].resolved,
-      canExtract: canExtract(m),
-      bearings,
-      hint,
-      displayHint,
-    });
+    this.board.update(this.boardFrame(), dt);
   }
 
-  /** Telephoto sensor view rendered into the console's display. */
-  private renderSensorFeed(): void {
-    const r = this.ops.displayRect();
-    if (r.width < 4 || r.height < 4) return;
+  private boardFrame(): BoardFrame {
+    const b = this.control;
+    const def = CONTROL_01;
+    const busy = !!this.pending || b.executed;
+    const act = (asset: AssetId, t: Target, label = ASSETS[asset].label): BoardAction => {
+      const u = canUse(b, RETURNS, asset, t);
+      return { kind: 'asset', asset, label: `${ASSETS[asset].icon} ${label}`, cost: ASSETS[asset].cost, ok: u.ok && !busy, reason: u.reason, front: ASSETS[asset].cost >= b.minutes };
+    };
+    const fitted = ASSET_ORDER.filter((a) => assetFitted(b, a));
+    const returns = RETURNS.filter((r) => !r.hidden || b.shadowed).map((r) => {
+      const k = b.returns[r.id]!;
+      const mv = this.movers.get(r.id)!;
+      const sec = inSector(r);
+      const checks = clueChecks(r, k, sec, def.clues);
+      const status = r.hidden ? 'barge' : b.marked === r.id ? 'truck' : b.wrong.includes(r.id) ? 'wrong' : ruledOut(checks) ? 'out' : k.size || k.road || k.radio ? 'fits' : 'unknown';
+      const actions: BoardAction[] = [];
+      if (!r.hidden) {
+        // the decision first, then the ways to learn more
+        if (!b.marked && !b.wrong.includes(r.id)) actions.push({ kind: 'mark', label: 'MARK AS THE TRUCK', ok: !busy, reason: '' });
+        if (b.marked === r.id && !b.shadowed) actions.push(act('shadow', { kind: 'return', id: r.id }, 'SHADOW · WHERE IS IT GOING?'));
+        for (const a of fitted) if (a === 'optical' || a === 'thermal' || a === 'drone') actions.push(act(a, { kind: 'return', id: r.id }));
+      }
+      return { id: r.id, x: mv.x, z: mv.z, moving: mv.moving, status: status as BoardFrame['returns'][number]['status'], traits: traits(r, k, sec), checks, photo: this.photos.get(r.id) ?? null, actions };
+    });
+    const cells = allCells(def).map((c) => {
+      const st = b.cells[c.id];
+      const known = belief(st);
+      const weather = known === 'storm' || known === 'cloud' ? known : 'clear';
+      return {
+        id: c.id,
+        corridor: c.corridor,
+        corridorLabel: def.corridors.find((x) => x.id === c.corridor)!.label,
+        x: c.x,
+        z: c.z,
+        belief: known,
+        possible: st.possible,
+        forecast: st.forecast,
+        contradicted: !!known && st.forecast !== weather,
+        actions: fitted.filter((a) => a === 'drone' || a === 'scouts').map((a) => act(a, { kind: 'cell', id: c.id })),
+      };
+    });
+    const allTargets: Target[] = [...returns.map((r) => ({ kind: 'return', id: r.id }) as Target), ...cells.map((c) => ({ kind: 'cell', id: c.id }) as Target)];
+    const assets = fitted.map((id) => {
+      const a = ASSETS[id];
+      const left = id in b.uses ? (b.uses[id] ?? 0) : null;
+      const targets = busy ? [] : allTargets.filter((t) => canUse(b, RETURNS, id, t).ok).map((t) => (t.kind === 'return' ? `r:${t.id}` : `c:${(t as { id: string }).id}`));
+      const global = a.target === 'none' ? canUse(b, RETURNS, id, { kind: 'none' }) : null;
+      const ok = !busy && (global ? global.ok : targets.length > 0);
+      const reason = busy ? 'BUSY' : global ? global.reason : left === 0 ? 'NONE LEFT' : a.cost > b.minutes ? 'NO TIME' : id === 'shadow' && !b.marked ? 'MARK THE TRUCK FIRST' : 'NOTHING TO DO';
+      return { id, label: a.label, icon: a.icon, cost: a.cost, left, ok, reason, note: a.note, target: a.target, targets };
+    });
+    const route = def.corridors.find((c) => c.id === b.corridor);
+    const corridors = def.corridors.map((c) => ({ id: c.id, label: c.label, short: c.short, note: c.note, path: c.rings.map((r) => ({ x: r.x, z: r.z })), selected: c.id === b.corridor, known: c.cells.filter((x) => cellKnown(b.cells[x.id])).length, total: c.cells.length }));
+    // the live forecast: what EXECUTE would make of the board right now
+    const fkey = `${b.actions}|${b.corridor}|${b.marked}|${b.wrong.length}|${b.shadowed}|${b.minutes}`;
+    if (this.forecastCache.key !== fkey) {
+      let value: BoardFrame['forecast'] = null;
+      if (route) {
+        const res = scoreBoard(b, def, RETURNS, inSector);
+        const ex = buildExit({ board: b, def, result: res, fuel: this.fuel, fuelMax: this.fuelMax, cruise: this.cap.perf.maxSpeed * 0.7, ground: (x, z) => this.bundle.heightField.sample(x, z) });
+        value = { rank: res.rank, tier: res.tier, total: res.total, lines: ex.lines.filter((l) => l.label !== 'ROUTE') };
+        if (this.lastTier && this.lastTier !== res.tier && !b.executed) {
+          const order = ['scramble', 'degraded', 'standard', 'optimal'];
+          const up = order.indexOf(res.tier) > order.indexOf(this.lastTier);
+          this.board.events([{ type: up ? 'opportunity' : 'wrong', title: `EXIT ${up ? '▲' : '▼'} ${TIER_LABEL[res.tier]}`, text: up ? 'YOUR PLAN JUST GOT BETTER' : 'YOUR PLAN JUST GOT WORSE' }]);
+        }
+        this.lastTier = res.tier;
+      }
+      this.forecastCache = { key: fkey, value };
+    }
+    const scouts = RETURNS.find((r) => r.count === 3 && r.radio && !r.isTarget);
+    const from = this.pending?.asset === 'scouts' && scouts ? this.movers.get(scouts.id)! : { x: this.a.x, z: this.a.z };
+    return {
+      minutes: b.minutes,
+      maxMinutes: b.maxMinutes,
+      fuelSeconds: this.fuel,
+      control: this.cap.flightControl.mode === 'crew' ? this.cap.flightControl.label : 'AUTOPILOT ORBITING',
+      goals: [
+        { label: 'FIND THE TRUCK', state: b.marked ? 'done' : 'todo', bonus: false },
+        { label: 'WHERE IS IT GOING?', state: b.shadowed ? 'done' : 'todo', bonus: true },
+        { label: 'SCOUT YOUR WAY HOME', state: route && route.cells.every((c) => cellKnown(b.cells[c.id])) ? 'done' : 'todo', bonus: true },
+      ],
+      returns,
+      cells,
+      corridors,
+      aircraft: { x: this.a.x, z: this.a.z, yaw: this.a.yaw },
+      orbit: this.crew.orbit,
+      base: { x: BASE.x, z: BASE.z },
+      area: MISSION_01.operations.area,
+      landing: b.shadowed ? CONTROL_01.landing : null,
+      assets,
+      pending: this.pending ? { asset: this.pending.asset, target: this.pending.target, k: this.pending.t / this.pending.dur, from: { x: from.x, z: from.z } } : null,
+      forecast: this.forecastCache.value,
+      canExecute: !!b.corridor && !busy,
+      executeHint: b.executed ? '' : !b.corridor ? 'PICK A ROUTE HOME TO EXECUTE' : !b.marked ? 'NO TRUCK MARKED YET' : '',
+      executed: b.executed,
+    };
+  }
+
+  /**
+   * The telephoto view of a look in progress, rendered into the card's
+   * viewfinder: a sensor camera closing in on the vehicle.
+   */
+  private renderBoardFeed(): void {
+    const p = this.pending;
+    if (!p || p.target.kind !== 'return' || !(p.asset === 'optical' || p.asset === 'thermal' || p.asset === 'drone')) return;
+    const canvas = this.board.feed;
+    const w = Math.round(canvas.clientWidth);
+    const h = Math.round(canvas.clientHeight);
+    if (w < 8 || h < 8) return;
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
     const hf = this.bundle.heightField;
+    const mv = this.movers.get(p.target.id)!;
+    const gy = hf.sample(mv.x, mv.z);
+    // look from the aircraft's side of the vehicle, high and oblique (straight down for the drone)
+    const dx = this.a.x - mv.x;
+    const dz = this.a.z - mv.z;
+    const l = Math.hypot(dx, dz) || 1;
+    const back = p.asset === 'drone' ? 40 : 230;
+    const up = p.asset === 'drone' ? 140 : 170;
     const cam = this.sensorCam;
-    const sel = this.opsSelected ? this.movers.get(this.opsSelected) : null;
-    const o = this.crew.orbit;
-    const tx = sel ? sel.x : o ? o.x : this.a.x;
-    const tz = sel ? sel.z : o ? o.z : this.a.z;
-    cam.position.set(this.a.x, this.a.y - 3, this.a.z);
+    cam.position.set(mv.x + (dx / l) * back, gy + up, mv.z + (dz / l) * back);
     cam.up.set(0, 1, 0);
-    cam.lookAt(tx, hf.sample(tx, tz) + 2, tz);
-    const slant = this.slant(tx, tz);
-    cam.fov = sel ? clamp((2 * Math.atan(24 / slant) * 180) / Math.PI, 3, 20) : 36;
-    cam.aspect = r.width / r.height;
+    cam.lookAt(mv.x, gy + 2, mv.z);
+    const k = Math.min(1, p.t / p.dur);
+    cam.fov = 34 - 24 * k * k * (3 - 2 * k);
+    cam.aspect = w / h;
     cam.updateProjectionMatrix();
     const rr = this.bundle.renderer;
-    const H = window.innerHeight;
+    const src = rr.domElement;
+    const ratio = src.width / window.innerWidth;
     this.plane.group.visible = false;
     rr.setScissorTest(true);
-    rr.setViewport(r.left, H - r.bottom, r.width, r.height);
-    rr.setScissor(r.left, H - r.bottom, r.width, r.height);
+    rr.setViewport(0, 0, w, h);
+    rr.setScissor(0, 0, w, h);
     this.missionScene.withoutPins(() => rr.render(this.bundle.scene, cam));
     rr.setScissorTest(false);
-    rr.setViewport(0, 0, window.innerWidth, H);
+    rr.setViewport(0, 0, window.innerWidth, window.innerHeight);
     this.plane.group.visible = true;
-    // a photograph is the frame just rendered: copy it before the browser clears the buffer
-    if (this.pendingShot) {
-      const url = this.capture(r);
-      if (url) {
-        const shot = { ...this.pendingShot, url };
-        // one print per return: keep the best
-        const old = this.shots.findIndex((p) => p.id === shot.id);
-        const rank = (g: string) => ['NONE', 'POOR', 'FAIR', 'GOOD', 'EXCELLENT'].indexOf(g);
-        if (old < 0) this.shots.push(shot);
-        else if (rank(shot.grade) >= rank(this.shots[old].grade)) this.shots[old] = shot;
-        this.ops.showPhoto(shot);
-        this.ops.setEvidence(this.shots);
-      }
-      this.pendingShot = null;
-    }
+    // copy the frame out before the browser clears the buffer
+    const ctx = canvas.getContext('2d');
+    ctx?.drawImage(src, 0, src.height - h * ratio, w * ratio, h * ratio, 0, 0, w, h);
   }
 
-  private capture(r: DOMRect): string | null {
-    try {
-      const src = this.bundle.renderer.domElement;
-      const k = src.width / window.innerWidth;
-      const w = 320;
-      const h = Math.max(1, Math.round((w * r.height) / r.width));
-      const c = document.createElement('canvas');
-      c.width = w;
-      c.height = h;
-      c.getContext('2d')!.drawImage(src, r.left * k, r.top * k, r.width * k, r.height * k, 0, 0, w, h);
-      return c.toDataURL('image/jpeg', 0.8);
-    } catch {
-      return null;
-    }
-  }
+
 
   // ---- PILOT: the player flies; the current gate is the objective
   private updatePilot(dt: number): void {
@@ -1592,7 +1546,7 @@ export class Game {
     if (R && !leg!.state.detected && this.a.agl > this.cap.stealthCeiling - 40 && this.a.x > R.x0 - 300 && this.a.x < R.x1 + 300 && this.a.z > R.z0 - 300 && this.a.z < R.z1 + 300) chips.push({ text: `TOO HIGH · BELOW ${this.cap.stealthCeiling} m`, cls: 'bad' });
     if (leg?.state.contact && leg.state.clock !== null && gate?.kind === 'ring') chips.push({ text: `⏱ ${Math.max(0, Math.ceil(leg.state.clock))} s`, cls: leg.state.clock < 3 ? 'bad' : 'caution' });
     if (this.op.damage >= 0.02) chips.push({ text: `HULL ${Math.round((1 - this.op.damage) * 100)}%`, cls: this.op.damage > 0.55 ? 'bad' : 'caution' });
-    if (this.op.stage === 'recon') chips.push({ text: `FRONT ${formatTime(windowLeft(this.op, def))}`, cls: windowLeft(this.op, def) < 60 ? 'bad' : 'caution' });
+    if (this.op.stage === 'recon' && !this.control.executed) chips.push({ text: `FRONT IN ${this.control.minutes} MIN`, cls: 'caution' });
 
     // ---- contextual hint: always says what to do next
     const touch = this.input.isTouch;
@@ -1700,8 +1654,8 @@ export class Game {
       this.truckMesh.sync(this.truck, this.bundle.heightField);
     }
     if (this.play === 'mission' && this.crew.station === 'operator' && (this.mode === 'flight' || this.mode === 'paused')) {
-      // Mission Control: the radar display is drawn by the console; the camera feed is rendered into it
-      if (isCameraTool(this.opsTool)) this.renderSensorFeed();
+      // Mission Control covers the screen: only a look in progress is rendered, into its viewfinder
+      this.renderBoardFeed();
     } else if (this.mode !== 'intel') this.bundle.renderer.render(this.bundle.scene, this.bundle.camera);
     void this.raf;
   }
@@ -1746,7 +1700,8 @@ export class Game {
     }
     this.a = stepAircraft(this.a, inp, dt, (x, z) => hf.sample(x, z), perf);
     this.input.syncThrottle(this.a.throttle);
-    this.fuel -= dt * stormBurn;
+    // on the board, fuel is paid in board minutes (see burnBoardFuel)
+    if (!(this.play === 'mission' && this.crew.station === 'operator')) this.fuel -= dt * stormBurn;
     if (this.play === 'mission') {
       this.updateMission(dt);
       return;

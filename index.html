@@ -118,38 +118,41 @@
         </div>
       </section>
 
-      <!-- ===== MISSION CONTROL (operator station: the autopilot flies) ===== -->
-      <section id="ops" class="screen ops hidden" aria-label="Mission control">
-        <header class="ops-bar">
-          <div class="ops-id"><b>MISSION CONTROL</b><span><i></i><em id="ops-control">AUTOPILOT FLYING</em> · HANDS OFF</span></div>
-          <div class="ops-stats"><span id="ops-front" class="front">FRONT</span><span id="ops-orbit">ORBIT</span><span id="ops-fuel">FUEL</span><span id="ops-time">ON STATION</span></div>
-          <button id="btn-ops-pause" class="icon" aria-label="Pause">II</button>
-          <button id="btn-take" class="btn take">TAKE CONTROLS</button>
+      <!-- ===== MISSION CONTROL: the board between the two flights ===== -->
+      <section id="board" class="screen board hidden" aria-label="Mission control">
+        <header class="mb-bar">
+          <div class="mb-id"><b>MISSION CONTROL</b><span><i></i><em id="mb-control">AUTOPILOT ORBITING</em></span></div>
+          <div class="mb-clock"><small>FRONT IN</small><div id="mb-pips" class="pips"></div><b id="mb-min">12</b><small>MIN</small></div>
+          <div class="mb-fuel"><small>FUEL</small><b id="mb-fuel">0:00</b></div>
+          <div id="mb-forecast" class="mb-forecast"></div>
+          <button id="btn-mb-pause" class="icon" aria-label="Pause">II</button>
         </header>
-        <div class="ops-objective"><i class="reticle"></i><div><small id="ops-obj-kicker" class="k"></small><b id="ops-obj-title"></b><small id="ops-obj-detail"></small><div class="obj-progress"><i id="ops-obj-progress"></i></div><ol id="ops-steps" class="ops-steps"></ol></div></div>
-        <div class="ops-body">
-          <div id="ops-display" class="ops-display">
-            <canvas id="ops-radar"></canvas>
-            <div id="ops-cam" class="ops-cam hidden"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><i class="cross"></i><div id="ops-cam-label" class="ops-cam-label"></div><div class="ops-cam-acq"><i id="ops-cam-acq"></i></div></div>
-            <div id="ops-display-hint" class="ops-display-hint"></div>
-            <div id="ops-photo" class="photo-pop hidden"><img alt="" /><b></b></div>
-          </div>
-          <aside class="ops-panel">
-            <button id="btn-ops-next" class="btn next hidden"></button>
-            <div id="ops-cue" class="ops-cue"></div>
-            <div id="ops-match" class="ops-match hidden"></div>
-            <div id="ops-tools" class="ops-tools" role="tablist" aria-label="Sensor"></div>
-            <div id="ops-tool-note" class="ops-tool-note"></div>
-            <div id="ops-returns" class="ops-returns"></div>
-            <div class="ops-actions">
-              <button id="btn-ops-mark" class="btn mark">MARK AS THE TRUCK</button>
-              <button id="btn-ops-photo" class="btn photo">TAKE PHOTO</button>
+        <div class="mb-body">
+          <div class="mb-left">
+            <div class="mb-mapwrap">
+              <canvas id="mb-map"></canvas>
+              <ul id="mb-goals" class="mb-goals"></ul>
+              <div id="mb-armed" class="mb-armed"></div>
+              <div id="mb-toast" class="mb-toast" aria-live="polite"></div>
             </div>
-            <button id="btn-ops-extract" class="btn extract hidden">EXTRACT · FLY HOME</button>
-            <div id="ops-hint" class="ops-hint"></div>
-            <div id="ops-evidence" class="ops-evidence"></div>
+            <div id="mb-tray" class="mb-tray" aria-label="Assets"></div>
+          </div>
+          <aside class="mb-panel">
+            <div class="mb-card">
+              <div id="mb-card-head" class="mb-card-head"></div>
+              <div id="mb-vf" class="mb-vf hidden"><canvas id="mb-feed"></canvas><img id="mb-vf-img" alt="" /><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i></div>
+              <div id="mb-card-body" class="mb-card-body"></div>
+            </div>
+            <div class="mb-plan">
+              <h3>ROUTE HOME</h3>
+              <div id="mb-routes" class="mb-routes"></div>
+              <ul id="mb-preview" class="mb-preview"></ul>
+              <button id="btn-execute" type="button" class="btn execute" disabled>EXECUTE MISSION</button>
+              <p id="mb-exec-hint" class="mb-exec-hint"></p>
+            </div>
           </aside>
         </div>
+        <div id="mb-result" class="mb-result hidden" aria-live="polite"></div>
       </section>
 
       <!-- hand-over between stations -->
@@ -188,6 +191,7 @@
             <div id="db-grade" class="db-grade">A</div>
           </div>
           <div id="db-stages" class="db-stages"></div>
+          <div id="db-control" class="db-control"></div>
           <div id="db-photos" class="db-photos"></div>
           <div id="db-rewards" class="db-rewards"></div>
           <details class="db-more"><summary>FULL REPORT</summary><dl id="db-rows-more" class="db-rows"></dl><div id="db-secondaries" class="db-secondaries"></div><div id="db-findings" class="db-findings"></div></details>

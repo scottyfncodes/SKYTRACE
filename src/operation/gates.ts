@@ -24,6 +24,8 @@ export interface RingSpec {
   cue?: string;
   /** Passing this ring raises RADAR CONTACT (the clock starts on the next one). */
   alert?: boolean;
+  /** An opportunity: flying through it earns a bonus; passing it by costs nothing. */
+  bonus?: boolean;
 }
 
 /** Passed by the landing itself (Game decides when the aircraft is down). */
@@ -317,13 +319,20 @@ export function passLanding(s: LegState, route: Route): LegEvent[] {
   return [{ type: 'gate-passed', id: g.id, text: g.label }, { type: 'leg-complete', id: route.id, text: 'HOME' }];
 }
 
-export function missedCount(s: LegState): number {
-  return Object.values(s.status).filter((v) => v === 'missed').length;
+/** Rings missed (opportunities passed by do not count). */
+export function missedCount(s: LegState, route?: Route): number {
+  const bonus = new Set(route ? rings(route).filter((r) => r.bonus).map((r) => r.id) : []);
+  return Object.entries(s.status).filter(([id, v]) => v === 'missed' && !bonus.has(id)).length;
 }
 
-/** Rings flown through / rings in the route. */
+/** Opportunity rings flown through. */
+export function bonusTaken(s: LegState, route: Route): Ring[] {
+  return rings(route).filter((r) => r.bonus && s.status[r.id] === 'passed');
+}
+
+/** Rings flown through / rings in the route (opportunities aside). */
 export function ringTally(s: LegState, route: Route): { hit: number; total: number } {
-  const rs = rings(route);
+  const rs = rings(route).filter((r) => !r.bonus);
   return { hit: rs.filter((r) => s.status[r.id] === 'passed').length, total: rs.length };
 }
 

@@ -17,21 +17,25 @@ Every mission is a reconnaissance operation in five stages:
    - **Crew:** a copilot flies the recon orbit for you, tighter than the autopilot. A sensor operator identifies faster or takes better photographs. A navigator puts storm cells on the scope from take-off.
    - **Equipment:** search radar, optical camera, thermal imager, SIGINT (unlocked). Each answers a different question. A checklist shows whether the plan can do the primary objective.
 2. **Outbound (you fly).** A route of eight rings: the take-off flies the first, then climb north around a storm cell, cross the high ground and drop under the ridge radar into Sector 7. The next ring glows amber, the two after it show the way. Through a ring: GATE CLEARED. Wide of it: MISSED, and the route moves on. Storm cells are deadly: inside one the airframe is pounded and struck by lightning, the aircraft flies worse as damage builds, and stay too long and it breaks up (AIRCRAFT LOST). Climbing over the sector above your stealth ceiling gets you spotted. The last ring puts you ON STATION and Mission Control takes over.
-3. **Recon (Mission Control).** Every operation is a fresh puzzle: the truck's letter is shuffled and three of four look-alikes are out there (a parked lorry, our own scout patrol, a lorry outside the sector, a lorry cutting across the fields), each breaking the brief on a different clue. The console guides you: FIND → PICK → LOOK → MATCH → MARK, with a clue card that ticks the brief against what your sensors can tell; what your loadout cannot check stays a question mark (no OPTICAL: you can't tell who is on a road). The autopilot or your copilot flies an orbit. You run the sensors, against a weather-front clock: haze builds and slows the optical camera. Objectives change as you discover things: locate the truck, photograph it, then *objective updated* (track it to its stop), then a barge is revealed (photograph the transfer). Extract any time once the primary is done.
-4. **Return (you fly again).** The controls come back with a ring already ahead of you. The front has arrived (a cloud deck at 300 m, a new storm cell, haze), and the route home is a lower, tighter slalom. Leaving the sector raises RADAR CONTACT: every ring is now on a clock and shrinks as it runs, closing if you are too slow. If you were spotted on the way in, the clock starts at the first ring. The last ring lines you up on the runway.
-5. **Debrief.** A recon report: primary, secondaries, identification, evidence quality, flight discipline, fuel, damage, a grade, credits and XP, unlocks, and the intelligence the recon established.
+3. **Recon (Mission Control).** A small strategy game on a board, and the bridge between the two flights. The autopilot (or your copilot) orbits; you have **12 minutes** before the front arrives. The map shows what the radar already knows (four vehicles, moving or parked) and **three ways home** (NORTH RIDGE, CENTRE LINE, RIVER VALLEY), each with two unscouted spots marked **?**. Every operation deals two storm cells, a low cloud deck, a radar site, a supply cache and one clear stretch across those six spots.
+   - **Assets cost minutes**, some are limited, and each answers a different question: **OPTICAL** (size, count, road), **THERMAL** (size, count, engine heat), **SIGINT** (every radio and every radar site at once), **DRONE ×2** (the whole truth about one spot or one vehicle), **SCOUTS ×1** (a ground report: weather only, so it can tell you a spot is not a storm without saying what it is). Tap an asset and then a target, drag it onto the map, or use the buttons on a selected card.
+   - **Information is partial and sometimes wrong.** The tower's forecast always gets one storm in the wrong place: finding out says *TOWER WAS WRONG*.
+   - **Decide:** MARK the truck (a wrong call costs a minute and points), SHADOW it to find where it is going (a barge), and pick a route home. The panel shows the live **exit forecast** for the plan as it stands. Your plan is fixed when you press **EXECUTE MISSION**.
+   - **Score:** OBJECTIVE, INTELLIGENCE, EFFICIENCY, RISK, BONUS, LOSSES → a total and a rank: **ACE / SOLID / ROUGH / SCRAMBLE**. If the clock runs out, the board executes itself.
+   - **Score → Exit Profile:** the rank sets the tier (**OPTIMAL / STANDARD / DEGRADED / SCRAMBLE**: visibility, fuel, a shortcut, whether opportunities are open), and what you *found on your chosen route* builds its rings. A storm you found is routed around; one you missed sits on the rings. A radar site you found picks you up late; one you missed has you on the clock from the first ring. A cache you found (or the barge, if you shadowed the truck) becomes a bonus **photo-pass ring**, on a good exit only. A SCRAMBLE exit breaks low under radar lock with the front on your tail. The exit briefing reads it all out before you take the controls.
+4. **Return (you fly again).** The controls come back with a ring already ahead of you, on the route Mission Control generated: its weather, cloud deck, storms, fuel and traffic are the ones your board produced. Under RADAR CONTACT every ring is on a clock and shrinks as it runs, closing if you are too slow. If you were spotted on the way in, the clock starts at the first ring. Bonus rings (ice blue, cued *PHOTO PASS*) are optional: fly through for the reward, pass them by at no cost. The last ring lines you up on the runway.
+5. **Debrief.** A recon report: the Mission Control score and rank with your personal best (and a hint at what a better board would have found), primary, secondaries, identification, evidence quality, opportunities taken, flight discipline, fuel, damage, a grade, credits and XP, unlocks, and the intelligence the recon established.
 
 Progression (credits, XP, unlocks, best grade, last loadout) is saved in the browser, separately from the open case.
 
-| Mission Control | Touch | Keyboard |
+| Mission Control | Touch | Mouse / keyboard |
 | --- | --- | --- |
-| Sensors | RADAR / OPTICAL / THERMAL / SIGINT tabs | 1–4 |
-| Select a return | tap it (list or display) | A–E |
-| Move the orbit | tap the radar display | — |
-| Mark as the truck | MARK AS THE TRUCK | M |
-| Photograph | TAKE PHOTO | P |
-| Extract | EXTRACT · FLY HOME | X |
-| Take controls | TAKE CONTROLS | O or Enter |
+| Look at a vehicle or a route spot | tap it on the map | click |
+| Use an asset | drag it onto a target, or tap it then the target | same |
+| Mark the truck / shadow it | buttons on the vehicle's card | same |
+| Choose the way home | tap a route line or NORTH / CENTRE / RIVER | same |
+| Execute | EXECUTE MISSION | Enter |
+| Take the controls after the briefing | TAKE CONTROLS | Enter |
 
 The original open-ended investigation is still available from the title screen as **Open case · Varrow Basin**.
 
@@ -103,8 +107,11 @@ Plain TypeScript + Vite + Three.js, no backend.
 | `src/mission/missionDef.ts` | What a mission declares: briefing, operations area, recon window, outbound and return legs |
 | `src/mission/crew.ts` | Crew stations (pilot / operator), entry rules, forced hand-back, hand-over report (pure, tested) |
 | `src/flight/autopilot.ts` | Orbit autopilot that drives the unchanged flight model while the player operates (pure, tested) |
-| `src/ui/opsConsole.ts` | Mission Control console: radar display, camera feed frame, returns, mark, take controls |
-| `src/mission/mission.ts` | Mission 01 recon rules: objective chain, sensors, photographs, dynamic objectives (pure, tested) |
+| `src/control/board.ts` | Mission Control rules: assets (data table), what each reveals, the tower forecast, marking, the clock, scoring and rank (pure, tested) |
+| `src/control/exit.ts` | Score → Exit Profile: tier, then the return leg generated from the chosen corridor and what was discovered on it (pure, tested) |
+| `src/mission/mission01Control.ts` | Mission 01's board: the three corridors, their rings and unscouted spots, the cell mix, limited assets |
+| `src/ui/missionBoard.ts` | The board: map, asset tray (tap or drag), target card with live telephoto viewfinder, route plan with live exit forecast, EXECUTE and the result sequence |
+| `src/mission/mission.ts` | Mission 01 recon state read by the report (returns, verdicts, evidence, intelligence); also the original real-time sensor model (pure, tested) |
 | `src/mission/vehicles.ts` | Route-following vehicles (pure, tested); `missionScene.ts` renders sector and vehicles |
 | `src/game/Game.ts` | Orchestration: mission and case sorties, modes, actions, world markers |
 

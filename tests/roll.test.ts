@@ -5,9 +5,11 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import { rng } from '../src/core/math';
-import { describeReturn, inspectReturn, mismatchReason, newMission, RETURN_BY_ID, scanReturn, TARGET, useReturns } from '../src/mission/mission';
-import { DECOYS, DEFAULT_RETURNS, MINE_ROAD_PTS, MISSION_01, RETURNS, rollReturns, type ReturnDef, type ReturnId } from '../src/mission/mission01';
-import { blindClues, checkClues, clueVerdict, nextCheck, reconGuide, type Sensor } from '../src/mission/reconGuide';
+import { mismatchReason, newMission, RETURN_BY_ID, TARGET, useReturns } from '../src/mission/mission';
+import { DECOYS, DEFAULT_RETURNS, MINE_ROAD_PTS, MISSION_01, RETURNS, rollReturns, SECTOR_7, type ReturnDef, type ReturnId } from '../src/mission/mission01';
+import { clueChecks, newBoard, ruledOut, useAsset, type AssetId } from '../src/control/board';
+import { CONTROL_01 } from '../src/mission/mission01Control';
+import type { EquipmentId } from '../src/operation/catalog';
 import { heightAt } from '../src/world/terrain';
 import { ROADS, WATER_LEVEL } from '../src/world/worldData';
 
@@ -76,57 +78,40 @@ describe('the roll', () => {
   });
 });
 
-describe('the loadout decides what can be checked', () => {
+describe('the loadout decides what can be checked (on the Mission Control board)', () => {
   /** A cast with the off-road lorry as A and the truck as C. */
   const withField = (): ReturnDef[] => DEFAULT_RETURNS.map((r) => (r.id === 'A' ? { ...DECOYS.field, id: 'A' as ReturnId } : r));
-  const card = (id: ReturnId, sensor: 'optical' | 'thermal', fitted: Sensor[]) => {
-    const m = newMission();
-    const r = RETURN_BY_ID[id];
-    const [x, z] = r.route[0];
-    scanReturn(m, id, 5, x, z);
-    inspectReturn(m, id, 10, true, sensor);
-    const checks = checkClues(MISSION_01.clues, describeReturn(m, id, x, z, r.moving).traits);
-    return { checks, verdict: clueVerdict(checks, true, fitted), next: nextCheck(checks, fitted), blind: blindClues(checks, fitted) };
+  const sector = (r: ReturnDef) => r.route.every(([x, z]) => x >= SECTOR_7.x0 && x <= SECTOR_7.x1 && z >= SECTOR_7.z0 && z <= SECTOR_7.z1);
+  const looked = (cast: ReturnDef[], id: ReturnId, assets: AssetId[], kit: EquipmentId[]) => {
+    const b = newBoard(CONTROL_01, cast, kit, rng(7));
+    for (const a of assets) useAsset(b, cast, sector, MISSION_01.clues, a, a === 'sigint' ? { kind: 'none' } : { kind: 'return', id });
+    const r = cast.find((x) => x.id === id)!;
+    return clueChecks(r, b.returns[id]!, sector(r), MISSION_01.clues);
   };
+  const check = (cs: ReturnType<typeof looked>, clue: string) => cs.find((c) => c.clue === clue)!.check;
 
   it('the optical camera catches the off-road look-alike', () => {
-    useReturns(withField());
-    const c = card('A', 'optical', ['radar', 'optical']);
-    expect(c.checks.find((x) => x.clue === 'ON A ROAD')!.check).toBe('no');
-    expect(c.verdict).toBe('mismatch');
+    const cs = looked(withField(), 'A', ['optical'], ['radar', 'optical']);
+    expect(check(cs, 'ON A ROAD')).toBe('no');
+    expect(ruledOut(cs)).toBe(true);
   });
 
-  it('with only thermal it is indistinguishable from the truck: the card says the road cannot be checked', () => {
-    useReturns(withField());
-    const fitted: Sensor[] = ['radar', 'thermal'];
-    const decoy = card('A', 'thermal', fitted);
-    const truck = card('C', 'thermal', fitted);
-    expect(decoy.verdict).toBe('match');
-    expect(truck.verdict).toBe('match');
-    expect(decoy.blind).toContain('ON A ROAD');
-    expect(decoy.next).toBeNull();
-  });
-
-  it('with both cameras fitted, a thermal look is followed by the optical one the road needs', () => {
-    const fitted: Sensor[] = ['radar', 'optical', 'thermal'];
-    const c = card('C', 'thermal', fitted);
-    expect(c.verdict).toBe('check');
-    expect(c.next).toEqual({ clue: 'ON A ROAD', sensor: 'optical' });
-    const g = reconGuide({ phase: 'locate', anyDetected: true, selected: 'C', camera: true, resolved: true, marked: 'none', verdict: c.verdict, check: c.next });
-    expect(g.next).toEqual({ action: 'check', label: 'OPTICAL ON C · ROAD?' });
-    expect(g.steps!.find((s) => s.on)!.id).toBe('match');
+  it('with only thermal it is indistinguishable from the truck: the road stays a question', () => {
+    const decoy = looked(withField(), 'A', ['thermal'], ['radar', 'thermal']);
+    const truck = looked(withField(), 'C', ['thermal'], ['radar', 'thermal']);
+    expect(ruledOut(decoy)).toBe(false);
+    expect(ruledOut(truck)).toBe(false);
+    expect(check(decoy, 'ON A ROAD')).toBe('?');
   });
 
   it('SIGINT on board: the radio clue gets checked too', () => {
-    const fitted: Sensor[] = ['radar', 'optical', 'sigint'];
-    const c = card('C', 'optical', fitted);
-    expect(c.next).toEqual({ clue: 'RADIO DEAD', sensor: 'sigint' });
-    expect(reconGuide({ phase: 'locate', anyDetected: true, selected: 'C', camera: true, resolved: true, marked: 'none', verdict: c.verdict, check: c.next }).next!.label).toBe('SIGINT · LISTEN TO C');
+    const cs = looked(DEFAULT_RETURNS as ReturnDef[], 'C', ['optical', 'sigint'], ['radar', 'optical', 'sigint']);
+    expect(cs.every((c) => c.check === 'yes')).toBe(true);
   });
 
   it('without SIGINT the radio clue is a known blind spot, never a reason to doubt the truck', () => {
-    const c = card('C', 'optical', ['radar', 'optical']);
-    expect(c.verdict).toBe('match');
-    expect(c.blind).toEqual(['RADIO DEAD']);
+    const cs = looked(DEFAULT_RETURNS as ReturnDef[], 'C', ['optical'], ['radar', 'optical']);
+    expect(ruledOut(cs)).toBe(false);
+    expect(cs.filter((c) => c.check === '?').map((c) => c.clue)).toEqual(['RADIO DEAD']);
   });
 });
