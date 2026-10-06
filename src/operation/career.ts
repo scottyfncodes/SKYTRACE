@@ -15,6 +15,8 @@ export interface Career {
   operations: number;
   completed: number;
   best: Record<string, Grade>;
+  /** Best Mission Control score per mission. */
+  controlBest: Record<string, number>;
   unlocked: string[];
   lastLoadout: Loadout | null;
 }
@@ -38,7 +40,7 @@ interface Storage {
 }
 
 export function newCareer(): Career {
-  return { version: 1, credits: 0, xp: 0, operations: 0, completed: 0, best: {}, unlocked: [], lastLoadout: null };
+  return { version: 1, credits: 0, xp: 0, operations: 0, completed: 0, best: {}, controlBest: {}, unlocked: [], lastLoadout: null };
 }
 
 export function loadCareer(storage: Storage): Career {
@@ -47,7 +49,7 @@ export function loadCareer(storage: Storage): Career {
     if (!raw) return newCareer();
     const c = JSON.parse(raw) as Partial<Career>;
     if (c.version !== 1) return newCareer();
-    return { ...newCareer(), ...c, unlocked: Array.isArray(c.unlocked) ? c.unlocked : [], best: c.best ?? {} };
+    return { ...newCareer(), ...c, unlocked: Array.isArray(c.unlocked) ? c.unlocked : [], best: c.best ?? {}, controlBest: c.controlBest ?? {} };
   } catch {
     return newCareer();
   }

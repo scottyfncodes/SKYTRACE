@@ -130,9 +130,11 @@ export function tickOperation(op: OperationState, def: MissionDef, a: AircraftFi
 /**
  * Recon is over (objectives done, extracted by choice, weather or fuel): fly
  * home. Given the aircraft's pose, the way home starts with a ring right
- * ahead of it. Spotted on the way in, the radar has you from the first ring.
+ * ahead of it. Spotted on the way in (or sent out with RADAR CONTACT by the
+ * Exit Profile), the radar has you from the first ring. `def.return` is the
+ * leg Mission Control generated.
  */
-export function beginReturn(op: OperationState, def?: MissionDef, pose?: { x: number; y: number; z: number; yaw: number }, ground: Ground = flat): void {
+export function beginReturn(op: OperationState, def?: Pick<MissionDef, 'return'>, pose?: { x: number; y: number; z: number; yaw: number }, ground: Ground = flat, contact = false): void {
   if (op.stage !== 'recon' && op.stage !== 'outbound') return;
   op.stage = 'return';
   if (def && pose) {
@@ -141,7 +143,7 @@ export function beginReturn(op: OperationState, def?: MissionDef, pose?: { x: nu
     const join = joinRing(pose, first && first.kind === 'ring' ? first : BASE, ground, deck && deck.kind === 'ceiling' ? deck.y : Infinity);
     op.routes.return = placeRoute(def.return, ground, pose, join);
   }
-  op.ret = newLeg(op.routes.return, op.outbound.detected);
+  op.ret = newLeg(op.routes.return, op.outbound.detected || contact);
 }
 
 /** Touch-down at base. Only the return leg ends with a landing. */
