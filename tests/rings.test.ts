@@ -282,10 +282,10 @@ describe('the operation: FLY → OPERATE → FLY AGAIN', () => {
   it('outbound: WHEELS UP objective is the first ring; the last ring puts the crew ON STATION', () => {
     const op = newOperation(def, defaultLoadout());
     launch(op);
-    expect(flightObjective(op, def, cap)).toMatchObject({ kicker: 'OUTBOUND 1/8', title: 'FLY THE RINGS' });
+    expect(flightObjective(op, def, cap)).toMatchObject({ kicker: 'RING 1/8', title: 'REACH SECTOR 7' });
     flyRoute(op, 7);
     expect(op.stage).toBe('outbound');
-    expect(flightObjective(op, def, cap)!.kicker).toBe('OUTBOUND 8/8');
+    expect(flightObjective(op, def, cap)!.kicker).toBe('RING 8/8');
     expect(flightObjective(op, def, cap)!.detail).toBe(`BELOW ${cap.stealthCeiling} m`);
     const r8 = rings(op.routes.outbound)[7];
     const ev = [
@@ -310,14 +310,14 @@ describe('the operation: FLY → OPERATE → FLY AGAIN', () => {
     expect(join.id).toBe('join');
     expect(Math.hypot(join.x - pose.x, join.z - pose.z)).toBeCloseTo(380, 0);
     expect(op.ret.contact).toBe(false);
-    expect(flightObjective(op, def, cap)).toMatchObject({ kicker: 'RETURN 1/8', title: 'RETURN TO BASE' });
+    expect(flightObjective(op, def, cap)).toMatchObject({ kicker: 'RING 1/8', title: 'GET OUT' });
     flyRoute(op);
     expect(op.ret.contact).toBe(true); // leaving the sector raised RADAR CONTACT
     expect(flightObjective(op, def, cap)!.title).toBe('LAND AT BASE');
     expect(ringTally(op.ret, op.routes.return)).toEqual({ hit: 8, total: 8 });
     landAtBase(op, def);
     expect(op.stage).toBe('debrief');
-    expect(stageResults(newMission(), op, def).map((x) => x.word)).toEqual(['CLEAN', 'NO PHOTO', 'CLEAN']);
+    expect(stageResults(newMission(), op, def).map((x) => x.word)).toEqual(['NOT FOUND', 'NO TARGET', 'CLEAN']);
   });
 
   it('spotted on the way in: the radar has you from the first ring home', () => {
@@ -343,7 +343,9 @@ describe('the operation: FLY → OPERATE → FLY AGAIN', () => {
     expect(ringTally(op.outbound, op.routes.outbound)).toEqual({ hit: 0, total: 8 });
     expect(op.outbound.index).toBe(2);
     flyRoute(op);
-    expect(stageResults(newMission(), op, def)[0]).toMatchObject({ ok: false, word: '6/8 RINGS' });
+    const found = newMission();
+    found.primaryComplete = true;
+    expect(stageResults(found, op, def)[0]).toMatchObject({ ok: false, word: '6/8 RINGS' });
   });
 });
 

@@ -32,6 +32,8 @@ export interface HudFrame {
   sortieLabel?: string;
   /** Mission objective indicator; null hides it (open case). */
   objective?: { kicker?: string; title: string; detail: string; progress: number | null; done: boolean } | null;
+  /** The mission phase shown on the objective: "02 EXECUTE ●●○". */
+  phase?: { n: string; label: string; marks: readonly string[] } | null;
   /** Small status chips under the nav strip (weather, cloud clearance). */
   chips?: { text: string; cls?: string }[];
   /** Mission warning shown when nothing more urgent is (e.g. IN CLOUD). */
@@ -60,6 +62,7 @@ export class Hud {
   private bannerShown: Banner | null = null;
   private lastObjective = '';
   private lastChips = '';
+  private lastPhase = '';
 
   constructor(root: HTMLElement) {
     const q = (id: string) => {
@@ -67,7 +70,7 @@ export class Hud {
       if (!e) throw new Error(`missing #${id}`);
       return e;
     };
-    for (const id of ['alt', 'spd', 'hdg', 'compass', 'fuel-fill', 'fuel-txt', 'sensors', 'sortie', 'msgs', 'warn', 'nav', 'contact-card', 'cc-code', 'cc-label', 'cc-grid', 'cc-conf', 'cc-status', 'radar-state', 'btn-mark', 'btn-scan', 'btn-drop', 'btn-rtb', 'signal', 'thr-fill', 'objective', 'obj-title', 'obj-detail', 'obj-progress', 'banner', 'banner-kicker', 'banner-text', 'cc-traits', 'cc-action', 'obj-kicker', 'chips']) {
+    for (const id of ['alt', 'spd', 'hdg', 'compass', 'fuel-fill', 'fuel-txt', 'sensors', 'sortie', 'msgs', 'warn', 'nav', 'contact-card', 'cc-code', 'cc-label', 'cc-grid', 'cc-conf', 'cc-status', 'radar-state', 'btn-mark', 'btn-scan', 'btn-drop', 'btn-rtb', 'signal', 'thr-fill', 'objective', 'obj-title', 'obj-detail', 'obj-progress', 'banner', 'banner-kicker', 'banner-text', 'cc-traits', 'cc-action', 'obj-kicker', 'chips', 'obj-phase']) {
       this.el[id] = q(id);
     }
     this.scope = q('scope') as HTMLCanvasElement;
@@ -146,6 +149,12 @@ export class Hud {
     // objective indicator
     const ob = f.objective ?? null;
     this.el['objective'].classList.toggle('hidden', !ob);
+    const ph = f.phase ?? null;
+    const phKey = ph ? `${ph.n}|${ph.label}|${ph.marks.join()}` : '';
+    if (phKey !== this.lastPhase) {
+      this.lastPhase = phKey;
+      this.el['obj-phase'].innerHTML = ph ? `${ph.n} ${ph.label} <i class="dots">${ph.marks.map((m) => `<i class="${m}"></i>`).join('')}</i>` : '';
+    }
     if (ob) {
       this.el['obj-kicker'].textContent = ob.kicker ?? '';
       const key = `${ob.title}|${ob.detail}|${ob.done}`;

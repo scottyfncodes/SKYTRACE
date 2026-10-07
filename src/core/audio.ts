@@ -294,6 +294,32 @@ export class AudioSystem {
     this.tone(784, 0.12, 0.12, 'triangle', 0.24);
     this.tone(1046, 0.4, 0.12, 'triangle', 0.36);
   }
+  /** A phase begins: RECON curious, EXECUTE locked-in, ESCAPE an alarm. */
+  phase(p: 'recon' | 'execute' | 'escape'): void {
+    if (p === 'recon') {
+      this.tone(440, 0.25, 0.1, 'sine');
+      this.tone(660, 0.25, 0.1, 'sine', 0.18);
+      this.tone(990, 0.5, 0.08, 'sine', 0.36);
+    } else if (p === 'execute') {
+      this.noise(0.18, 0.3, 700, 'lowpass');
+      this.tone(220, 0.16, 0.2, 'square');
+      this.tone(330, 0.16, 0.16, 'square', 0.14);
+      this.tone(440, 0.4, 0.14, 'square', 0.28);
+    } else {
+      for (let i = 0; i < 3; i++) {
+        this.tone(780, 0.16, 0.13, 'sawtooth', i * 0.34);
+        this.tone(520, 0.16, 0.13, 'sawtooth', i * 0.34 + 0.17);
+      }
+    }
+  }
+
+  /** The payload hits home: a thud and a lock-on chirp. */
+  payload(): void {
+    this.noise(0.3, 0.4, 400, 'lowpass', 90);
+    this.tone(1318, 0.08, 0.12, 'square', 0.25);
+    this.tone(1760, 0.25, 0.12, 'square', 0.35);
+  }
+
   warn(): void {
     this.tone(330, 0.2, 0.12, 'square');
   }

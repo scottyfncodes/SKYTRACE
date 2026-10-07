@@ -215,9 +215,19 @@ export class MissionScene {
   private waypoint: THREE.Mesh;
   private rings: RingMesh[] = [];
   private routeLine: THREE.Line<THREE.BufferGeometry, THREE.LineDashedMaterial> | null = null;
+  /** The sector boundary: amber while nobody knows you are there, red once they do. */
+  private curtain: THREE.Group;
+  private alarm = 0;
+  /** A ground reticle under the drop target. */
+  private dropZone: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
 
   constructor(sector: Sector, private hf: HeightField) {
-    this.group.add(sectorCurtain(sector, hf));
+    this.curtain = sectorCurtain(sector, hf);
+    this.group.add(this.curtain);
+    this.dropZone = new THREE.Mesh(new THREE.RingGeometry(30, 36, 48), new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false, fog: false }));
+    this.dropZone.rotation.x = -Math.PI / 2;
+    this.dropZone.visible = false;
+    this.group.add(this.dropZone);
     this.setCast(RETURNS);
     this.destinationMarker = new THREE.Mesh(new THREE.RingGeometry(26, 30, 40), new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }));
     this.destinationMarker.rotation.x = -Math.PI / 2;
@@ -382,6 +392,34 @@ export class MissionScene {
 
   animate(t: number, dt: number): void {
     for (const m of this.storms.values()) if (m.group.visible) m.animate(t, dt);
+    if (this.alarm > 0) this.paintCurtain(this.alarm * (0.75 + 0.25 * Math.sin(t * 6)));
+    if (this.dropZone.visible) {
+      const k = (t * 0.8) % 1;
+      this.dropZone.scale.setScalar(1.6 - 0.6 * k);
+      this.dropZone.material.opacity = 0.35 + 0.6 * k;
+    }
+  }
+
+  /** The sector turns red: they know you are here (0 = amber, 1 = red). */
+  setAlarm(k: number): void {
+    this.alarm = Math.max(0, Math.min(1, k));
+    this.paintCurtain(this.alarm);
+  }
+
+  private paintCurtain(k: number): void {
+    const c = new THREE.Color(AMBER).lerp(RING_RED, k);
+    this.curtain.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.Material & { color?: THREE.Color; uniforms?: { color: { value: THREE.Color } } };
+      if (!m) return;
+      if (m.uniforms?.color) m.uniforms.color.value.copy(c);
+      else if (m.color) m.color.copy(c);
+    });
+  }
+
+  /** Mark the drop target on the ground (null hides it). */
+  setDropZone(p: { x: number; z: number } | null): void {
+    this.dropZone.visible = !!p;
+    if (p) this.dropZone.position.set(p.x, this.hf.sample(p.x, p.z) + 1.5, p.z);
   }
 
   /** Lightning from the nearest storm cell into the aircraft. */
@@ -419,12 +457,15 @@ export class MissionScene {
     for (const p of this.pins.values()) p.visible = false;
     const dest = this.destinationMarker.visible;
     const wp = this.waypoint.visible;
+    const dz = this.dropZone.visible;
+    this.dropZone.visible = false;
     this.destinationMarker.visible = false;
     this.waypoint.visible = false;
     fn();
     [...this.pins.values()].forEach((p, i) => (p.visible = was[i]));
     this.destinationMarker.visible = dest;
     this.waypoint.visible = wp;
+    this.dropZone.visible = dz;
   }
 
   showDestination(x: number, z: number, on: boolean): void {

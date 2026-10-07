@@ -440,8 +440,8 @@ export class MissionBoard {
       }
     }
     if (!headHtml) {
-      headHtml = '<b>MISSION CONTROL</b><span class="st">YOUR MOVE</span>';
-      bodyHtml = `<ol class="how"><li><b>LOOK</b> Tap a vehicle or a <i>?</i> on a route. Drag an asset onto it.</li><li><b>DECIDE</b> MARK the truck. Pick a route home.</li><li><b>EXECUTE</b> Your score becomes the flight out.</li></ol>`;
+      headHtml = '<b>FIND THE TRUCK</b><span class="st">YOUR MOVE</span>';
+      bodyHtml = `<ol class="how"><li><b>LOOK</b> Drag a sensor onto a vehicle.</li><li><b>MARK</b> The one that fits every clue.</li><li><b>PICK</b> A way out. Then lock the plan.</li></ol>`;
     }
     if (this.keys.cardHead !== headHtml) {
       this.keys.cardHead = headHtml;
@@ -706,17 +706,18 @@ export class MissionBoard {
   }
 
   // ------------------------------------------------------------------ EXECUTE: the score becomes the flight out
-  showResult(res: ControlResult, ex: ExitProfile, best: number | null, isBest: boolean, hook: string): void {
+  showResult(res: ControlResult, ex: ExitProfile, best: number | null, isBest: boolean, hook: string, next: { n: string; label: string; title: string }): void {
     const R = this.el['mb-result'];
     const lines = res.lines.map((l, i) => `<li style="--i:${i}" class="${l.points < 0 ? 'neg' : l.points > 0 ? 'pos' : ''}"><small>${l.label}</small><span>${esc(l.detail)}</span><b data-to="${l.points}">0</b></li>`).join('');
-    const profile = ex.lines.map((l, i) => `<li style="--i:${i}" class="${l.tone}"><small>${l.label}</small><b>${esc(l.value)}</b></li>`).join('');
+    // the way out at a glance: what will bite, what is on offer
+    const profile = ex.lines.filter((l) => SHOWN.includes(l.label)).map((l, i) => `<li style="--i:${i}" class="${l.tone}"><small>${l.label}</small><b>${esc(l.value)}</b></li>`).join('');
     R.innerHTML = `<div class="mr-card">
-      <div class="mr-score"><small>MISSION CONTROL</small><ul class="mr-lines">${lines}</ul>
+      <div class="mr-score"><small>RECON SCORE</small><ul class="mr-lines">${lines}</ul>
         <div class="mr-total"><b id="mr-total">0</b><span class="mr-rank r-${res.rank}">${res.rank}</span></div>
         <p class="mr-best">${isBest ? 'NEW PERSONAL BEST' : best !== null ? `PERSONAL BEST ${best.toLocaleString('en-US')}` : ''}</p></div>
-      <div class="mr-exit"><small>EXIT PROFILE</small><h2 class="t-${ex.tier}">${TIER_LABEL[ex.tier]}</h2><ul>${profile}</ul>
+      <div class="mr-exit"><small>YOUR WAY OUT</small><h2 class="t-${ex.tier}">${TIER_LABEL[ex.tier]}</h2><ul>${profile}</ul>
         <p class="mr-hook">${esc(hook)}</p>
-        <button id="btn-fly-out" type="button" class="btn big fly">TAKE CONTROLS ▶</button></div>
+        <button id="btn-fly-out" type="button" class="btn big fly"><small>${next.n} ${next.label}</small>${esc(next.title)} ▶</button></div>
     </div>`;
     R.className = 'mb-result on';
     const total = R.querySelector<HTMLElement>('#mr-total')!;
@@ -758,6 +759,9 @@ export class MissionBoard {
     return R.classList.contains('done') ? 'done' : R.classList.contains('ranked') ? 'ranked' : 'counting';
   }
 }
+
+/** The exit lines the result shows (the rest is in the plan panel). */
+const SHOWN = ['WEATHER', 'TRAFFIC', 'FUEL', 'OPPORTUNITY'];
 
 const WHAT: Record<CellTruth, string> = {
   clear: 'Nothing in the way. A clean stretch.',

@@ -258,7 +258,7 @@ describe('the whole operation: PREFLIGHT → OUTBOUND → RECON → RETURN → D
     handBack(crew);
     beginReturn(op, def, { x: a.x, y: a.y, z: a.z, yaw: a.yaw }, ground);
     expect(op.stage).toBe('return');
-    expect(flightObjective(op, def, cap)!.title).toBe('RETURN TO BASE');
+    expect(flightObjective(op, def, cap)!.title).toBe('GET OUT');
     expect(op.routes.return.gates[0].id).toBe('join');
     const deck = def.return.hazards.find((h) => h.kind === 'ceiling')!;
     // the copilot flies low: this crew comes back under the new cloud deck (the KESTREL's autopilot does not)

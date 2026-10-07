@@ -6,11 +6,23 @@ An aerial reconnaissance mystery. Fly a small aircraft over a miniature landscap
 
 The plane gets you there. The sensors show you what you missed. Your deductions reveal what it means.
 
+## RECON → EXECUTE → ESCAPE
+
+Every mission is played in the same three phases, whatever its story. The player always knows which one they are in: the objective on the HUD carries the phase and three dots (`02 EXECUTE ●●○`), each phase has its colour (RECON ice blue, EXECUTE amber, ESCAPE red), and a short card with a sound sting announces each one.
+
+| Phase | The question | Mission 01 |
+| --- | --- | --- |
+| **01 RECON** | What is happening? | Fly the rings into Sector 7, then find the truck at Mission Control |
+| **02 EXECUTE** | What do I do about it? | Lined up on the truck: fly through the one ring over it and the tracker drops |
+| **03 ESCAPE** | What went wrong? Get out. | The truck bolts for the river, the sector turns red, the weather closes in: timed rings home |
+
+Text gives the immediate objective; the world tells the rest (the truck pulls over for the run and runs after the drop, the sector boundary turns from amber to red, the haze rolls in). Each mission's story is data (`story` in its `MissionDef`: a hook, one verb per phase, a title and one line per phase), so new mission types reuse the same rhythm. A one-line **case file** on the title card and the debrief advances after a clean operation (target found, drop on target, home safe): a bigger story told one line at a time.
+
 ## The operation
 
-Every mission is a reconnaissance operation in five stages:
+Under the three phases, every mission is a reconnaissance operation in these stages:
 
-**PREFLIGHT → OUTBOUND → RECON → RETURN → DEBRIEF**
+**PREFLIGHT → OUTBOUND → RECON → EXECUTE → RETURN → DEBRIEF**
 
 1. **Preflight.** The briefing puts the objective first (primary, secondaries, intel, target area, weather, expected conditions, window, constraints, threats). Then plan the job:
    - **Aircraft:** KESTREL (single seat, fast, quiet, short legs, fragile in weather), HERON (two crew, long range, weather-tolerant, louder), ALBATROSS (full crew, four bays; unlocked by experience).
@@ -23,8 +35,9 @@ Every mission is a reconnaissance operation in five stages:
    - **Decide:** MARK the truck (a wrong call costs a minute and points), SHADOW it to find where it is going (a barge), and pick a route home. The panel shows the live **exit forecast** for the plan as it stands. Your plan is fixed when you press **EXECUTE MISSION**.
    - **Score:** OBJECTIVE, INTELLIGENCE, EFFICIENCY, RISK, BONUS, LOSSES → a total and a rank: **ACE / SOLID / ROUGH / SCRAMBLE**. If the clock runs out, the board executes itself.
    - **Score → Exit Profile:** the rank sets the tier (**OPTIMAL / STANDARD / DEGRADED / SCRAMBLE**: visibility, fuel, a shortcut, whether opportunities are open), and what you *found on your chosen route* builds its rings. A storm you found is routed around; one you missed sits on the rings. A radar site you found picks you up late; one you missed has you on the clock from the first ring. A cache you found (or the barge, if you shadowed the truck) becomes a bonus **photo-pass ring**, on a good exit only. A SCRAMBLE exit breaks low under radar lock with the front on your tail. The exit briefing reads it all out before you take the controls.
-4. **Return (you fly again).** The controls come back wings-level with the first ring dead ahead of the nose, on screen at once, on the route Mission Control generated: its weather, cloud deck, storms, fuel and traffic are the ones your board produced. Every ring home is on a clock: it starts shrinking the moment you hit the one before it (the first one as soon as you have the controls) and closes if you are too slow. Under RADAR CONTACT the closing rings turn red and the heartbeat quickens. Bonus rings (ice blue, cued *PHOTO PASS*) are optional: fly through for the reward, pass them by at no cost. The last ring lines you up on the runway.
-5. **Debrief.** A recon report: the Mission Control score and rank with your personal best (and a hint at what a better board would have found), primary, secondaries, identification, evidence quality, opportunities taken, flight discipline, fuel, damage, a grade, credits and XP, unlocks, and the intelligence the recon established.
+4. **Execute (you fly).** With the truck marked, the controls come back lined up on it: the truck pulls over, a beam and a ground reticle mark it, and one big ring stands low over it. Fly through: the tracker parachutes down (*PAYLOAD AWAY*). Wide of it: *DROP MISSED*. Either way the world reacts and the escape begins. No truck marked: straight to the escape.
+5. **Escape (you fly again).** The controls come back wings-level with the first ring dead ahead of the nose, on screen at once, on the route Mission Control generated: its weather, cloud deck, storms, fuel and traffic are the ones your board produced. Every ring home is on a clock: it starts shrinking the moment you hit the one before it (the first one as soon as you have the controls) and closes if you are too slow. Under RADAR CONTACT the closing rings turn red and the heartbeat quickens. Bonus rings (ice blue, cued *PHOTO PASS*) are optional: fly through for the reward, pass them by at no cost. The last ring lines you up on the runway.
+6. **Debrief.** One tick or cross per phase (RECON, EXECUTE, ESCAPE), the case file line, and a recon report: the Mission Control score and rank with your personal best (and a hint at what a better board would have found), primary, secondaries, identification, evidence quality, opportunities taken, flight discipline, fuel, damage, a grade, credits and XP, unlocks, and the intelligence the recon established.
 
 Progression (credits, XP, unlocks, best grade, last loadout) is saved in the browser, separately from the open case.
 
@@ -101,7 +114,9 @@ Plain TypeScript + Vite + Three.js, no backend.
 | `src/operation/catalog.ts` | Aircraft, crew and equipment definitions |
 | `src/operation/loadout.ts` | Loadout validation and the capabilities a plan gives you (pure, tested) |
 | `src/operation/gates.ts` | Ring routes (plane-crossing, misses, RADAR CONTACT clock) and weather hazards for the flying legs (pure, tested) |
-| `src/operation/operation.ts` | Stage machine: preflight, outbound, recon, return, debrief (pure, tested) |
+| `src/operation/operation.ts` | Stage machine: preflight, outbound, recon, execute, return, debrief (pure, tested) |
+| `src/operation/phases.ts` | RECON → EXECUTE → ESCAPE: which phase a stage is, the HUD dots, the story copy shape (pure, tested) |
+| `src/operation/story.ts` | The case file: one line of the bigger story per clean operation (pure, tested) |
 | `src/operation/score.ts`, `career.ts` | Recon report, grade, rewards; progression and unlocks (pure, tested) |
 | `src/ui/preflight.ts` | Briefing and loadout screen |
 | `src/mission/missionDef.ts` | What a mission declares: briefing, operations area, recon window, outbound and return legs |

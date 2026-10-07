@@ -55,7 +55,7 @@ export type HazardDef =
   | { kind: 'ceiling'; id: string; label: string; y: number };
 
 export interface LegDef {
-  id: 'outbound' | 'return';
+  id: 'outbound' | 'execute' | 'return';
   /** The pilot's objective while flying the rings. */
   title: string;
   gates: readonly GateSpec[];
@@ -200,6 +200,43 @@ export function joinRing(pose: { x: number; y: number; z: number; yaw: number },
   return { kind: 'ring', id: 'join', x: p.x, z: p.z, agl: p.y - p.g, r: 40, y: p.y, nx, nz };
 }
 
+/** How far out the drop run starts, how high over the target the drop ring stands, and how wide. */
+export const DROP_RUN = 620;
+export const DROP_AGL = 40;
+export const DROP_R = 42;
+
+/**
+ * EXECUTE: line the aircraft up on the target. The run starts DROP_RUN metres
+ * out on the aircraft's side of the target (swung round if that would leave
+ * the map), nose on the target, a shallow glide above the terrain on the way
+ * in; one big ring stands low over the target itself. Fly through it: drop.
+ */
+export function planDropRun(target: Pt, from: Pt, ground: Ground, title = 'COMPLETE THE DROP', limit = 1050): { start: { x: number; y: number; z: number; yaw: number }; route: Route } {
+  let [dx, dz] = unit(from.x - target.x, from.z - target.z);
+  if (dx === 0 && dz === 0) [dx, dz] = [0, 1];
+  let sx = target.x + dx * DROP_RUN;
+  let sz = target.z + dz * DROP_RUN;
+  for (let k = 1; k < 12 && (Math.abs(sx) > limit || Math.abs(sz) > limit); k++) {
+    // swing the approach round until it starts on the map
+    const a = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 6);
+    const [ux, uz] = unit(from.x - target.x, from.z - target.z);
+    dx = ux * Math.cos(a) - uz * Math.sin(a);
+    dz = ux * Math.sin(a) + uz * Math.cos(a);
+    sx = target.x + dx * DROP_RUN;
+    sz = target.z + dz * DROP_RUN;
+  }
+  sx = Math.max(-limit, Math.min(limit, sx));
+  sz = Math.max(-limit, Math.min(limit, sz));
+  // clear the ground all the way in
+  let high = -Infinity;
+  for (let t = 0; t <= 1; t += 0.05) high = Math.max(high, ground(sx + (target.x - sx) * t, sz + (target.z - sz) * t));
+  const gy = ground(target.x, target.z);
+  const y = Math.max(high + 70, ground(sx, sz) + 110, gy + DROP_AGL + 60);
+  const [nx, nz] = unit(target.x - sx, target.z - sz);
+  const ring: Ring = { kind: 'ring', id: 'drop', x: target.x, z: target.z, agl: DROP_AGL, r: DROP_R, y: gy + DROP_AGL, nx, nz, cue: 'DROP ZONE' };
+  return { start: { x: sx, y, z: sz, yaw: Math.atan2(-nx, -nz) }, route: { id: 'execute', title, gates: [ring], hazards: [] } };
+}
+
 export function newLeg(route: Route, contact = false, timed = false): LegState {
   const status: Record<string, GateStatus> = {};
   for (const g of route.gates) status[g.id] = 'pending';
@@ -261,7 +298,7 @@ function crossing(g: Ring, p: { x: number; y: number; z: number }, a: AircraftFi
 function advance(s: LegState, route: Route, to: number, ev: LegEvent[]): void {
   s.index = to;
   s.clock = null;
-  if (legComplete(s, route)) ev.push({ type: 'leg-complete', id: route.id, text: route.id === 'outbound' ? 'ON STATION' : 'HOME' });
+  if (legComplete(s, route)) ev.push({ type: 'leg-complete', id: route.id, text: route.id === 'outbound' ? 'ON STATION' : route.id === 'execute' ? 'DROP' : 'HOME' });
 }
 
 function raiseContact(s: LegState, ev: LegEvent[], id: string): void {

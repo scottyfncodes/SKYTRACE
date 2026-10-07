@@ -914,3 +914,120 @@ img.thermal { filter: grayscale(1) invert(1) brightness(0.55) contrast(2.2); }
 .handoff.calm .handoff-card b { color: var(--ph); }
 .handoff.calm .ho-status li:first-child { color: var(--ice); }
 @media (max-height: 460px) { .handoff.calm .handoff-card { transform: translateY(-8vh); } }
+
+/* ============================================================
+   RECON → EXECUTE → ESCAPE
+   Every mission is played in the same three phases. Each has its
+   colour: RECON ice (analytical), EXECUTE amber (focused), ESCAPE red
+   (urgent). The HUD, the cards and the board all wear it.
+   ============================================================ */
+#app { --phc: var(--amber); }
+#app[data-phase="recon"] { --phc: var(--ice); }
+#app[data-phase="execute"] { --phc: var(--amber); }
+#app[data-phase="escape"] { --phc: var(--warn); }
+
+/* the three dots: done, failed, now, still to come */
+.dots { display: inline-flex; gap: 4px; vertical-align: middle; margin-left: 6px; font-style: normal; }
+.dots i { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid currentColor; opacity: 0.55; box-sizing: border-box; }
+.dots i.done { background: var(--ph); border-color: var(--ph); opacity: 1; }
+.dots i.failed { background: var(--warn); border-color: var(--warn); opacity: 1; }
+.dots i.now { background: currentColor; opacity: 1; animation: dotnow 1.2s ease-in-out infinite; }
+@keyframes dotnow { 50% { box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.12); } }
+
+/* the objective carries the phase: "02 EXECUTE ●●○ · RING" */
+.obj-top { display: flex; align-items: center; gap: 8px; margin-left: 22px; }
+.obj-phase { font-size: 10px; letter-spacing: 0.22em; font-weight: 700; color: var(--phc); white-space: nowrap; }
+.obj-phase:empty { display: none; }
+.obj-top .obj-kicker { font-size: 9px; letter-spacing: 0.2em; color: rgba(232, 243, 234, 0.55); }
+.obj-top .obj-kicker { margin-left: auto; }
+#app[data-phase] .objective { border-color: color-mix(in srgb, var(--phc) 55%, transparent); border-left-color: var(--phc); }
+#app[data-phase] .objective .reticle { border-color: var(--phc); }
+#app[data-phase] .objective .reticle::after { background: var(--phc); }
+#app[data-phase] .obj-detail { color: var(--phc); }
+#app[data-phase="escape"] .objective { box-shadow: 0 0 18px rgba(255, 90, 60, 0.25); }
+
+/* EXECUTE: the screen narrows to a sight; ESCAPE: the edges burn */
+#app[data-phase="execute"] #fx {
+  background:
+    linear-gradient(var(--amber), var(--amber)) left 14px top 14px / 46px 3px no-repeat,
+    linear-gradient(var(--amber), var(--amber)) left 14px top 14px / 3px 46px no-repeat,
+    linear-gradient(var(--amber), var(--amber)) right 14px top 14px / 46px 3px no-repeat,
+    linear-gradient(var(--amber), var(--amber)) right 14px top 14px / 3px 46px no-repeat,
+    linear-gradient(var(--amber), var(--amber)) left 14px bottom 14px / 46px 3px no-repeat,
+    linear-gradient(var(--amber), var(--amber)) left 14px bottom 14px / 3px 46px no-repeat,
+    linear-gradient(var(--amber), var(--amber)) right 14px bottom 14px / 46px 3px no-repeat,
+    linear-gradient(var(--amber), var(--amber)) right 14px bottom 14px / 3px 46px no-repeat;
+  opacity: 1;
+}
+#app[data-phase="escape"] #fx { animation: escapeburn 1.6s ease-in-out infinite; }
+@keyframes escapeburn { 0%, 100% { box-shadow: inset 0 0 60px rgba(255, 90, 60, 0.22); } 50% { box-shadow: inset 0 0 110px rgba(255, 90, 60, 0.42); } }
+@media (prefers-reduced-motion: reduce) { #app[data-phase="escape"] #fx { animation: none; box-shadow: inset 0 0 80px rgba(255, 90, 60, 0.3); } }
+
+/* the card when a phase begins */
+.phase-card { position: absolute; inset: 0; z-index: 32; display: grid; justify-items: center; align-items: start; padding-top: calc(var(--sat) + 58px); pointer-events: none; opacity: 0; transition: opacity 0.3s; }
+/* while a phase card is up it is the objective: what it covers steps aside */
+#app.carding #hud .objective, #app.carding #hud .nav, #app.carding #hud .hint, #app.carding #hud .chips { opacity: 0; transition: opacity 0.2s; }
+.phase-card.on { opacity: 1; }
+.phase-card.hidden { display: none; }
+.phase-card { --pc: var(--ice); }
+.phase-card.ph-execute { --pc: var(--amber); }
+.phase-card.ph-escape { --pc: var(--warn); }
+.phase-card.ph-escape.on { box-shadow: inset 0 0 0 4px var(--warn), inset 0 0 140px rgba(255, 90, 60, 0.4); animation: handflash 0.5s steps(2) 3; }
+.pc-in { text-align: center; padding: 12px 30px 14px; background: linear-gradient(90deg, transparent, rgba(5, 12, 8, 0.74) 18%, rgba(5, 12, 8, 0.74) 82%, transparent); border-top: 3px solid var(--pc); border-bottom: 3px solid var(--pc); min-width: min(92vw, 420px); }
+.phase-card.on .pc-in { animation: pcin 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+@keyframes pcin { from { transform: scale(1.25); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.pc-num { display: flex; justify-content: center; align-items: center; gap: 10px; color: var(--pc); }
+.pc-num b { font-size: 30px; font-weight: 700; letter-spacing: 0.1em; line-height: 1; }
+.pc-num .pc-dots { display: inline-flex; gap: 6px; }
+.pc-num .pc-dots i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid currentColor; opacity: 0.5; }
+.pc-num .pc-dots i.done { background: var(--ph); border-color: var(--ph); opacity: 1; }
+.pc-num .pc-dots i.failed { background: var(--warn); border-color: var(--warn); opacity: 1; }
+.pc-num .pc-dots i.now { background: currentColor; opacity: 1; }
+.pc-in small { display: block; font-size: 12px; letter-spacing: 0.5em; color: var(--pc); margin: 6px 0 2px; font-weight: 700; }
+.pc-in > b { display: block; font-size: 26px; letter-spacing: 0.16em; color: #fff; font-weight: 700; }
+.pc-in p { margin: 6px 0 0; font-size: 12px; letter-spacing: 0.08em; color: rgba(232, 243, 234, 0.85); font-family: var(--mono); }
+.pc-notes { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 8px; }
+.pc-notes i { font-style: normal; font-size: 10px; letter-spacing: 0.12em; padding: 3px 8px; border-radius: 10px; border: 1px solid; }
+.pc-notes i.bad { color: var(--warn); border-color: rgba(255, 90, 60, 0.6); }
+.pc-notes i.good { color: var(--ice); border-color: rgba(143, 208, 255, 0.6); }
+@media (max-height: 460px) {
+  .phase-card { padding-top: calc(var(--sat) + 54px); }
+  .pc-in { padding: 6px 22px 8px; }
+  .pc-num b { font-size: 20px; }
+  .pc-in small { margin: 2px 0 0; font-size: 10px; }
+  .pc-in > b { font-size: 19px; }
+  .pc-in p { margin-top: 3px; font-size: 11px; }
+  .pc-notes { margin-top: 5px; }
+}
+
+/* the strip: the whole mission in three words (title card, preflight) */
+.phase-strip { list-style: none; margin: 4px 0 12px; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.phase-strip li { position: relative; padding: 7px 8px 8px; border-radius: 8px; border: 1px solid; background: rgba(8, 18, 12, 0.6); }
+.phase-strip li:not(:last-child)::after { content: '▶'; position: absolute; right: -9px; top: 50%; transform: translateY(-50%); font-size: 9px; color: rgba(232, 243, 234, 0.5); z-index: 1; }
+.phase-strip small { font-size: 9px; letter-spacing: 0.2em; opacity: 0.8; }
+.phase-strip b { display: block; font-size: 13px; letter-spacing: 0.16em; margin: 1px 0 2px; }
+.phase-strip span { display: block; font-size: 11px; letter-spacing: 0.12em; color: #fff; }
+.phase-strip .ph-recon { color: var(--ice); border-color: rgba(143, 208, 255, 0.5); }
+.phase-strip .ph-execute { color: var(--amber); border-color: rgba(242, 169, 59, 0.55); }
+.phase-strip .ph-escape { color: var(--warn); border-color: rgba(255, 90, 60, 0.55); }
+#mission-card .phase-strip { grid-column: 1 / -1; }
+.pf-clues small { width: 100%; font-size: 9px; letter-spacing: 0.22em; color: var(--ph-dim); }
+.pf-brief details .pf-risks { margin-top: 6px; }
+
+/* the board wears RECON */
+.ph-tag { font-style: normal; color: var(--ice); margin-right: 8px; }
+.ph-tag .dots { margin-left: 4px; }
+.ph-tag .dots i { width: 6px; height: 6px; }
+
+/* the result hands on to the next phase */
+#btn-fly-out small { display: block; font-size: 10px; letter-spacing: 0.3em; opacity: 0.7; margin-bottom: 2px; }
+
+/* debrief: one line of the bigger story */
+.db-story { margin: 10px 0 4px; padding: 10px 12px; border-left: 3px solid var(--ph-faint); background: rgba(124, 255, 154, 0.04); }
+.db-story:empty { display: none; }
+.db-story small { display: block; font-size: 9px; letter-spacing: 0.24em; color: var(--ph-dim); }
+.db-story b { display: block; font-family: var(--serif); font-style: italic; font-weight: 400; font-size: 16px; color: #fff; margin: 4px 0 2px; letter-spacing: 0.01em; }
+.db-story span { font-size: 10px; letter-spacing: 0.16em; color: var(--ph-dim); }
+.db-story.new { border-left-color: var(--amber); background: rgba(242, 169, 59, 0.07); animation: tile 0.5s ease-out 1.3s both; }
+.db-story.new small { color: var(--amber); }
+@media (orientation: portrait) and (max-width: 600px) { .phase-card { padding-top: calc(var(--sat) + 104px); } }

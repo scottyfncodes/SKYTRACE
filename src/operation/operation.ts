@@ -1,25 +1,29 @@
 /**
- * The operation: the five stages of every SKYTRACE mission.
+ * The operation: the stages of every SKYTRACE mission, played as three
+ * phases (`phases.ts`): RECON (outbound rings, Mission Control), EXECUTE
+ * (the drop run) and ESCAPE (the timed rings home).
  *
- *   PREFLIGHT ─launch─▶ OUTBOUND ─outbound gates done─▶ RECON ─extract─▶ RETURN ─land─▶ DEBRIEF
- *                         (fly)                       (Mission Control)   (fly)
- *   any flying stage ─fuel / abort─▶ DEBRIEF
+ *   PREFLIGHT ─launch─▶ OUTBOUND ─gates done─▶ RECON ─▶ EXECUTE ─drop─▶ RETURN ─land─▶ DEBRIEF
+ *                         (fly)          (Mission Control)  (fly)          (fly)
+ *   RECON ─no target─▶ RETURN;  any flying stage ─fuel / abort─▶ DEBRIEF
  *
  * Pure: `Game` feeds it the aircraft's position each frame and renders the
  * events. The recon objectives themselves live in the mission's rules.
  */
 import type { MissionDef } from '../mission/missionDef';
-import { currentGate, inHazard, joinRing, legComplete, newLeg, passLanding, placeRoute, ringOrdinal, tickLeg, type AircraftFix, type LegEvent, type LegState, type Route } from './gates';
+import { currentGate, inHazard, joinRing, legComplete, newLeg, passLanding, placeRoute, ringOrdinal, rings, tickLeg, type AircraftFix, type LegEvent, type LegState, type Route } from './gates';
 import { BASE } from '../world/worldData';
 import type { Capabilities, Loadout } from './loadout';
 import type { FlightPerf } from '../flight/aircraft';
+import type { ExecResult } from './phases';
 
-export type Stage = 'preflight' | 'outbound' | 'recon' | 'return' | 'debrief';
+export type Stage = 'preflight' | 'outbound' | 'recon' | 'execute' | 'return' | 'debrief';
 
 export const STAGES: readonly { id: Stage; label: string }[] = [
   { id: 'preflight', label: 'PREFLIGHT' },
   { id: 'outbound', label: 'OUTBOUND' },
   { id: 'recon', label: 'RECON' },
+  { id: 'execute', label: 'EXECUTE' },
   { id: 'return', label: 'RETURN' },
   { id: 'debrief', label: 'DEBRIEF' },
 ];
@@ -28,9 +32,13 @@ export interface OperationState {
   stage: Stage;
   loadout: Loadout;
   /** The two legs, placed in the world (the way home is re-placed when recon ends). */
-  routes: { outbound: Route; return: Route };
+  routes: { outbound: Route; return: Route; execute: Route | null };
   outbound: LegState;
   ret: LegState;
+  /** The drop run (null until it starts). */
+  exec: LegState | null;
+  /** How the drop went: through the ring, wide of it, or never flown. */
+  execResult: ExecResult;
   /** Seconds since arriving on station (the recon window runs from here). */
   reconElapsed: number;
   frontArrived: boolean;
@@ -49,7 +57,7 @@ const flat: Ground = () => 0;
 export function newOperation(def: MissionDef, loadout: Loadout, ground: Ground = flat): OperationState {
   const outbound = placeRoute(def.outbound, ground, BASE);
   const ret = placeRoute(def.return, ground, { x: (def.operations.area.x0 + def.operations.area.x1) / 2, z: (def.operations.area.z0 + def.operations.area.z1) / 2 });
-  return { stage: 'preflight', loadout, routes: { outbound, return: ret }, outbound: newLeg(outbound), ret: newLeg(ret), reconElapsed: 0, frontArrived: false, damage: 0, stormTime: 0, outcome: null, time: 0 };
+  return { stage: 'preflight', loadout, routes: { outbound, return: ret, execute: null }, outbound: newLeg(outbound), ret: newLeg(ret), exec: null, execResult: null, reconElapsed: 0, frontArrived: false, damage: 0, stormTime: 0, outcome: null, time: 0 };
 }
 
 export function launch(op: OperationState): void {
@@ -57,14 +65,36 @@ export function launch(op: OperationState): void {
 }
 
 export function isFlying(op: OperationState): boolean {
-  return op.stage === 'outbound' || op.stage === 'recon' || op.stage === 'return';
+  return op.stage === 'outbound' || op.stage === 'recon' || op.stage === 'execute' || op.stage === 'return';
 }
 
 /** The leg the pilot is flying right now (null on station). */
 export function activeLeg(op: OperationState, _def?: MissionDef): { def: Route; state: LegState } | null {
   if (op.stage === 'outbound') return { def: op.routes.outbound, state: op.outbound };
+  if (op.stage === 'execute' && op.routes.execute && op.exec) return { def: op.routes.execute, state: op.exec };
   if (op.stage === 'return') return { def: op.routes.return, state: op.ret };
   return null;
+}
+
+/**
+ * EXECUTE: the target is found, now do the thing. The drop run is a short
+ * leg of its own (usually one ring over the target), never on a clock: the
+ * pressure comes after. The result is read off the ring.
+ */
+export function beginExecute(op: OperationState, route: Route): void {
+  if (op.stage !== 'recon') return;
+  op.stage = 'execute';
+  op.routes.execute = route;
+  op.exec = newLeg(route);
+}
+
+/** The drop ring was flown through (tagged) or wide of (missed); null while pending. */
+export function dropResult(op: OperationState): ExecResult {
+  const r = op.routes.execute;
+  if (!r || !op.exec) return null;
+  const last = r.gates[r.gates.length - 1];
+  const st = last ? op.exec.status[last.id] : 'pending';
+  return st === 'passed' ? 'tagged' : st === 'missed' ? 'missed' : null;
 }
 
 /**
@@ -115,6 +145,7 @@ export function tickOperation(op: OperationState, def: MissionDef, a: AircraftFi
       }
     }
     if (op.stage === 'outbound' && legComplete(op.outbound, op.routes.outbound)) op.stage = 'recon';
+    if (op.stage === 'execute' && op.execResult === null) op.execResult = dropResult(op);
   }
   let front = false;
   if (op.stage === 'recon') {
@@ -135,7 +166,9 @@ export function tickOperation(op: OperationState, def: MissionDef, a: AircraftFi
  * leg Mission Control generated.
  */
 export function beginReturn(op: OperationState, def?: Pick<MissionDef, 'return'>, pose?: { x: number; y: number; z: number; yaw: number }, ground: Ground = flat, contact = false): void {
-  if (op.stage !== 'recon' && op.stage !== 'outbound') return;
+  if (op.stage !== 'recon' && op.stage !== 'outbound' && op.stage !== 'execute') return;
+  // no drop run flown (no target), or one abandoned: execute did not happen
+  if (op.execResult === null) op.execResult = op.stage === 'execute' ? 'missed' : 'skipped';
   op.stage = 'return';
   if (def && pose) {
     const first = def.return.gates.find((g) => g.kind === 'ring');
@@ -186,9 +219,9 @@ export function flightObjective(op: OperationState, def: MissionDef, cap: Capabi
   if (!leg) return null;
   const g = currentGate(leg.state, leg.def);
   if (!g) return null;
-  const stage = op.stage === 'outbound' ? 'OUTBOUND' : 'RETURN';
-  if (g.kind === 'land') return { kicker: stage, title: g.objective, detail: g.detail };
-  const kicker = `${stage} ${ringOrdinal(leg.def, g.id)}`;
+  if (g.kind === 'land') return { kicker: 'FINAL', title: g.objective, detail: g.detail };
+  const n = rings(leg.def).length;
+  const kicker = n > 1 ? `RING ${ringOrdinal(leg.def, g.id)}` : op.stage === 'execute' ? 'ONE PASS' : 'RING';
   const title = leg.state.contact ? 'RADAR CONTACT' : leg.def.title;
   const detail = g.cue === 'LOW' ? `BELOW ${cap.stealthCeiling} m` : (g.cue ?? (leg.state.contact ? 'BEAT THE CLOCK' : ''));
   return { kicker, title, detail };

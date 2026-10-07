@@ -15,28 +15,36 @@ export interface ReportRow {
   tone?: 'good' | 'bad';
 }
 
-/** One line per flown stage: did it go well, in one word. */
+/** One line per phase: did it go well, in one word. */
 export interface StageResult {
-  id: 'outbound' | 'recon' | 'return';
+  id: 'recon' | 'execute' | 'escape';
   label: string;
   ok: boolean;
   word: string;
 }
 
+/**
+ * The debrief scorecard, one line per phase. RECON is the flight in and the
+ * board (spotted on the way in, or a poor board, and it is not a tick);
+ * EXECUTE is the drop; ESCAPE is the flight home.
+ */
 export function stageResults(m: MissionState, op: OperationState, def: MissionDef, control?: ControlSummary): StageResult[] {
   void def;
   const R = op.routes;
-  const outStorm = totalExposure(op.outbound, R.outbound, 'storm');
   const retRough = totalExposure(op.ret, R.return, 'storm') + totalExposure(op.ret, R.return, 'ceiling');
   const out = ringTally(op.outbound, R.outbound);
   const ret = ringTally(op.ret, R.return);
   const rings = (t: { hit: number; total: number }) => `${t.hit}/${t.total} RINGS`;
   const landed = op.outcome === 'landed';
   const evidence = evidenceGrade(m.photos.truck);
+  const goodBoard = !control || control.rank === 'ACE' || control.rank === 'SOLID';
+  const reconWord = !m.primaryComplete ? 'NOT FOUND' : op.outbound.detected ? 'SPOTTED' : out.total - out.hit > 1 ? rings(out) : control ? control.rank : evidence;
+  const x = op.execResult;
+  const reached = op.stage === 'debrief' && (op.outcome === 'landed' || x !== null);
   return [
-    { id: 'outbound', label: 'OUTBOUND', ok: !op.outbound.detected && out.total - out.hit <= 1, word: op.outbound.detected ? 'SPOTTED' : out.hit < out.total ? rings(out) : outStorm > 2 ? 'BUMPY' : 'CLEAN' },
-    { id: 'recon', label: 'RECON', ok: m.primaryComplete && (!control || control.rank === 'ACE' || control.rank === 'SOLID'), word: control ? control.rank : m.primaryComplete ? evidence : 'NO PHOTO' },
-    { id: 'return', label: 'RETURN', ok: landed && retRough <= 3 && ret.total - ret.hit <= 1, word: !landed ? 'LOST' : ret.hit < ret.total ? rings(ret) : retRough > 3 ? 'ROUGH' : 'CLEAN' },
+    { id: 'recon', label: 'RECON', ok: m.primaryComplete && !op.outbound.detected && out.total - out.hit <= 1 && goodBoard, word: reconWord },
+    { id: 'execute', label: 'EXECUTE', ok: x === 'tagged', word: x === 'tagged' ? 'TAGGED' : x === 'missed' ? 'MISSED' : x === 'skipped' ? 'NO TARGET' : reached ? 'NOT FLOWN' : '—' },
+    { id: 'escape', label: 'ESCAPE', ok: landed && retRough <= 3 && ret.total - ret.hit <= 1, word: !landed ? 'LOST' : ret.hit < ret.total ? rings(ret) : retRough > 3 ? 'ROUGH' : 'CLEAN' },
   ];
 }
 
@@ -45,6 +53,9 @@ export interface ControlSummary {
   total: number;
   rank: string;
 }
+
+/** Points for a clean drop (the tracker on the target). */
+export const DROP_POINTS = 150;
 
 /** Points per opportunity ring flown on the way home. */
 export const OPPORTUNITY_POINTS = 120;
@@ -103,7 +114,7 @@ export function buildReport(m: MissionState, op: OperationState, def: MissionDef
   const fuel = Math.max(0, Math.min(1, fuelFraction));
   const taken = bonusTaken(op.ret, op.routes.return).length;
   // Mission Control counts toward the operation: a twenty-fifth of its score, plus every opportunity it opened and you flew
-  let score = (m.primaryComplete ? 400 : 0) + 150 * secDone + 200 * m.photos.truck + 2 * discipline + 100 * fuel - 75 * m.falsePositives - 150 * op.damage + (control ? control.total / 25 : 0) + OPPORTUNITY_POINTS * taken;
+  let score = (m.primaryComplete ? 400 : 0) + 150 * secDone + 200 * m.photos.truck + 2 * discipline + 100 * fuel - 75 * m.falsePositives - 150 * op.damage + (control ? control.total / 25 : 0) + OPPORTUNITY_POINTS * taken + (op.execResult === 'tagged' ? DROP_POINTS : 0);
   score = Math.max(0, Math.round(landed ? score : score * 0.25));
   const grade = gradeFor(score, landed, m.primaryComplete);
   const success = landed && m.primaryComplete;
@@ -113,6 +124,7 @@ export function buildReport(m: MissionState, op: OperationState, def: MissionDef
     { label: 'Primary objective', value: m.primaryComplete ? 'COMPLETE' : 'INCOMPLETE', tone: m.primaryComplete ? 'good' : 'bad' },
     ...(control ? [{ label: 'Mission Control', value: `${control.total.toLocaleString('en-US')} · ${control.rank}`, tone: control.rank === 'ACE' ? 'good' : control.rank === 'SCRAMBLE' ? 'bad' : undefined } as ReportRow] : []),
     ...(taken ? [{ label: 'Opportunities taken', value: String(taken), tone: 'good' } as ReportRow] : []),
+    { label: 'Drop', value: op.execResult === 'tagged' ? 'ON TARGET' : op.execResult === 'missed' ? 'MISSED' : 'NOT FLOWN', tone: op.execResult === 'tagged' ? 'good' : 'bad' },
     { label: 'Secondary objectives', value: `${secDone}/${sec.length}`, tone: secDone === sec.length ? 'good' : undefined },
     { label: 'Target identification', value: `${idPct}%`, tone: idPct === 100 ? 'good' : idPct ? undefined : 'bad' },
     { label: 'Evidence quality', value: truck, tone: truck === 'EXCELLENT' || truck === 'GOOD' ? 'good' : truck === 'NONE' || truck === 'POOR' ? 'bad' : undefined },
