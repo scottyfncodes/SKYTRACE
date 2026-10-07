@@ -1317,7 +1317,7 @@ export class Game {
     const crewNames = Object.values(this.loadout.crew)
       .filter((x): x is string => !!x)
       .map((id) => CREW_BY_ID[id].name);
-    this.el['db-code'].textContent = `${this.def.code} · ${this.def.title} · DEBRIEF`;
+    this.el['db-code'].textContent = `${this.def.code} · DEBRIEF`;
     this.el['db-headline'].textContent = r.headline;
     this.el['db-headline'].className = r.success ? 'good' : 'bad';
     this.el['db-grade'].textContent = r.grade;
