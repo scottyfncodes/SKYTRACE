@@ -15,6 +15,7 @@ import {
   currentGate,
   inHazard,
   joinRing,
+  JOIN_TURN,
   legComplete,
   newLeg,
   placeRoute,
@@ -187,14 +188,45 @@ describe('RADAR CONTACT: the urgency of the way home', () => {
   });
 });
 
+describe('the way home: every ring shrinks from the moment the last one is hit', () => {
+  const home: LegDef = { ...LINE, id: 'return', title: 'RETURN TO BASE' };
+
+  it('without radar contact the first ring is already on the clock and closing', () => {
+    const r = placeRoute(home, flat, { x: 0, z: 0 });
+    const s = newLeg(r, false, true);
+    tickLeg(s, r, fix(0, 0), 0.1, 400);
+    expect(s.clock).not.toBeNull();
+    tickLeg(s, r, fix(0, 0), 0.5, 400);
+    expect(ringScale(s)).toBeLessThan(1);
+  });
+
+  it('hitting a ring starts the next ring closing on the very next frame', () => {
+    const r = placeRoute(home, flat, { x: 0, z: 0 });
+    const s = newLeg(r, false, true);
+    flyLine(s, r, [0, 100, 0], [210, 100, 0]);
+    expect(s.status.a).toBe('passed');
+    tickLeg(s, r, fix(212, 0), 0.1, 400);
+    expect(s.clock).toBeCloseTo(s.clockMax, 5);
+    tickLeg(s, r, fix(214, 0), 0.1, 400);
+    expect(ringScale(s)).toBeLessThan(1);
+  });
+
+  it('flown at a steady pace every ring is made', () => {
+    const r = placeRoute(home, flat, { x: 0, z: 0 });
+    const s = newLeg(r, false, true);
+    for (let x = 0; x <= 700; x += 4.5) tickLeg(s, r, fix(x, 0), 0.1, 400);
+    expect(ringTally(s, r)).toEqual({ hit: 3, total: 3 });
+  });
+});
+
 describe('the join ring: flying again the moment recon ends', () => {
-  it('stands ahead of the aircraft, turned toward the route, below the cloud deck', () => {
+  it('stands dead ahead of the nose (in frame at once), barely turned toward the route, below the cloud deck', () => {
     // heading north (yaw 0), the route lies due west
     const j = joinRing({ x: 0, y: 400, z: 0, yaw: 0 }, { x: -1000, z: 0 }, flat, 300);
     expect(Math.hypot(j.x, j.z)).toBeCloseTo(380, 0);
     expect(j.z).toBeLessThan(0); // still ahead
     expect(j.x).toBeLessThan(0); // turned toward the route
-    expect(Math.atan2(-j.x, -j.z)).toBeCloseTo(Math.PI / 4, 3); // by at most 45 degrees
+    expect(Math.atan2(-j.x, -j.z)).toBeCloseTo(JOIN_TURN, 3); // by only a few degrees
     expect(j.y).toBeLessThanOrEqual(240);
     expect(j.y).toBeGreaterThanOrEqual(70);
     // already pointing at the route: straight ahead

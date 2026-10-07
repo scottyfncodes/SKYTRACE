@@ -143,7 +143,7 @@ export function beginReturn(op: OperationState, def?: Pick<MissionDef, 'return'>
     const join = joinRing(pose, first && first.kind === 'ring' ? first : BASE, ground, deck && deck.kind === 'ceiling' ? deck.y : Infinity);
     op.routes.return = placeRoute(def.return, ground, pose, join);
   }
-  op.ret = newLeg(op.routes.return, op.outbound.detected || contact);
+  op.ret = newLeg(op.routes.return, op.outbound.detected || contact, true);
 }
 
 /** Touch-down at base. Only the return leg ends with a landing. */
