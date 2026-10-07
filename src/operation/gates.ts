@@ -117,8 +117,10 @@ export const CONTACT_PACE = 40;
 export const CONTACT_SLACK = 6;
 /** The hoop closes to this fraction of its size as the clock runs out. */
 export const CLOSED_SCALE = 0.55;
-/** The join ring turns at most this far from the nose toward the route (radians). */
-export const JOIN_TURN = Math.PI / 18;
+/** The join ring turns at most this far from the nose toward the route (radians): a portrait phone shows only about ±15 degrees. */
+export const JOIN_TURN = Math.PI / 60;
+/** The join ring is never steeper below the nose than this (radians): a glide, not a dive. */
+export const JOIN_GLIDE = Math.PI / 12;
 
 type Ground = (x: number, z: number) => number;
 type Pt = { x: number; z: number };
@@ -172,11 +174,17 @@ export function joinRing(pose: { x: number; y: number; z: number; yaw: number },
   const nx = fx * c - fz * s;
   const nz = fx * s + fz * c;
   const lim = 1100;
-  const x = Math.max(-lim, Math.min(lim, pose.x + nx * dist));
-  const z = Math.max(-lim, Math.min(lim, pose.z + nz * dist));
-  const g = ground(x, z);
-  const y = Math.max(g + 70, Math.min(pose.y, ceilingY - 60, g + 260));
-  return { kind: 'ring', id: 'join', x, z, agl: y - g, r: 40, y, nx, nz };
+  const at = (d: number) => {
+    const x = Math.max(-lim, Math.min(lim, pose.x + nx * d));
+    const z = Math.max(-lim, Math.min(lim, pose.z + nz * d));
+    const g = ground(x, z);
+    return { x, z, g, y: Math.max(g + 70, Math.min(pose.y, ceilingY - 60, g + 260)) };
+  };
+  let p = at(dist);
+  // well below the nose (above a cloud deck, say): lay it further out, a glide away
+  const drop = pose.y - p.y;
+  if (drop > dist * Math.tan(JOIN_GLIDE)) p = at(Math.min(1000, drop / Math.tan(JOIN_GLIDE)));
+  return { kind: 'ring', id: 'join', x: p.x, z: p.z, agl: p.y - p.g, r: 40, y: p.y, nx, nz };
 }
 
 export function newLeg(route: Route, contact = false, timed = false): LegState {
