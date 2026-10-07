@@ -16,6 +16,7 @@ import {
   inHazard,
   joinRing,
   JOIN_TURN,
+  JOIN_GLIDE,
   legComplete,
   newLeg,
   placeRoute,
@@ -223,12 +224,13 @@ describe('the join ring: flying again the moment recon ends', () => {
   it('stands dead ahead of the nose (in frame at once), barely turned toward the route, below the cloud deck', () => {
     // heading north (yaw 0), the route lies due west
     const j = joinRing({ x: 0, y: 400, z: 0, yaw: 0 }, { x: -1000, z: 0 }, flat, 300);
-    expect(Math.hypot(j.x, j.z)).toBeCloseTo(380, 0);
     expect(j.z).toBeLessThan(0); // still ahead
     expect(j.x).toBeLessThan(0); // turned toward the route
     expect(Math.atan2(-j.x, -j.z)).toBeCloseTo(JOIN_TURN, 3); // by only a few degrees
     expect(j.y).toBeLessThanOrEqual(240);
     expect(j.y).toBeGreaterThanOrEqual(70);
+    // above the deck it is laid further out: a glide down to it, never a dive
+    expect(Math.atan2(400 - j.y, Math.hypot(j.x, j.z))).toBeLessThanOrEqual(JOIN_GLIDE + 1e-6);
     // already pointing at the route: straight ahead
     const k = joinRing({ x: 0, y: 150, z: 0, yaw: Math.PI / 2 }, { x: -1000, z: 0 }, flat, 300);
     expect(k.x).toBeCloseTo(-380, 0);

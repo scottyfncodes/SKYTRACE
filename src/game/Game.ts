@@ -984,12 +984,14 @@ export class Game {
     el.className = `handoff ${kind}`;
     void el.offsetWidth;
     el.classList.add('on');
+    this.el['hud'].classList.add('handing');
     this.handoffTimer = seconds;
   }
 
   private hideHandoff(): void {
     this.handoffTimer = 0;
     this.el['handoff'].className = 'handoff hidden';
+    this.el['hud'].classList.remove('handing');
   }
 
 
@@ -1142,7 +1144,10 @@ export class Game {
     this.missionScene.animate(this.t, dt);
     if (this.handoffTimer > 0) {
       this.handoffTimer -= dt;
-      if (this.handoffTimer <= 0) this.el['handoff'].classList.remove('on');
+      if (this.handoffTimer <= 0) {
+        this.el['handoff'].classList.remove('on');
+        this.el['hud'].classList.remove('handing');
+      }
     }
     if (this.returnCue && this.handoffTimer <= 0.4) {
       this.returnCue = false;
