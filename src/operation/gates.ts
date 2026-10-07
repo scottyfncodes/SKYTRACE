@@ -92,6 +92,8 @@ export interface LegState {
   /** Seconds left on the current ring (null: starts next tick). */
   clock: number | null;
   clockMax: number;
+  /** Metres per second the clock allows between rings (the escape profile sets it). */
+  pace: number;
 }
 
 export interface LegEvent {
@@ -205,25 +207,40 @@ export const DROP_RUN = 620;
 export const DROP_AGL = 40;
 export const DROP_R = 42;
 
+export interface DropRunSpec {
+  title?: string;
+  limit?: number;
+  /** How far out the run starts, how high the ring stands, how wide, and the word on it. */
+  run?: number;
+  agl?: number;
+  r?: number;
+  cue?: string;
+}
+
 /**
- * EXECUTE: line the aircraft up on the target. The run starts DROP_RUN metres
+ * EXECUTE: line the aircraft up on the target. The run starts `run` metres
  * out on the aircraft's side of the target (swung round if that would leave
  * the map), nose on the target, a shallow glide above the terrain on the way
  * in; one big ring stands low over the target itself. Fly through it: drop.
  */
-export function planDropRun(target: Pt, from: Pt, ground: Ground, title = 'COMPLETE THE DROP', limit = 1050): { start: { x: number; y: number; z: number; yaw: number }; route: Route } {
+export function planDropRun(target: Pt, from: Pt, ground: Ground, spec: DropRunSpec = {}): { start: { x: number; y: number; z: number; yaw: number }; route: Route } {
+  const title = spec.title ?? 'COMPLETE THE DROP';
+  const limit = spec.limit ?? 1050;
+  const RUN = spec.run ?? DROP_RUN;
+  const AGL = spec.agl ?? DROP_AGL;
+  const R = spec.r ?? DROP_R;
   let [dx, dz] = unit(from.x - target.x, from.z - target.z);
   if (dx === 0 && dz === 0) [dx, dz] = [0, 1];
-  let sx = target.x + dx * DROP_RUN;
-  let sz = target.z + dz * DROP_RUN;
+  let sx = target.x + dx * RUN;
+  let sz = target.z + dz * RUN;
   for (let k = 1; k < 12 && (Math.abs(sx) > limit || Math.abs(sz) > limit); k++) {
     // swing the approach round until it starts on the map
     const a = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * (Math.PI / 6);
     const [ux, uz] = unit(from.x - target.x, from.z - target.z);
     dx = ux * Math.cos(a) - uz * Math.sin(a);
     dz = ux * Math.sin(a) + uz * Math.cos(a);
-    sx = target.x + dx * DROP_RUN;
-    sz = target.z + dz * DROP_RUN;
+    sx = target.x + dx * RUN;
+    sz = target.z + dz * RUN;
   }
   sx = Math.max(-limit, Math.min(limit, sx));
   sz = Math.max(-limit, Math.min(limit, sz));
@@ -231,13 +248,30 @@ export function planDropRun(target: Pt, from: Pt, ground: Ground, title = 'COMPL
   let high = -Infinity;
   for (let t = 0; t <= 1; t += 0.05) high = Math.max(high, ground(sx + (target.x - sx) * t, sz + (target.z - sz) * t));
   const gy = ground(target.x, target.z);
-  const y = Math.max(high + 70, ground(sx, sz) + 110, gy + DROP_AGL + 60);
+  const y = Math.max(high + 70, ground(sx, sz) + 110, gy + AGL + 60);
   const [nx, nz] = unit(target.x - sx, target.z - sz);
-  const ring: Ring = { kind: 'ring', id: 'drop', x: target.x, z: target.z, agl: DROP_AGL, r: DROP_R, y: gy + DROP_AGL, nx, nz, cue: 'DROP ZONE' };
+  const ring: Ring = { kind: 'ring', id: 'drop', x: target.x, z: target.z, agl: AGL, r: R, y: gy + AGL, nx, nz, cue: spec.cue ?? 'DROP ZONE' };
   return { start: { x: sx, y, z: sz, yaw: Math.atan2(-nx, -nz) }, route: { id: 'execute', title, gates: [ring], hazards: [] } };
 }
 
-export function newLeg(route: Route, contact = false, timed = false): LegState {
+/** A moving target: the ring over it moves with it (same height over the ground, same facing). */
+export function retargetRing(route: Route, id: string, target: Pt, ground: Ground): Ring | null {
+  const g = route.gates.find((x) => x.id === id);
+  if (!g || g.kind !== 'ring') return null;
+  g.x = target.x;
+  g.z = target.z;
+  g.y = ground(target.x, target.z) + g.agl;
+  return g;
+}
+
+/** A pass on a fixed clock (EXECUTE with a window): the ring starts closing now. */
+export function startWindow(s: LegState, seconds: number): void {
+  s.timed = true;
+  s.clockMax = seconds;
+  s.clock = seconds;
+}
+
+export function newLeg(route: Route, contact = false, timed = false, pace = CONTACT_PACE): LegState {
   const status: Record<string, GateStatus> = {};
   for (const g of route.gates) status[g.id] = 'pending';
   const inside: Record<string, boolean> = {};
@@ -246,7 +280,7 @@ export function newLeg(route: Route, contact = false, timed = false): LegState {
     inside[h.id] = false;
     exposure[h.id] = 0;
   }
-  return { index: 0, status, inside, exposure, detected: false, prev: null, contact, timed, clock: null, clockMax: 0 };
+  return { index: 0, status, inside, exposure, detected: false, prev: null, contact, timed, clock: null, clockMax: 0, pace };
 }
 
 export function currentGate(s: LegState, route: Route): Gate | null {
@@ -332,7 +366,7 @@ export function tickLeg(s: LegState, route: Route, a: AircraftFix, dt: number, s
     // ---- the clock (the way home, or under contact)
     if (onClock(s)) {
       if (s.clock === null) {
-        s.clockMax = Math.hypot(g.x - a.x, g.y - a.y, g.z - a.z) / CONTACT_PACE + CONTACT_SLACK;
+        s.clockMax = Math.hypot(g.x - a.x, g.y - a.y, g.z - a.z) / (s.pace || CONTACT_PACE) + CONTACT_SLACK;
         s.clock = s.clockMax;
       } else s.clock -= dt;
     }

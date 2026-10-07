@@ -13,6 +13,7 @@
  */
 import type { Pt } from '../world/worldData';
 import type { MissionDef } from './missionDef';
+import { CLUES_01, CONTROL_01 } from './mission01Control';
 
 export interface Sector {
   id: string;
@@ -236,7 +237,8 @@ export const OPERATIONS_AREA = SECTOR_7;
 
 export const MISSION_01 = {
   id: 'mission01',
-  code: 'MISSION 01',
+  code: 'OPERATION 01',
+  page: 0,
   title: 'FIND THE TRUCK',
   objective: 'Locate, identify and photograph the missing supply truck in Sector 7.',
   success: 'Photograph the truck, act on what you find, then fly home and land.',
@@ -267,7 +269,7 @@ export const MISSION_01 = {
     escape: { title: 'GET OUT', line: 'They know you are here. Rings close fast.' },
     payload: 'TRACKER',
   },
-  clues: ['LARGE', 'MOVING', 'ON A ROAD', 'RADIO DEAD', 'IN SECTOR 7'],
+  clues: CLUES_01,
   risks: [
     { icon: '◯', text: 'Fly the rings · around the storm' },
     { icon: '📡', text: 'Ridge radar · rings take you in low' },
@@ -315,5 +317,24 @@ export const MISSION_01 = {
     ],
     visibility: 0.45,
     notices: ['CLOUDS AT 300 m · STAY BELOW', 'STORM ON THE DIRECT ROUTE'],
+  },
+  control: CONTROL_01,
+  // EXECUTE: a tracker, dropped from one big ring low over the truck. Confirmed on evidence, it pulls over; on a hunch it keeps rolling.
+  execute: {
+    run: 620,
+    agl: 40,
+    r: 42,
+    halt: 'confirmed',
+    window: 0,
+    cue: 'DROP ZONE',
+    drops: true,
+    done: { kicker: 'PAYLOAD AWAY', text: 'TRACKER ON TARGET' },
+    missed: { kicker: 'DROP MISSED', text: 'NO TRACKER' },
+  },
+  escape: {
+    pace: 40,
+    contact: false,
+    visibility: 1,
+    reaction: { tagged: 'THE TRUCK IS RUNNING', missed: 'THE TRUCK IS RUNNING' },
   },
 } as const satisfies MissionDef;

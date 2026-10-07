@@ -1,8 +1,11 @@
 /**
- * The case file: the bigger story, told one line per operation. Each
- * mission stands on its own; a clean one (target found, drop on target,
- * home safe) turns over the next page. No exposition: a single line on the
- * title card and in the debrief, and the player fills in the rest.
+ * The case file: the bigger story, told one line per operation. Each line
+ * is a page, and each page is an operation of its own (`mission/operations.ts`):
+ * the same RECON → EXECUTE → ESCAPE rhythm, pushed a little further every
+ * time. A clean operation on the newest page (target found, pass made, home
+ * safe) turns the next one. Pages already turned stay open to replay for a
+ * better board, a cleaner escape, a better grade. No exposition: a single
+ * line on the title card and in the debrief, and the player fills in the rest.
  */
 import type { Career } from './career';
 
@@ -14,20 +17,37 @@ export const CASE_FILE: readonly string[] = [
   'Someone flew this route before you. Their log ends in Sector 7.',
 ];
 
-/** The page the squadron is on (0-based). */
+/** The last page, turned: what the log said. */
+export const CASE_CLOSED = "Their log ends: 'The tower sent me in.' It is signed with your callsign.";
+
+/** The newest page the squadron has reached (0-based). */
 export function casePage(c: Pick<Career, 'caseFile'>): number {
   return Math.max(0, Math.min(CASE_FILE.length - 1, c.caseFile ?? 0));
 }
 
-/** The line the next operation opens on. */
-export function currentLead(c: Pick<Career, 'caseFile'>): { page: number; total: number; text: string } {
-  const page = casePage(c);
-  return { page: page + 1, total: CASE_FILE.length, text: CASE_FILE[page] };
+/** How many pages are open to fly (the newest, and every one before it). */
+export function pagesOpen(c: Pick<Career, 'caseFile'>): number {
+  return casePage(c) + 1;
 }
 
-/** A clean operation turns the page: returns the new line, or null. */
-export function advanceCaseFile(c: Career, clean: boolean): string | null {
-  if (!clean || (c.caseFile ?? 0) >= CASE_FILE.length - 1) return null;
-  c.caseFile = (c.caseFile ?? 0) + 1;
+/** The line an operation opens on: the page being flown (the newest unless chosen). */
+export function currentLead(c: Pick<Career, 'caseFile' | 'caseClosed'>, page = casePage(c)): { page: number; total: number; text: string; closed: boolean } {
+  const p = Math.max(0, Math.min(CASE_FILE.length - 1, page));
+  return { page: p + 1, total: CASE_FILE.length, text: CASE_FILE[p], closed: !!c.caseClosed };
+}
+
+/**
+ * A clean operation on the newest page turns it: returns the new line (or
+ * the closing line of the log on the last page), null otherwise. Replaying
+ * an earlier page never moves the story.
+ */
+export function advanceCaseFile(c: Career, clean: boolean, page = casePage(c)): string | null {
+  if (!clean || page !== casePage(c)) return null;
+  if (page >= CASE_FILE.length - 1) {
+    if (c.caseClosed) return null;
+    c.caseClosed = true;
+    return CASE_CLOSED;
+  }
+  c.caseFile = page + 1;
   return CASE_FILE[c.caseFile];
 }

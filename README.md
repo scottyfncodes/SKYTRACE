@@ -16,7 +16,31 @@ Every mission is played in the same three phases, whatever its story. The player
 | **02 EXECUTE** | What do I do about it? | Lined up on the truck: fly through the one ring over it and the tracker drops |
 | **03 ESCAPE** | What went wrong? Get out. | The truck bolts for the river, the sector turns red, the weather closes in: timed rings home |
 
-Text gives the immediate objective; the world tells the rest (the truck pulls over for the run and runs after the drop, the sector boundary turns from amber to red, the haze rolls in). Each mission's story is data (`story` in its `MissionDef`: a hook, one verb per phase, a title and one line per phase), so new mission types reuse the same rhythm. A one-line **case file** on the title card and the debrief advances after a clean operation (target found, drop on target, home safe): a bigger story told one line at a time.
+Text gives the immediate objective; the world tells the rest (the truck pulls over for the run and runs after the drop, its lamps come on, the sector boundary turns from amber to red, the haze rolls in). Each mission's story is data (`story` in its `MissionDef`: a hook, one verb per phase, a title and one line per phase), and so are its EXECUTE and ESCAPE profiles, so new mission types reuse the same rhythm. The one-line **case file** on the title card and the debrief is the campaign: see below.
+
+## The case file is the campaign
+
+The five lines of the case file are five operations. Same world, same Mission Control puzzle, same three phases: each page pushes the rhythm a little further, and the phases answer each other.
+
+| Page | The line | EXECUTE | ESCAPE | Board |
+| --- | --- | --- | --- | --- |
+| 01 | A supply truck went dark in Sector 7. | Drop the tracker. Confirmed on evidence, the truck pulls over; marked on a hunch, it keeps rolling | As Mission Control built it | 12 min |
+| 02 | The tracker stopped at the river. A barge was waiting. | Tag it rolling: the ring moves with the truck | Tighter clocks | 11 min |
+| 03 | The tower forecast was wrong. Every time. On purpose? | One pass, 40 seconds: the ring closes on you | Haze | 10 min · the tower lies twice |
+| 04 | The barge answers on a military band. | A 22 m skim to read its radio. Nothing is dropped | RADAR CONTACT from the first ring | 10 min · the tower lies twice |
+| 05 | Someone flew this route before you. Their log ends in Sector 7. | Rolling, 35 seconds, 30 m | Everything at once | 9 min · the tower lies twice |
+
+A clean operation on the newest page (target found, pass made, home safe) turns the next one; the last page turned closes the case with one more line. Every page turned stays open: the title card shows them as chips, and each keeps its own best grade and best board score. Replaying an earlier page never moves the story.
+
+**The phases answer each other** (`operation/consequence.ts`, pure and tested):
+
+- RECON → EXECUTE: the board's rank sizes the ring (ACE gets the whole hoop, SCRAMBLE two thirds of it). A target identified on evidence holds still for the run; one marked on a hunch is still rolling when you line up. The EXECUTE card says which.
+- EXECUTE → ESCAPE: a pass made is the plan Mission Control built. A pass missed was seen: RADAR CONTACT from the first ring home and a shade less to see by. No target at all: they know you are here anyway.
+- Outbound → ESCAPE (as before): spotted on the way in, the radar has you from the first ring.
+
+**The pass is the moment** (`Game.onDrop`, `tickReaction`), in three beats: the stamp, the payload falls, the sound dips, the instruments step back and the view widens a touch; a second later the truck's lamps come on and it bolts, the sector boundary turns from amber to red in a wave, a low alarm under everything, the camera shudders; then the first ring home irises in dead ahead, the HUD goes red and the clock starts. Wheels down at base gets the same care: a HOME stamp and a settling cadence before the debrief.
+
+**EXECUTE is data.** A mission's `execute` profile is where the ring stands (`agl`, `r`, `run`), whether the target holds still (`halt`: always, only once confirmed, never), whether the pass is on a clock (`window`), whether something leaves the aircraft (`drops`), and what the stamps say. Its `escape` profile is the clock pace, forced contact, a visibility cap and the world's one-line reaction. A drop, a skim, a photo pass and a pickup are one ring with different numbers and words; firefighting (find the fire, drop water, escape the weather), rescue (find them, drop supplies, get out), demolition (find the structure, one low pass, get out before it goes) and delivery are entries in `mission/operations.ts` with their own words, numbers and cast.
 
 ## The operation
 
@@ -116,7 +140,9 @@ Plain TypeScript + Vite + Three.js, no backend.
 | `src/operation/gates.ts` | Ring routes (plane-crossing, misses, RADAR CONTACT clock) and weather hazards for the flying legs (pure, tested) |
 | `src/operation/operation.ts` | Stage machine: preflight, outbound, recon, execute, return, debrief (pure, tested) |
 | `src/operation/phases.ts` | RECON → EXECUTE → ESCAPE: which phase a stage is, the HUD dots, the story copy shape (pure, tested) |
-| `src/operation/story.ts` | The case file: one line of the bigger story per clean operation (pure, tested) |
+| `src/operation/story.ts` | The case file: one page per operation, turned by a clean one; replay never moves it (pure, tested) |
+| `src/operation/consequence.ts` | The phases answer each other: rank sizes the ring, evidence halts the target, a miss means contact (pure, tested) |
+| `src/mission/operations.ts` | The five operations, one per page of the case file: EXECUTE and ESCAPE profiles, board minutes, how often the tower lies |
 | `src/operation/score.ts`, `career.ts` | Recon report, grade, rewards; progression and unlocks (pure, tested) |
 | `src/ui/preflight.ts` | Briefing and loadout screen |
 | `src/mission/missionDef.ts` | What a mission declares: briefing, operations area, recon window, outbound and return legs |

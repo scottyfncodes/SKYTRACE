@@ -1031,3 +1031,22 @@ img.thermal { filter: grayscale(1) invert(1) brightness(0.55) contrast(2.2); }
 .db-story.new { border-left-color: var(--amber); background: rgba(242, 169, 59, 0.07); animation: tile 0.5s ease-out 1.3s both; }
 .db-story.new small { color: var(--amber); }
 @media (orientation: portrait) and (max-width: 600px) { .phase-card { padding-top: calc(var(--sat) + 104px); } }
+
+/* ============================================================
+   The case file's pages: tap one that is open to fly it again
+   ============================================================ */
+.case-pages { display: flex; gap: 6px; justify-content: center; margin: -4px 0 10px; }
+.case-pages button { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--ph-faint); background: transparent; color: var(--ph-dim); font-family: var(--mono); font-size: 12px; letter-spacing: 0; padding: 0; }
+.case-pages button.open { border-color: var(--ph-dim); color: var(--ph); }
+.case-pages button.on { background: var(--ph); border-color: var(--ph); color: var(--bg); font-weight: 700; }
+.case-pages button.locked { opacity: 0.35; }
+.case-pages button:active:not(.locked) { background: rgba(124, 255, 154, 0.22); }
+
+/* the pass is made: for a breath the instruments step back and the world has the screen */
+#app.beat #hud .chips, #app.beat #hud .nav, #app.beat #hud .hint, #app.beat #hud .instr, #app.beat #hud .status { opacity: 0.25; transition: opacity 0.35s; }
+#app.beat #fx::after { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 55%, rgba(242, 169, 59, 0.22), transparent 60%); animation: beatflash 1s ease-out forwards; }
+@keyframes beatflash { 0% { opacity: 1; } 100% { opacity: 0; } }
+
+/* the last page turned */
+.db-story.closed { border-left-color: var(--ice); background: rgba(143, 208, 255, 0.07); }
+.db-story.closed small { color: var(--ice); }

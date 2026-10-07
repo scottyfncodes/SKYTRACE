@@ -160,6 +160,19 @@ const RING_AMBER = new THREE.Color(AMBER);
 const RING_DIM = new THREE.Color(0xf4f1e8);
 /** Opportunity rings (Mission Control's reward): ice blue, never mistaken for the route. */
 const RING_BONUS = new THREE.Color(0x8fd0ff);
+/** The last ring home, lined up on the runway: pale phosphor, the colour of base. */
+const RING_FINAL = new THREE.Color(0xd8ffe4);
+
+/** How long a ring takes to iris in when it is spawned in front of the pilot (s). */
+export const SPAWN_SECONDS = 0.55;
+
+/** The spawn: the hoop opens from a point, overshoots a touch, settles; the halo flares and calms. */
+export function spawnLook(k: number): { scale: number; halo: number } {
+  const t = Math.max(0, Math.min(1, k));
+  const over = 1 + 0.18 * Math.sin(t * Math.PI);
+  const ease = 1 - Math.pow(1 - t, 3);
+  return { scale: Math.max(0.02, ease * over), halo: 0.3 + 0.7 * (1 - t) };
+}
 
 /** One hoop of the route: a bright tube, a soft halo, a faint fill so it reads as a doorway. */
 class RingMesh {
@@ -169,6 +182,8 @@ class RingMesh {
   readonly fill: THREE.Mesh<THREE.CircleGeometry, THREE.MeshBasicMaterial>;
   /** Seconds since it was passed or missed (animates the pop / the fade). */
   fx = -1;
+  /** Seconds since it was spawned in front of the pilot (-1: placed with the route). */
+  spawned = -1;
   constructor(readonly ring: Ring) {
     const r = ring.r;
     const mat = (o: number, add = false) => new THREE.MeshBasicMaterial({ color: AMBER, transparent: true, opacity: o, depthWrite: false, fog: false, side: THREE.DoubleSide, blending: add ? THREE.AdditiveBlending : THREE.NormalBlending });
@@ -297,6 +312,25 @@ export class MissionScene {
     if (p) this.waypoint.position.set(p.x, this.hf.sample(p.x, p.z) + 260, p.z);
   }
 
+  /** The next pending ring irises in rather than simply being there (the first ring of an escape, the drop ring). */
+  spawnNext(index: number): void {
+    const i = this.ringIndex(index);
+    const m = this.rings[i];
+    if (m) m.spawned = 0;
+  }
+
+  /** A moving target: keep its ring over it. */
+  moveRing(id: string, x: number, y: number, z: number): void {
+    const m = this.rings.find((r) => r.ring.id === id);
+    if (!m) return;
+    m.group.position.set(x, y, z);
+    if (this.routeLine && this.rings.length === 1) {
+      const pos = this.routeLine.geometry.getAttribute('position');
+      pos.setXYZ(0, x, y, z);
+      pos.needsUpdate = true;
+    }
+  }
+
   /** Build the hoops for a route (replacing the previous route's). */
   setRoute(route: Route | null): void {
     for (const r of this.rings) {
@@ -358,19 +392,30 @@ export class MissionScene {
       const show = k >= 0 && k <= 2;
       m.group.visible = show;
       if (!show) continue;
+      const last = i === this.rings.length - 1 && this.rings.length > 1;
+      const own = m.ring.bonus ? RING_BONUS : last ? RING_FINAL : RING_AMBER;
       if (k === 0) {
         const look = activeRingLook(scale, t);
-        m.group.scale.setScalar(look.scale);
-        m.tube.material.color.copy(m.ring.bonus ? RING_BONUS : RING_AMBER).lerp(RING_RED, urgency);
+        let sc = look.scale;
+        let halo = look.halo;
+        if (m.spawned >= 0) {
+          m.spawned += dt;
+          const sp = spawnLook(m.spawned / SPAWN_SECONDS);
+          sc *= sp.scale;
+          halo = Math.max(halo, sp.halo);
+          if (m.spawned > SPAWN_SECONDS) m.spawned = -1;
+        }
+        m.group.scale.setScalar(sc);
+        m.tube.material.color.copy(own).lerp(RING_RED, urgency);
         m.halo.material.color.copy(m.tube.material.color);
         m.fill.material.color.copy(m.tube.material.color);
         m.tube.material.opacity = 1;
-        m.halo.material.opacity = look.halo;
-        m.fill.material.opacity = 0.07;
+        m.halo.material.opacity = halo;
+        m.fill.material.opacity = last ? 0.12 : 0.07;
       } else {
         m.group.scale.setScalar(1);
-        m.tube.material.color.copy(m.ring.bonus ? RING_BONUS : RING_DIM);
-        m.halo.material.color.copy(m.ring.bonus ? RING_BONUS : RING_DIM);
+        m.tube.material.color.copy(m.ring.bonus ? RING_BONUS : last ? RING_FINAL : RING_DIM);
+        m.halo.material.color.copy(m.tube.material.color);
         m.tube.material.opacity = k === 1 ? 0.55 : 0.28;
         m.halo.material.opacity = 0.06;
         m.fill.material.opacity = 0;
@@ -392,6 +437,11 @@ export class MissionScene {
 
   animate(t: number, dt: number): void {
     for (const m of this.storms.values()) if (m.group.visible) m.animate(t, dt);
+    if (this.alarm !== this.alarmTo) {
+      // the sector turns, it does not snap: amber to red in a breath
+      this.alarm = this.alarmTo > this.alarm ? Math.min(this.alarmTo, this.alarm + dt / 0.8) : Math.max(this.alarmTo, this.alarm - dt / 0.8);
+      this.paintCurtain(this.alarm);
+    }
     if (this.alarm > 0) this.paintCurtain(this.alarm * (0.75 + 0.25 * Math.sin(t * 6)));
     if (this.dropZone.visible) {
       const k = (t * 0.8) % 1;
@@ -400,10 +450,20 @@ export class MissionScene {
     }
   }
 
-  /** The sector turns red: they know you are here (0 = amber, 1 = red). */
-  setAlarm(k: number): void {
-    this.alarm = Math.max(0, Math.min(1, k));
-    this.paintCurtain(this.alarm);
+  private alarmTo = 0;
+  /** The sector turns red: they know you are here (0 = amber, 1 = red). `now` skips the fade. */
+  setAlarm(k: number, now = false): void {
+    this.alarmTo = Math.max(0, Math.min(1, k));
+    if (now || this.alarmTo === 0) {
+      this.alarm = this.alarmTo;
+      this.paintCurtain(this.alarm);
+    }
+  }
+
+  /** The target's lamps: on when it runs. */
+  setLights(id: ReturnId, on: boolean): void {
+    const v = this.vehicles.get(id);
+    if (v instanceof TruckMesh) v.setLights(on);
   }
 
   private paintCurtain(k: number): void {
