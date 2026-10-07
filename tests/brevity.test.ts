@@ -20,8 +20,8 @@ import {
 import { buildHandover } from '../src/mission/crew';
 import { CREW, EQUIPMENT, AIRCRAFT } from '../src/operation/catalog';
 import { capabilities, defaultLoadout, withAircraft } from '../src/operation/loadout';
-import { beginReturn, flightObjective, landAtBase, launch, newOperation, tickOperation, endOperation } from '../src/operation/operation';
-import { rings, type LegDef } from '../src/operation/gates';
+import { beginExecute, beginReturn, flightObjective, landAtBase, launch, newOperation, tickOperation, endOperation } from '../src/operation/operation';
+import { planDropRun, rings, type LegDef } from '../src/operation/gates';
 import { threadRings } from './helpers';
 import { stageResults } from '../src/operation/score';
 import { aircraftBars } from '../src/ui/preflight';
@@ -129,7 +129,7 @@ describe('word budgets', () => {
 describe('stage scorecard (debrief)', () => {
   const def = MISSION_01;
   const cap = capabilities(defaultLoadout());
-  const fly = (opts: { detected?: boolean; photo?: number; storm?: number; landed?: boolean }) => {
+  const fly = (opts: { detected?: boolean; photo?: number; storm?: number; landed?: boolean; drop?: 'hit' | 'wide' }) => {
     const m = newMission();
     scanReturn(m, 'C', 2, 700, 100);
     inspectReturn(m, 'C', 2, true);
@@ -140,6 +140,13 @@ describe('stage scorecard (debrief)', () => {
     for (let t = 0; t < (opts.storm ?? 0); t += 1) tickOperation(op, def, { x: -80, z: 480, y: 200, agl: 150 }, 1, cap);
     if (opts.detected) tickOperation(op, def, { x: 700, z: 100, y: 700, agl: 600 }, 0.1, cap);
     threadRings(op, cap);
+    if (opts.drop) {
+      // EXECUTE: the drop run, through the ring or wide of it
+      beginExecute(op, planDropRun({ x: 720, z: 100 }, { x: 600, z: 200 }, () => 0).route);
+      const r = rings(op.routes.execute!)[0];
+      const off = opts.drop === 'hit' ? 0 : 120;
+      for (const k of [-20, 20]) tickOperation(op, def, { x: r.x + r.nx * k - r.nz * off, y: r.y, z: r.z + r.nz * k + r.nx * off, agl: r.agl }, 0.4, cap);
+    }
     beginReturn(op);
     threadRings(op, cap);
     if (opts.landed === false) endOperation(op, 'fuel');
@@ -147,21 +154,22 @@ describe('stage scorecard (debrief)', () => {
     return stageResults(m, op, def);
   };
 
-  it('a clean run is three ticks', () => {
-    const s = fly({ photo: 0.9 });
+  it('a clean run is three ticks: RECON, EXECUTE, ESCAPE', () => {
+    const s = fly({ photo: 0.9, drop: 'hit' });
     expect(s.map((x) => [x.label, x.ok, x.word])).toEqual([
-      ['OUTBOUND', true, 'CLEAN'],
       ['RECON', true, 'EXCELLENT'],
-      ['RETURN', true, 'CLEAN'],
+      ['EXECUTE', true, 'TAGGED'],
+      ['ESCAPE', true, 'CLEAN'],
     ]);
+    for (const x of s) within(x.word, 10);
   });
 
-  it('each stage reports its own problem in one word', () => {
-    expect(fly({ photo: 0.9, detected: true })[0]).toMatchObject({ ok: false, word: 'SPOTTED' });
-    expect(fly({ photo: 0.9, storm: 5 })[0]).toMatchObject({ ok: true, word: 'BUMPY' });
-    expect(fly({})[1]).toMatchObject({ ok: false, word: 'NO PHOTO' });
-    expect(fly({ photo: 0.5 })[1]).toMatchObject({ ok: true, word: 'FAIR' });
-    expect(fly({ photo: 0.9, landed: false })[2]).toMatchObject({ ok: false, word: 'LOST' });
+  it('each phase reports its own problem in one word', () => {
+    expect(fly({ photo: 0.9, detected: true, drop: 'hit' })[0]).toMatchObject({ ok: false, word: 'SPOTTED' });
+    expect(fly({ photo: 0.5, drop: 'hit' })[0]).toMatchObject({ ok: true, word: 'FAIR' });
+    expect(fly({ photo: 0.9, drop: 'wide' })[1]).toMatchObject({ ok: false, word: 'MISSED' });
+    expect(fly({ photo: 0.9 })[1]).toMatchObject({ ok: false, word: 'NO TARGET' });
+    expect(fly({ photo: 0.9, drop: 'hit', landed: false })[2]).toMatchObject({ ok: false, word: 'LOST' });
   });
 });
 

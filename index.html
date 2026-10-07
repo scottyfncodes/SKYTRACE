@@ -85,7 +85,7 @@
           <div class="pk"><label>SENSOR PKGS</label><b id="sensors">1</b></div>
           <button id="btn-pause" class="icon" aria-label="Pause">II</button>
         </div>
-        <div id="objective" class="objective hidden" role="status" aria-live="polite"><small id="obj-kicker" class="obj-kicker"></small><div class="obj-title"><i class="reticle"></i><b id="obj-title">LOCATE THE SUPPLY TRUCK</b></div><div id="obj-detail" class="obj-detail"></div><div class="obj-progress"><i id="obj-progress"></i></div></div>
+        <div id="objective" class="objective hidden" role="status" aria-live="polite"><div class="obj-top"><span id="obj-phase" class="obj-phase"></span><small id="obj-kicker" class="obj-kicker"></small></div><div class="obj-title"><i class="reticle"></i><b id="obj-title">LOCATE THE SUPPLY TRUCK</b></div><div id="obj-detail" class="obj-detail"></div><div class="obj-progress"><i id="obj-progress"></i></div></div>
         <div id="nav" class="nav"></div>
         <div id="chips" class="chips"></div>
         <div id="signal" class="signal"></div>
@@ -121,7 +121,7 @@
       <!-- ===== MISSION CONTROL: the board between the two flights ===== -->
       <section id="board" class="screen board hidden" aria-label="Mission control">
         <header class="mb-bar">
-          <div class="mb-id"><b>MISSION CONTROL</b><span><i></i><em id="mb-control">AUTOPILOT ORBITING</em></span></div>
+          <div class="mb-id"><b><em class="ph-tag">01 RECON <i class="dots"><i class="now"></i><i></i><i></i></i></em> MISSION CONTROL</b><span><i></i><em id="mb-control">AUTOPILOT ORBITING</em></span></div>
           <div class="mb-clock"><small>FRONT IN</small><div id="mb-pips" class="pips"></div><b id="mb-min">12</b><small>MIN</small></div>
           <div class="mb-fuel"><small>FUEL</small><b id="mb-fuel">0:00</b></div>
           <div id="mb-forecast" class="mb-forecast"></div>
@@ -144,10 +144,10 @@
               <div id="mb-card-body" class="mb-card-body"></div>
             </div>
             <div class="mb-plan">
-              <h3>ROUTE HOME</h3>
+              <h3>WAY OUT</h3>
               <div id="mb-routes" class="mb-routes"></div>
               <ul id="mb-preview" class="mb-preview"></ul>
-              <button id="btn-execute" type="button" class="btn execute" disabled>EXECUTE MISSION</button>
+              <button id="btn-execute" type="button" class="btn execute" disabled>LOCK THE PLAN ▶</button>
               <p id="mb-exec-hint" class="mb-exec-hint"></p>
             </div>
           </aside>
@@ -157,6 +157,8 @@
 
       <!-- hand-over between stations -->
       <div id="handoff" class="handoff hidden" aria-live="assertive"><div class="handoff-card"><small id="ho-kicker"></small><b id="ho-title"></b><ul id="ho-warn" class="ho-warn"></ul><ul id="ho-status" class="ho-status"></ul></div></div>
+      <!-- a phase begins: 01 RECON / 02 EXECUTE / 03 ESCAPE -->
+      <div id="phase-card" class="phase-card hidden" aria-live="assertive"><div class="pc-in"><div class="pc-num"><b id="pc-n">01</b><span id="pc-dots" class="pc-dots"></span></div><small id="pc-label">RECON</small><b id="pc-title"></b><p id="pc-line"></p></div></div>
       <div id="banner" class="banner" aria-live="assertive"><small id="banner-kicker"></small><b id="banner-text"></b></div>
 
       <!-- ===== PAUSE ===== -->
@@ -187,10 +189,11 @@
       <section id="debrief" class="screen overlay hidden">
         <div class="card debrief-card">
           <div class="db-head">
-            <div><p class="tag">MISSION 01 · RECON REPORT</p><h2 id="db-headline">MISSION COMPLETE</h2><p id="db-aircraft" class="db-aircraft"></p></div>
+            <div><p class="tag">MISSION 01 · DEBRIEF</p><h2 id="db-headline">MISSION COMPLETE</h2><p id="db-aircraft" class="db-aircraft"></p></div>
             <div id="db-grade" class="db-grade">A</div>
           </div>
           <div id="db-stages" class="db-stages"></div>
+          <div id="db-story" class="db-story"></div>
           <div id="db-control" class="db-control"></div>
           <div id="db-photos" class="db-photos"></div>
           <div id="db-rewards" class="db-rewards"></div>

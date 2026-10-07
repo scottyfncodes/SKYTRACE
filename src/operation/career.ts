@@ -19,6 +19,8 @@ export interface Career {
   controlBest: Record<string, number>;
   unlocked: string[];
   lastLoadout: Loadout | null;
+  /** Pages of the case file turned (see `story.ts`). */
+  caseFile: number;
 }
 
 export interface UnlockDef {
@@ -40,7 +42,7 @@ interface Storage {
 }
 
 export function newCareer(): Career {
-  return { version: 1, credits: 0, xp: 0, operations: 0, completed: 0, best: {}, controlBest: {}, unlocked: [], lastLoadout: null };
+  return { version: 1, credits: 0, xp: 0, operations: 0, completed: 0, best: {}, controlBest: {}, unlocked: [], lastLoadout: null, caseFile: 0 };
 }
 
 export function loadCareer(storage: Storage): Career {
@@ -49,7 +51,7 @@ export function loadCareer(storage: Storage): Career {
     if (!raw) return newCareer();
     const c = JSON.parse(raw) as Partial<Career>;
     if (c.version !== 1) return newCareer();
-    return { ...newCareer(), ...c, unlocked: Array.isArray(c.unlocked) ? c.unlocked : [], best: c.best ?? {}, controlBest: c.controlBest ?? {} };
+    return { ...newCareer(), ...c, unlocked: Array.isArray(c.unlocked) ? c.unlocked : [], best: c.best ?? {}, controlBest: c.controlBest ?? {}, caseFile: typeof c.caseFile === 'number' ? c.caseFile : 0 };
   } catch {
     return newCareer();
   }

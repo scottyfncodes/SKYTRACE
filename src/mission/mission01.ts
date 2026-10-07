@@ -259,6 +259,14 @@ export const MISSION_01 = {
     window: '12 min at Mission Control before the front arrives',
     threats: ['Ridge radar watching the sector', 'Storm cell over the main road', 'Our own scout patrol is in the sector: do not misidentify it'],
   },
+  story: {
+    hook: 'A supply truck went dark in Sector 7.',
+    verbs: { recon: 'FIND IT', execute: 'TAG IT', escape: 'GET OUT' },
+    recon: { title: 'FIND THE TRUCK', line: 'Reach Sector 7. One truck fits every clue.' },
+    execute: { title: 'TAG THE TRUCK', line: 'Fly through the ring over it.' },
+    escape: { title: 'GET OUT', line: 'They know you are here. Rings close fast.' },
+    payload: 'TRACKER',
+  },
   clues: ['LARGE', 'MOVING', 'ON A ROAD', 'RADIO DEAD', 'IN SECTOR 7'],
   risks: [
     { icon: '◯', text: 'Fly the rings · around the storm' },
@@ -272,7 +280,7 @@ export const MISSION_01 = {
   // high ground, then drop under the ridge radar into the sector.
   outbound: {
     id: 'outbound',
-    title: 'FLY THE RINGS',
+    title: 'REACH SECTOR 7',
     gates: [
       { kind: 'ring', id: 'o1', x: -560, z: 760, agl: 120, r: 44 },
       { kind: 'ring', id: 'o2', x: -370, z: 610, agl: 140, r: 40 },
@@ -290,7 +298,7 @@ export const MISSION_01 = {
   // the cloud deck. Leaving the sector raises RADAR CONTACT: every ring is on a clock.
   return: {
     id: 'return',
-    title: 'RETURN TO BASE',
+    title: 'GET OUT',
     gates: [
       { kind: 'ring', id: 'r1', x: 430, z: 470, agl: 90, r: 34, alert: true },
       { kind: 'ring', id: 'r2', x: 270, z: 610, agl: 70, r: 32 },

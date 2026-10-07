@@ -2,6 +2,18 @@ import type { MissionDef } from '../mission/missionDef';
 import { AIRCRAFT, AIRCRAFT_BY_ID, CREW, EQUIPMENT, SEAT_LABEL, type AircraftDef, type EquipmentId, type SeatRole } from '../operation/catalog';
 import { isUnlocked, UNLOCKS, type Career } from '../operation/career';
 import { checkLoadout, type Loadout } from '../operation/loadout';
+import { phaseInfo, type Phase } from '../operation/phases';
+
+/** RECON → EXECUTE → ESCAPE, one verb each: the whole mission at a glance. */
+export function phaseStrip(verbs: Record<Phase, string>): string {
+  return `<ol class="phase-strip">${(['recon', 'execute', 'escape'] as Phase[])
+    .map((p) => {
+      const i = phaseInfo(p);
+      return `<li class="ph-${p}"><small>${i.n}</small><b>${i.label}</b><span>${verbs[p]}</span></li>`;
+    })
+    .join('')}</ol>`;
+}
+
 
 export interface PreflightHandlers {
   onAircraft(id: string): void;
@@ -75,10 +87,10 @@ export class Preflight {
     this.el['pf-brief'].innerHTML = `
       <p class="pf-code">${def.code}</p>
       <h2>${B.headline}</h2>
-      <p class="pf-goal">${B.primary}</p>
-      <div class="pf-clues">${def.clues.map((c) => `<span>${c}</span>`).join('')}</div>
-      <ul class="pf-risks">${def.risks.map((r) => `<li><i>${r.icon}</i>${r.text}</li>`).join('')}</ul>
+      ${phaseStrip(def.story.verbs)}
+      <div class="pf-clues"><small>THE TRUCK IS</small>${def.clues.map((c) => `<span>${c}</span>`).join('')}</div>
       <details id="pf-more"${this.briefOpen ? ' open' : ''}><summary>FULL BRIEFING</summary>
+        <ul class="pf-risks">${def.risks.map((r) => `<li><i>${r.icon}</i>${r.text}</li>`).join('')}</ul>
         <p><b>Intel.</b> ${def.intel.join(' ')}</p>
         <p><b>Weather.</b> ${B.weather} ${B.conditions}</p>
         <p><b>Constraints.</b> ${B.constraints.join('. ')}.</p>

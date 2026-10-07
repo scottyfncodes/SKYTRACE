@@ -36,23 +36,27 @@ import { TruckMesh, TruckSim } from '../world/truck';
 import { BASE, RUNWAY, gridRef } from '../world/worldData';
 import { DEFAULT_RETURNS, DESTINATION, MISSION_01, RETURNS, rollReturns, SECTOR_7, TARGET_SPEED_TO_DESTINATION, type ReturnDef, type ReturnId } from '../mission/mission01';
 import { BARGE, destinationRoute, evidenceGrade, newMission, TARGET, useReturns, type MissionState } from '../mission/mission';
-import { buildHandover, engageOperator, handBack, newCrew, operatorAvailability, tickCrew, type CrewState } from '../mission/crew';
+import { engageOperator, handBack, newCrew, operatorAvailability, tickCrew, type CrewState } from '../mission/crew';
 import { inArea } from '../mission/missionDef';
 import { orbitInput } from '../flight/autopilot';
 import { allCells, ASSET_ORDER, ASSETS, assetFitted, belief, canUse, chooseCorridor, clueChecks, isKnown as cellKnown, mark, newBoard, ruledOut, scoreBoard, traits, useAsset, type AssetId, type BoardEvent, type BoardState, type ControlResult, type Target } from '../control/board';
 import { buildExit, TIER_LABEL, type ExitProfile } from '../control/exit';
 import { CONTROL_01 } from '../mission/mission01Control';
 import { MissionBoard, type BoardAction, type BoardFrame } from '../ui/missionBoard';
-import { Preflight } from '../ui/preflight';
+import { phaseStrip, Preflight } from '../ui/preflight';
 import { MissionScene } from '../mission/missionScene';
 import { RouteMover } from '../mission/vehicles';
 import { CREW_BY_ID } from '../operation/catalog';
 import { capabilities as loadoutCapabilities, checkLoadout, defaultLoadout, seatCrew, toggleEquipment, withAircraft, type Capabilities, type Loadout } from '../operation/loadout';
-import { activeLeg, beginReturn, damagedPerf, endOperation, flightObjective, landAtBase, launch, newOperation, tickOperation, type OperationState } from '../operation/operation';
-import { bonusTaken, currentGate, inHazard, onClock, ringScale, type LegEvent } from '../operation/gates';
+import { activeLeg, beginExecute, beginReturn, damagedPerf, endOperation, flightObjective, landAtBase, launch, newOperation, tickOperation, type OperationState } from '../operation/operation';
+import { bonusTaken, currentGate, inHazard, onClock, planDropRun, ringScale, type LegEvent } from '../operation/gates';
+import { phaseInfo, phaseMarks, phaseOf, type Phase } from '../operation/phases';
+import { advanceCaseFile, currentLead } from '../operation/story';
 import { buildReport, type Report } from '../operation/score';
 import { isUnlocked, loadCareer, recordOperation, saveCareer, type Career, type UnlockDef } from '../operation/career';
 import { pauseTransition, type Mode } from './modes';
+
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 const SORTIE_FUEL = 330; // seconds of flight on the standard fit
 
@@ -151,6 +155,16 @@ export class Game {
   private report: Report | null = null;
   /** Photographs taken this operation (evidence). */
   private shots: Shot[] = [];
+  /** EXECUTE: seconds into the drop run, the payload in the air, and the world's reaction to the drop. */
+  private execT = 0;
+  private payload: SensorPackage | null = null;
+  private reaction: { t: number; result: 'tagged' | 'missed'; reacted: boolean } | null = null;
+  /** The phase card on screen (seconds left) and the phase the HUD is themed for. */
+  private phaseTimer = 0;
+  /** Visibility easing toward the escape's weather (the front closes in where you can see it). */
+  private visEase: { from: number; to: number; t: number } | null = null;
+  /** A page of the case file this operation turned (debrief). */
+  private newLead: string | null = null;
 
   constructor(root: HTMLElement) {
     const q = (id: string) => {
@@ -158,7 +172,7 @@ export class Game {
       if (!e) throw new Error(`missing #${id}`);
       return e;
     };
-    for (const id of ['gl', 'hud', 'intel', 'title', 'pause', 'hint', 'btn-begin', 'btn-continue', 'btn-newcase-title', 'stick-zone', 'stick-knob', 'throttle', 'btn-scan', 'btn-mark', 'btn-drop', 'btn-map', 'btn-pause', 'btn-rtb', 'btn-resume-pause', 'btn-map-pause', 'btn-end-sortie', 'btn-sound-pause', 'loading', 'btn-mission', 'btn-open-case', 'btn-case-back', 'mission-card', 'case-card', 'mission-brief', 'debrief', 'btn-fly-again', 'btn-debrief-menu', 'db-headline', 'db-rows-more', 'db-stages', 'db-photos', 'db-findings', 'pause-objective', 'btn-ops', 'handoff', 'board', 'db-control', 'preflight', 'career-line', 'db-grade', 'db-aircraft', 'db-secondaries', 'db-rewards', 'fx']) {
+    for (const id of ['gl', 'hud', 'intel', 'title', 'pause', 'hint', 'btn-begin', 'btn-continue', 'btn-newcase-title', 'stick-zone', 'stick-knob', 'throttle', 'btn-scan', 'btn-mark', 'btn-drop', 'btn-map', 'btn-pause', 'btn-rtb', 'btn-resume-pause', 'btn-map-pause', 'btn-end-sortie', 'btn-sound-pause', 'loading', 'btn-mission', 'btn-open-case', 'btn-case-back', 'mission-card', 'case-card', 'mission-brief', 'debrief', 'btn-fly-again', 'btn-debrief-menu', 'db-headline', 'db-rows-more', 'db-stages', 'db-photos', 'db-findings', 'pause-objective', 'btn-ops', 'handoff', 'board', 'db-control', 'preflight', 'career-line', 'db-grade', 'db-aircraft', 'db-secondaries', 'db-rewards', 'fx', 'phase-card', 'db-story']) {
       this.el[id] = q(id);
     }
     this.el['app'] = root;
@@ -351,6 +365,7 @@ export class Game {
       getLoadout: () => this.loadout,
       getCareer: () => this.career,
       getReport: () => this.report,
+      getPhase: () => phaseOf(this.op.stage),
     };
     this.last = performance.now();
     this.raf = requestAnimationFrame((now) => this.frame(now));
@@ -370,10 +385,12 @@ export class Game {
     this.el['career-line'].textContent = c.operations ? `${c.operations} OPERATION${c.operations === 1 ? '' : 'S'} · ${c.credits} CR · ${c.xp} XP · BEST ${c.best[MISSION_01.id] ?? '—'}` : 'NEW SQUADRON · NO OPERATIONS FLOWN';
     this.hud.clearBanners();
     const M = MISSION_01;
+    const lead = currentLead(this.career);
     this.el['mission-brief'].innerHTML =
-      `<p class="mb-code">${M.code}</p>` +
-      `<h2 class="mb-head">${M.briefing.headline}</h2>` +
-      `<div class="pf-clues">${M.clues.map((c) => `<span>${c}</span>`).join('')}</div>`;
+      `<p class="mb-code">${M.code} · CASE FILE ${lead.page}/${lead.total}</p>` +
+      `<h2 class="mb-head">${lead.text}</h2>` +
+      phaseStrip(M.story.verbs);
+    this.setPhaseTheme(null);
     this.showCaseCard(false);
     const hasSave = this.state.sortie > 0 || this.state.notes.length > 0;
     this.el['btn-continue'].classList.toggle('hidden', !hasSave);
@@ -397,7 +414,14 @@ export class Game {
     this.pending = null;
     this.hideHandoff();
     this.setVisibility(1);
+    this.visEase = null;
     this.missionScene.setWaypoint(null);
+    this.missionScene.setDropZone(null);
+    this.missionScene.setAlarm(0);
+    this.hidePhaseCard();
+    if (this.payload) this.bundle.scene.remove(this.payload.group);
+    this.payload = null;
+    this.reaction = null;
   }
 
   private showCaseCard(on: boolean): void {
@@ -797,6 +821,14 @@ export class Game {
     this.photos.clear();
     this.report = null;
     this.shots = [];
+    this.execT = 0;
+    this.reaction = null;
+    this.newLead = null;
+    if (this.payload) this.bundle.scene.remove(this.payload.group);
+    this.payload = null;
+    this.visEase = null;
+    this.missionScene.setAlarm(0);
+    this.missionScene.setDropZone(null);
     this.setVisibility(1);
     this.movers.clear();
     for (const r of RETURNS) this.movers.set(r.id, new RouteMover(r.route, r.speed, r.start, true));
@@ -828,8 +860,7 @@ export class Game {
     this.el['hud'].classList.remove('hidden');
     this.intel.close();
     this.hud.clearBanners();
-    const fo = flightObjective(this.op, def, this.cap)!;
-    this.hud.banner('WHEELS UP', fo.title, 'obj', 3);
+    this.showPhase('recon');
     this.mode = 'flight';
     this.last = performance.now();
   }
@@ -840,7 +871,7 @@ export class Game {
     for (const e of events) {
       switch (e.type) {
         case 'gate-passed': {
-          if (e.id === 'land') break;
+          if (e.id === 'land' || e.id === 'drop') break;
           const op = this.exit?.opportunities.find((o) => o.ringId === e.id);
           if (op) {
             // an opportunity Mission Control earned: the photo pass
@@ -854,6 +885,7 @@ export class Game {
           break;
         }
         case 'gate-missed':
+          if (e.id === 'drop') break;
           if (this.exit?.opportunities.some((o) => o.ringId === e.id)) {
             this.hud.message('OPPORTUNITY PASSED BY', 'warn');
             break;
@@ -895,8 +927,9 @@ export class Game {
   private currentObjective(): { kicker: string; title: string; detail: string } {
     const fo = flightObjective(this.op, MISSION_01, this.cap);
     if (fo) return fo;
+    if (this.op.stage === 'execute') return { kicker: 'DROP', title: this.op.execResult === 'tagged' ? `${MISSION_01.story.payload} LIVE` : 'DROP MISSED', detail: 'STAND BY' };
     if (this.crew.station === 'operator') return { kicker: 'MISSION CONTROL', title: this.control.marked ? 'PLAN THE WAY HOME' : 'FIND THE SUPPLY TRUCK', detail: `FRONT IN ${this.control.minutes} MIN` };
-    return { kicker: 'RECON', title: 'MISSION CONTROL', detail: this.inOpsArea() ? 'OPEN MISSION CONTROL' : `FLY BACK TO ${MISSION_01.operations.area.label}` };
+    return { kicker: 'ON STATION', title: 'MISSION CONTROL', detail: this.inOpsArea() ? 'OPEN MISSION CONTROL' : `FLY BACK TO ${MISSION_01.operations.area.label}` };
   }
 
   private reconWork(): boolean {
@@ -930,7 +963,7 @@ export class Game {
 
   /** The flight out: the leg Mission Control's Exit Profile generated. */
   private startReturnLeg(): void {
-    if (this.op.stage !== 'recon' || !this.exit) return;
+    if ((this.op.stage !== 'recon' && this.op.stage !== 'execute') || !this.exit) return;
     const ex = this.exit;
     beginReturn(this.op, { return: ex.leg }, { x: this.a.x, y: this.a.y, z: this.a.z, yaw: this.a.yaw }, (x, z) => this.bundle.heightField.sample(x, z), ex.contactFromStart);
     // the first ring is laid wherever the aircraft happens to be: never start in a storm, never fly into one at once
@@ -939,39 +972,141 @@ export class Game {
     this.op.routes.return.hazards = this.op.routes.return.hazards.filter((h) => h.kind !== 'storm' || clear(h));
     this.fuel = Math.min(this.fuelMax, ex.fuelSeconds);
     this.autoOps = 0;
-    this.setVisibility(ex.leg.visibility);
+    // the weather closes in where the pilot can watch it happen
+    this.visEase = { from: this.visibility, to: ex.leg.visibility, t: 0 };
     this.missionScene.setHazards(this.op.routes.return.hazards);
     this.missionScene.setRoute(this.op.routes.return);
     // suddenly flying again: the first ring is already right ahead (the call goes up once the hand-back card clears)
     this.returnCue = true;
   }
 
-  /** TAKE CONTROLS after EXECUTE: the Exit Profile becomes the flight. */
+  /**
+   * Off the board and back in the seat. With the target marked, EXECUTE: the
+   * drop run. Without one there is nothing to tag: straight to ESCAPE.
+   */
   private flyOut(): void {
     if (this.crew.station !== 'operator' || !this.control.executed || !this.exit) return;
-    const session = this.crew.sessionTime;
     handBack(this.crew);
-    // wings level, nose on the horizon: the first ring is laid dead ahead and stays in frame
+    // wings level, nose on the horizon
     this.a.roll = 0;
     this.a.pitch = 0;
     this.scanning = false;
     this.radarRing.visible = false;
-    this.startReturnLeg();
-    // opportunities are good news: they go with the status, not the warnings
-    const notices = this.exit.leg.notices.filter((n) => !n.startsWith('OPPORTUNITY'));
-    const good = this.exit.leg.notices.filter((n) => n.startsWith('OPPORTUNITY'));
-    const deck = this.op.routes.return.hazards.find((h) => h.kind === 'ceiling');
-    if (deck && deck.kind === 'ceiling' && this.a.y > deck.y) notices.unshift('IN CLOUD · DESCEND');
-    const ho = buildHandover({ reason: 'complete', x: this.a.x, z: this.a.z, agl: this.a.agl, fuelSeconds: this.fuel, sessionTime: session, baseX: BASE.x, baseZ: BASE.z, terrainWarning: this.a.terrainWarning, notices });
     this.board.hide();
-    this.chase.reset();
+    this.hud.clearBanners();
     this.el['hud'].classList.remove('hidden');
     this.audio.radarOff();
-    if (this.exit.tier === 'scramble' || this.exit.contactFromStart) this.audio.warn();
-    else this.audio.unlockSound();
-    const calm = this.exit.tier === 'optimal' || this.exit.tier === 'standard';
-    this.showHandoff(calm ? 'calm' : 'exit', `EXIT · ${TIER_LABEL[this.exit.tier]}`, ho.title, ho.warnings, [...good, ...ho.status], 3.2);
+    if (this.control.marked) this.startExecute();
+    else this.startEscape('No target. And now they know you are here.');
+    this.chase.reset();
     this.last = performance.now();
+  }
+
+  /** EXECUTE: the truck pulls over; the aircraft is lined up on it; one ring stands over it. */
+  private startExecute(): void {
+    const ground = (x: number, z: number) => this.bundle.heightField.sample(x, z);
+    const mv = this.movers.get(TARGET.id)!;
+    mv.speed = 0;
+    const run = planDropRun({ x: mv.x, z: mv.z }, { x: this.a.x, z: this.a.z }, ground, MISSION_01.story.execute.title);
+    Object.assign(this.a, { x: run.start.x, y: run.start.y, z: run.start.z, yaw: run.start.yaw, roll: 0, pitch: 0, throttle: 0.75 });
+    this.a.speed = Math.max(this.a.speed, this.cap.perf.maxSpeed * 0.65);
+    this.a.agl = this.a.y - ground(this.a.x, this.a.z);
+    this.input.syncThrottle(this.a.throttle);
+    beginExecute(this.op, run.route);
+    this.execT = 0;
+    this.reaction = null;
+    this.missionScene.setHazards([]);
+    this.missionScene.setRoute(run.route);
+    this.missionScene.setWaypoint({ x: mv.x, z: mv.z });
+    this.missionScene.setDropZone({ x: mv.x, z: mv.z });
+    this.showPhase('execute');
+  }
+
+  /** The drop ring is behind the aircraft: the payload falls (or doesn't), and the world reacts. */
+  private onDrop(result: 'tagged' | 'missed', lost = false): void {
+    this.reaction = { t: 0, result, reacted: false };
+    this.hidePhaseCard();
+    this.missionScene.setDropZone(null);
+    this.missionScene.setWaypoint(null);
+    if (result === 'tagged') {
+      const sy = Math.sin(this.a.yaw);
+      const cy = Math.cos(this.a.yaw);
+      const p = new SensorPackage(this.a.x, this.a.y - 2, this.a.z, -sy * this.a.speed * 0.5, -6, -cy * this.a.speed * 0.5);
+      this.payload = p;
+      this.bundle.scene.add(p.group);
+      this.audio.drop();
+      this.hud.banner('PAYLOAD AWAY', `${MISSION_01.story.payload} ON TARGET`, 'done', 1.4);
+    } else {
+      this.audio.ringMissed();
+      this.hud.banner(lost ? 'TARGET LOST' : 'DROP MISSED', `NO ${MISSION_01.story.payload}`, 'bad', 1.4);
+    }
+  }
+
+  /** The world answers the drop: the truck bolts for the river, the sector lights up red. Then: get out. */
+  private tickReaction(dt: number): void {
+    const re = this.reaction;
+    if (!re) return;
+    re.t += dt;
+    if (!re.reacted && re.t >= 1.2) {
+      re.reacted = true;
+      const mv = this.movers.get(TARGET.id)!;
+      if (!this.control.shadowed) mv.setRoute(destinationRoute(mv.x, mv.z, mv.segment), false);
+      mv.speed = TARGET_SPEED_TO_DESTINATION * 1.5;
+      this.missionScene.showDestination(DESTINATION.x, DESTINATION.z, true);
+      this.missionScene.setAlarm(1);
+      this.audio.warn();
+      if (re.result === 'tagged') this.audio.payload();
+      this.hud.banner(re.result === 'tagged' ? `${MISSION_01.story.payload} LIVE` : 'THEY SAW YOU', 'THE TRUCK IS RUNNING', 'bad', 1.4);
+    }
+    if (re.t >= 2.8) {
+      this.reaction = null;
+      this.startEscape();
+    }
+  }
+
+  /** ESCAPE: the Exit Profile becomes the flight home, starting with a ring dead ahead. */
+  private startEscape(line?: string): void {
+    if (!this.exit) return;
+    this.missionScene.setAlarm(1);
+    this.startReturnLeg();
+    const notices = this.exit.leg.notices.filter((n) => !n.startsWith('OPPORTUNITY'));
+    const deck = this.op.routes.return.hazards.find((h) => h.kind === 'ceiling');
+    if (deck && deck.kind === 'ceiling' && this.a.y > deck.y) notices.unshift('IN CLOUD · DESCEND');
+    const good = this.exit.opportunities.length ? [`BONUS: ${this.exit.opportunities.map((o) => o.label).join(' · ')}`] : [];
+    this.showPhase('escape', line, [...notices.slice(0, 2).map((t) => ({ t, bad: true })), ...good.map((t) => ({ t, bad: false }))]);
+  }
+
+  // ---- phases: the card when one begins, and the HUD theme while it lasts
+  private showPhase(p: Phase, line?: string, notes: { t: string; bad: boolean }[] = []): void {
+    const S = MISSION_01.story;
+    const copy = S[p];
+    const info = phaseInfo(p);
+    const el = this.el['phase-card'];
+    el.querySelector('#pc-n')!.textContent = info.n;
+    el.querySelector('#pc-label')!.textContent = info.label;
+    el.querySelector('#pc-title')!.textContent = copy.title;
+    el.querySelector('#pc-line')!.innerHTML = esc(line ?? copy.line) + (notes.length ? `<span class="pc-notes">${notes.map((n) => `<i class="${n.bad ? 'bad' : 'good'}">${esc(n.t)}</i>`).join('')}</span>` : '');
+    const stage = p === 'recon' ? 'outbound' : p === 'execute' ? 'execute' : 'return';
+    el.querySelector('#pc-dots')!.innerHTML = phaseMarks(stage, this.op.execResult).map((m) => `<i class="${m}"></i>`).join('');
+    el.className = `phase-card ph-${p}`;
+    void el.offsetWidth;
+    el.classList.add('on');
+    this.el['app'].classList.add('carding');
+    // in flight the card must not hide the ring for long: short, and see-through
+    this.phaseTimer = p === 'recon' ? 2.4 : p === 'escape' && notes.length ? 2.2 : 1.8;
+    this.setPhaseTheme(p);
+    this.audio.phase(p);
+  }
+
+  private hidePhaseCard(): void {
+    this.phaseTimer = 0;
+    this.el['phase-card'].className = 'phase-card hidden';
+    this.el['app'].classList.remove('carding');
+  }
+
+  private setPhaseTheme(p: Phase | null): void {
+    if (p) this.el['app'].dataset.phase = p;
+    else delete this.el['app'].dataset.phase;
   }
 
   private handoffTimer = 0;
@@ -1061,7 +1196,11 @@ export class Game {
     const cr = this.controlResult;
     const r = buildReport(this.mission, this.op, MISSION_01, this.fuel / this.fuelMax, (this.control.maxMinutes - this.control.minutes) * 60, cr ? { total: cr.total, rank: cr.rank } : undefined);
     const unlocks = recordOperation(this.career, MISSION_01.id, r);
+    this.newLead = advanceCaseFile(this.career, r.success && this.op.execResult === 'tagged');
     saveCareer(this.career, localStorage);
+    this.setPhaseTheme(null);
+    this.hidePhaseCard();
+    this.reaction = null;
     this.report = r;
     this.renderReport(r, unlocks);
     this.el['debrief'].classList.remove('hidden');
@@ -1080,6 +1219,12 @@ export class Game {
     this.el['db-stages'].innerHTML = r.stages
       .map((st, i) => `<div class="st ${st.ok ? 'ok' : 'no'}" style="--i:${i}"><small>${st.label}</small><i>${st.ok ? '✓' : '✕'}</i><b>${st.word}</b></div>`)
       .join('');
+    // the case file: one line of the bigger story
+    const lead = currentLead(this.career);
+    this.el['db-story'].innerHTML = this.newLead
+      ? `<small>CASE FILE ${lead.page}/${lead.total} · NEW LEAD</small><b>${esc(this.newLead)}</b>`
+      : `<small>CASE FILE ${lead.page}/${lead.total}</small><b>${esc(lead.text)}</b><span>NEXT LEAD: FIND IT · TAG IT · GET HOME</span>`;
+    this.el['db-story'].classList.toggle('new', !!this.newLead);
     // the evidence the crew brought home
     this.el['db-photos'].innerHTML = this.shots.length
       ? this.shots.map((p) => `<figure><img src="${p.url}" alt="" class="${p.sensor}" /><figcaption>${p.id === TARGET.id ? 'THE TRUCK' : p.id === BARGE.id ? 'THE BARGE' : `RETURN ${p.id}`} · <b class="g-${p.grade}">${p.grade}</b></figcaption></figure>`).join('')
@@ -1149,15 +1294,38 @@ export class Game {
         this.el['hud'].classList.remove('handing');
       }
     }
-    if (this.returnCue && this.handoffTimer <= 0.4) {
+    if (this.phaseTimer > 0) {
+      this.phaseTimer -= dt;
+      if (this.phaseTimer <= 0) {
+        this.el['phase-card'].classList.remove('on');
+        this.el['app'].classList.remove('carding');
+      }
+    }
+    if (this.returnCue && this.phaseTimer <= 0.4) {
       this.returnCue = false;
-      this.hud.banner('RETURN TO BASE', 'FLY THE RINGS HOME', 'obj', 2.2);
       if (this.op.ret.contact) this.hud.banner('RADAR CONTACT', 'THE RINGS ARE CLOSING', 'bad', 2.4);
     }
+    if (this.visEase) {
+      const v = this.visEase;
+      v.t = Math.min(1, v.t + dt / 3);
+      this.setVisibility(v.from + (v.to - v.from) * v.t * (2 - v.t));
+      if (v.t >= 1) this.visEase = null;
+    }
+    if (this.payload && !this.payload.landed) this.payload.step(dt, this.bundle.heightField, this.t);
 
     // ---- the operation: gates and weather (on station, Mission Control keeps its own clock)
     const { events, hits } = tickOperation(this.op, def, { x: this.a.x, z: this.a.z, y: this.a.y, agl: this.a.agl }, dt, this.cap);
     if (events.length) this.legEvents(events);
+    // EXECUTE: one pass at the drop ring (wander off for too long and the target is lost)
+    if (this.op.stage === 'execute' && !this.reaction) {
+      this.execT += dt;
+      if (this.op.execResult === 'tagged' || this.op.execResult === 'missed') this.onDrop(this.op.execResult);
+      else if (this.execT > 45) {
+        this.op.execResult = 'missed';
+        this.onDrop('missed', true);
+      }
+    }
+    this.tickReaction(dt);
     for (const h of hits) {
       if (h.type === 'destroyed') {
         this.missionScene.strikeAt(this.a.x, this.a.y, this.a.z);
@@ -1274,7 +1442,7 @@ export class Game {
       saveCareer(this.career, localStorage);
     }
     this.rankSounded = false;
-    this.board.showResult(res, this.exit, prev, isBest && prev !== null, this.replayHook());
+    this.board.showResult(res, this.exit, prev, isBest && prev !== null, this.replayHook(), b.marked ? { n: '02', label: 'EXECUTE', title: MISSION_01.story.execute.title } : { n: '03', label: 'ESCAPE', title: MISSION_01.story.escape.title });
     this.audio.click();
   }
 
@@ -1441,7 +1609,7 @@ export class Game {
       pending: this.pending ? { asset: this.pending.asset, target: this.pending.target, k: this.pending.t / this.pending.dur, from: { x: from.x, z: from.z } } : null,
       forecast: this.forecastCache.value,
       canExecute: !!b.corridor && !busy,
-      executeHint: b.executed ? '' : !b.corridor ? 'PICK A ROUTE HOME TO EXECUTE' : !b.marked ? 'NO TRUCK MARKED YET' : '',
+      executeHint: b.executed ? '' : !b.corridor ? 'PICK A WAY OUT FIRST' : !b.marked ? 'NO TARGET MARKED · NOTHING TO TAG' : '',
       executed: b.executed,
     };
   }
@@ -1520,7 +1688,7 @@ export class Game {
     const gate = leg ? currentGate(leg.state, leg.def) : null;
     let waypoint: HudFrame['waypoint'] = null;
     const A = def.operations.area;
-    if (gate?.kind === 'ring') waypoint = { x: gate.x, z: gate.z, label: 'RING' };
+    if (gate?.kind === 'ring') waypoint = { x: gate.x, z: gate.z, label: this.op.stage === 'execute' ? 'TARGET' : 'RING' };
     else if (this.op.stage === 'recon' && !area) waypoint = { x: (A.x0 + A.x1) / 2, z: (A.z0 + A.z1) / 2, label: A.label };
 
     // ---- arrived: stop flying, Mission Control takes over
@@ -1563,6 +1731,7 @@ export class Game {
     if (this.sortieTime < 7) hint = touch ? 'DRAG LEFT SIDE TO STEER · THROTTLE ON THE RIGHT' : 'ARROWS / WASD STEER · SHIFT / CTRL THROTTLE';
     else if (warning.startsWith('IN CLOUD')) hint = touch ? 'PUSH THE STICK DOWN' : 'ARROW DOWN / S TO DESCEND';
     else if (warning.startsWith('TURBULENCE')) hint = 'TURN AWAY FROM THE RED CIRCLE';
+    else if (this.op.stage === 'execute' && gate) hint = 'FLY THROUGH THE RING TO DROP';
     void who;
     this.el['hint'].textContent = hint;
 
@@ -1625,6 +1794,7 @@ export class Game {
         nearContact: null,
         sweepAngle: this.sweep,
         objective: { kicker: ob.kicker, title: ob.title, detail: ob.detail, progress: null, done: false },
+        phase: this.hudPhase(),
         sector: A,
         chips,
         warning,
@@ -1632,6 +1802,13 @@ export class Game {
       },
       dt,
     );
+  }
+
+  /** "02 EXECUTE ●●○" on the objective. */
+  private hudPhase(): HudFrame['phase'] {
+    const p = phaseOf(this.op.stage);
+    if (!p) return null;
+    return { ...phaseInfo(p), marks: phaseMarks(this.op.stage, this.op.execResult) };
   }
 
   // ------------------------------------------------------------------ loop

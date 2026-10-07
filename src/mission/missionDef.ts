@@ -1,12 +1,16 @@
 /**
  * What every SKYTRACE operation declares. The grammar is
  *
- *   PREFLIGHT → OUTBOUND (gates) → RECON (Mission Control) → RETURN (gates) → DEBRIEF
+ *   PREFLIGHT → OUTBOUND (gates) → RECON (Mission Control) → EXECUTE (drop run) → RETURN (gates) → DEBRIEF
+ *
+ * and is played as three phases the player always recognises:
+ * RECON → EXECUTE → ESCAPE (`operation/phases.ts`).
  *
  * The flying legs are lists of gates and hazards (`operation/gates.ts`);
  * the recon objectives live in the mission's own rules module.
  */
 import type { LegDef } from '../operation/gates';
+import type { MissionStory } from '../operation/phases';
 
 export interface OperationsArea {
   id: string;
@@ -40,6 +44,8 @@ export interface MissionDef {
   intel: readonly string[];
   intelShort: string;
   briefing: Briefing;
+  /** The story, told in the three phases: RECON → EXECUTE → ESCAPE. */
+  story: MissionStory;
   /** What identifies the target: a handful of tags, read at a glance. */
   clues: readonly string[];
   /** The three things that will bite, one line each. */

@@ -139,14 +139,14 @@ describe('operation stages', () => {
     expect(tickOperation(op, def, fix(0, 0), 1, cap).events).toEqual([]);
     launch(op);
     expect(op.stage).toBe('outbound');
-    expect(flightObjective(op, def, cap)).toEqual({ kicker: 'OUTBOUND 1/8', title: 'FLY THE RINGS', detail: '' });
+    expect(flightObjective(op, def, cap)).toEqual({ kicker: 'RING 1/8', title: 'REACH SECTOR 7', detail: '' });
     threadRings(op, cap);
     expect(op.stage).toBe('recon');
     expect(activeLeg(op, def)).toBeNull();
     expect(flightObjective(op, def, cap)).toBeNull();
     beginReturn(op);
     expect(op.stage).toBe('return');
-    expect(flightObjective(op, def, cap)!.title).toBe('RETURN TO BASE');
+    expect(flightObjective(op, def, cap)!.title).toBe('GET OUT');
     threadRings(op, cap);
     expect(flightObjective(op, def, cap)!.title).toBe('LAND AT BASE');
     landAtBase(op, def);

@@ -239,7 +239,7 @@ export function buildExit(inp: ExitInput): ExitProfile {
   const ringSpecs: RingSpec[] = specs.map(({ at: _at, ...s }) => s);
   const leg: ReturnLeg = {
     id: 'return',
-    title: 'RETURN TO BASE',
+    title: 'GET OUT',
     gates: [...ringSpecs, { kind: 'land', id: 'land', label: 'LANDING', objective: 'LAND AT BASE', detail: 'LOW OVER THE RUNWAY' }],
     hazards,
     visibility: T.visibility,
