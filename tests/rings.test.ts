@@ -220,6 +220,29 @@ describe('the way home: every ring shrinks from the moment the last one is hit',
   });
 });
 
+describe('the join ring stands in for a route ring right on top of it', () => {
+  it('drops leading route rings within reach of the join ring (never a bonus, never the last), keeping their alert', () => {
+    const join = { kind: 'ring' as const, id: 'join', x: 0, z: -380, agl: 100, r: 40, y: 100, nx: 0, nz: -1 };
+    const leg: LegDef = {
+      ...LINE,
+      id: 'return',
+      gates: [
+        { kind: 'ring', id: 'near', x: 60, z: -420, agl: 100, r: 30, alert: true },
+        { kind: 'ring', id: 'far', x: 0, z: -900, agl: 100, r: 30 },
+        { kind: 'land', id: 'land', label: 'LANDING', objective: '', detail: '' },
+      ],
+    };
+    const r = placeRoute(leg, flat, { x: 0, z: 0 }, join);
+    expect(r.gates.map((g) => g.id)).toEqual(['join', 'far', 'land']);
+    expect((r.gates[0] as { alert?: boolean }).alert).toBe(true);
+    // a bonus ring is never taken away, and neither is the last ring before the landing
+    const kept = placeRoute({ ...leg, gates: [{ ...(leg.gates[0] as object), bonus: true } as LegDef['gates'][number], ...leg.gates.slice(1)] }, flat, { x: 0, z: 0 }, join);
+    expect(kept.gates.map((g) => g.id)).toEqual(['join', 'near', 'far', 'land']);
+    const last = placeRoute({ ...leg, gates: [leg.gates[0], leg.gates[2]] }, flat, { x: 0, z: 0 }, join);
+    expect(last.gates.map((g) => g.id)).toEqual(['join', 'near', 'land']);
+  });
+});
+
 describe('the join ring: flying again the moment recon ends', () => {
   it('stands dead ahead of the nose (in frame at once), barely turned toward the route, below the cloud deck', () => {
     // heading north (yaw 0), the route lies due west
