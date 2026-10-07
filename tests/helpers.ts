@@ -1,10 +1,11 @@
 import { MISSION_01 } from '../src/mission/mission01';
+import type { MissionDef } from '../src/mission/missionDef';
 import { rings } from '../src/operation/gates';
 import type { Capabilities } from '../src/operation/loadout';
 import { activeLeg, tickOperation, type OperationState } from '../src/operation/operation';
 
 /** Thread the active leg's rings, straight through each centre. Returns the last position. */
-export function threadRings(op: OperationState, cap: Capabilities, def = MISSION_01) {
+export function threadRings(op: OperationState, cap: Capabilities, def: MissionDef = MISSION_01) {
   const leg = activeLeg(op)!;
   const rs = rings(leg.def);
   let p = { x: rs[0].x - rs[0].nx * 60, y: rs[0].y, z: rs[0].z - rs[0].nz * 60, agl: rs[0].agl };

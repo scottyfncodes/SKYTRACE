@@ -94,6 +94,8 @@ export interface ControlDef {
   landing: { x: number; z: number; label: string };
   /** The brief's clues, in order. */
   clues: readonly string[];
+  /** How many storms the tower misplaces (default 1). Later pages: the tower lies more. */
+  wrongForecasts?: number;
 }
 
 // ------------------------------------------------------------------ state
@@ -167,16 +169,14 @@ export function newBoard(def: ControlDef, cast: readonly ReturnDef[], sensors: r
     const truth = deal[i % deal.length];
     state[c.id] = { truth, possible: [...CELL_TRUTHS], forecast: WEATHER.includes(truth) ? truth : 'clear' };
   });
-  // the stale forecast: one storm misplaced onto a stretch of another corridor
-  const storms = cells.filter((c) => state[c.id].truth === 'storm');
-  if (storms.length) {
-    const s = storms[Math.floor(rand() * storms.length)];
-    const away = cells.filter((c) => c.corridor !== s.corridor && state[c.id].forecast === 'clear');
-    if (away.length) {
-      const o = away[Math.floor(rand() * away.length)];
-      state[s.id].forecast = 'clear';
-      state[o.id].forecast = 'storm';
-    }
+  // the stale forecast: a storm misplaced onto a stretch of another corridor (later pages: more than one)
+  const storms = shuffle(cells.filter((c) => state[c.id].truth === 'storm'), rand);
+  for (const s of storms.slice(0, def.wrongForecasts ?? 1)) {
+    const away = cells.filter((c) => c.corridor !== s.corridor && state[c.id].forecast === 'clear' && state[c.id].truth !== 'storm');
+    if (!away.length) break;
+    const o = away[Math.floor(rand() * away.length)];
+    state[s.id].forecast = 'clear';
+    state[o.id].forecast = 'storm';
   }
   const uses: Partial<Record<AssetId, number>> = { ...def.limited };
   const returns: Partial<Record<ReturnId, ReturnKnowledge>> = {};

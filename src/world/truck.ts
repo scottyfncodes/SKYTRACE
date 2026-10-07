@@ -59,6 +59,8 @@ export class TruckSim {
 
 export class TruckMesh {
   readonly group: THREE.Group;
+  private lampMat: THREE.MeshBasicMaterial;
+  private tailMat: THREE.MeshBasicMaterial;
   constructor() {
     this.group = new THREE.Group();
     const bed = box(7, 0.6, 2.6, 0x4a4a40);
@@ -87,9 +89,17 @@ export class TruckMesh {
     const bumper = box(0.25, 0.25, 2.6, 0x2b2b27);
     bumper.position.set(5.0, 0.35, 0);
     const lamp = new THREE.MeshBasicMaterial({ color: 0xfff1c4 });
+    this.lampMat = lamp;
     for (const z of [-0.95, 0.95]) {
       const l = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.22, 0.32), lamp);
       l.position.set(5.0, 0.8, z);
+      this.group.add(l);
+    }
+    // tail lamps: dark until the driver hits the brakes and runs
+    this.tailMat = new THREE.MeshBasicMaterial({ color: 0x3a1a16 });
+    for (const z of [-1.1, 1.1]) {
+      const l = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.2, 0.3), this.tailMat);
+      l.position.set(-3.52, 0.95, z);
       this.group.add(l);
     }
     for (const x of [3, -2.25]) {
@@ -112,6 +122,11 @@ export class TruckMesh {
       this.group.add(w);
     }
     this.group.add(bed, cab, load);
+  }
+  /** Headlamps and tail lamps on (the truck is running) or off. */
+  setLights(on: boolean): void {
+    this.lampMat.color.setHex(on ? 0xffffff : 0xfff1c4);
+    this.tailMat.color.setHex(on ? 0xff2a1a : 0x3a1a16);
   }
   /** Place the mesh directly (mission vehicles drive their own routes). */
   setPose(x: number, z: number, heading: number, hf: HeightField): void {

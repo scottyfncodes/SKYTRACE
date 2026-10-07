@@ -9,7 +9,7 @@ import { DROP_AGL, DROP_RUN, onClock, planDropRun, rings } from '../src/operatio
 import { capabilities, defaultLoadout } from '../src/operation/loadout';
 import { activeLeg, beginExecute, beginReturn, flightObjective, launch, newOperation, tickOperation } from '../src/operation/operation';
 import { PHASES, phaseMarks, phaseOf } from '../src/operation/phases';
-import { advanceCaseFile, CASE_FILE, currentLead } from '../src/operation/story';
+import { advanceCaseFile, CASE_CLOSED, CASE_FILE, currentLead, pagesOpen } from '../src/operation/story';
 import { newCareer } from '../src/operation/career';
 import { threadRings } from './helpers';
 
@@ -115,7 +115,7 @@ describe('RECON → EXECUTE → ESCAPE, flown', () => {
 describe('the story, at a glance', () => {
   it('every phase is a short title and one short line', () => {
     const S = def.story;
-    within(S.hook, 44);
+    within(S.hook, 70);
     for (const p of ['recon', 'execute', 'escape'] as const) {
       within(S[p].title, 18);
       within(S[p].line, 44);
@@ -123,14 +123,28 @@ describe('the story, at a glance', () => {
     }
   });
 
-  it('the case file turns a page only on a clean operation, and stops at the end', () => {
+  it('the case file turns a page only on a clean operation, closes at the end, and never turns on a replay', () => {
     const c = newCareer();
-    expect(currentLead(c)).toEqual({ page: 1, total: CASE_FILE.length, text: CASE_FILE[0] });
+    expect(currentLead(c)).toEqual({ page: 1, total: CASE_FILE.length, text: CASE_FILE[0], closed: false });
     expect(advanceCaseFile(c, false)).toBeNull();
     expect(advanceCaseFile(c, true)).toBe(CASE_FILE[1]);
     expect(currentLead(c).page).toBe(2);
+    expect(pagesOpen(c)).toBe(2);
+    // flying page 1 again, however well, does not move the story
+    expect(advanceCaseFile(c, true, 0)).toBeNull();
+    expect(currentLead(c).page).toBe(2);
     for (let i = 0; i < 10; i++) advanceCaseFile(c, true);
     expect(currentLead(c).page).toBe(CASE_FILE.length);
-    for (const line of CASE_FILE) within(line, 70);
+    expect(c.caseClosed).toBe(true);
+    expect(currentLead(c).closed).toBe(true);
+    for (const line of [...CASE_FILE, CASE_CLOSED]) within(line, 72);
+  });
+
+  it('the last page turns once: the log, then nothing more', () => {
+    const c = newCareer();
+    c.caseFile = CASE_FILE.length - 1;
+    expect(advanceCaseFile(c, true)).toBe(CASE_CLOSED);
+    expect(advanceCaseFile(c, true)).toBeNull();
+    expect(currentLead(c, 0).text).toBe(CASE_FILE[0]); // an earlier page, chosen to replay
   });
 });

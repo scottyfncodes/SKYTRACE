@@ -11,7 +11,7 @@
  * events. The recon objectives themselves live in the mission's rules.
  */
 import type { MissionDef } from '../mission/missionDef';
-import { currentGate, inHazard, joinRing, legComplete, newLeg, passLanding, placeRoute, ringOrdinal, rings, tickLeg, type AircraftFix, type LegEvent, type LegState, type Route } from './gates';
+import { CONTACT_PACE, currentGate, inHazard, joinRing, legComplete, newLeg, passLanding, placeRoute, ringOrdinal, rings, startWindow, tickLeg, type AircraftFix, type LegEvent, type LegState, type Route } from './gates';
 import { BASE } from '../world/worldData';
 import type { Capabilities, Loadout } from './loadout';
 import type { FlightPerf } from '../flight/aircraft';
@@ -78,14 +78,16 @@ export function activeLeg(op: OperationState, _def?: MissionDef): { def: Route; 
 
 /**
  * EXECUTE: the target is found, now do the thing. The drop run is a short
- * leg of its own (usually one ring over the target), never on a clock: the
- * pressure comes after. The result is read off the ring.
+ * leg of its own (usually one ring over the target). Normally it is not on a
+ * clock (the pressure comes after); a mission with a window puts the ring
+ * on one from the first frame. The result is read off the ring.
  */
-export function beginExecute(op: OperationState, route: Route): void {
+export function beginExecute(op: OperationState, route: Route, window = 0): void {
   if (op.stage !== 'recon') return;
   op.stage = 'execute';
   op.routes.execute = route;
   op.exec = newLeg(route);
+  if (window > 0) startWindow(op.exec, window);
 }
 
 /** The drop ring was flown through (tagged) or wide of (missed); null while pending. */
@@ -165,7 +167,7 @@ export function tickOperation(op: OperationState, def: MissionDef, a: AircraftFi
  * Exit Profile), the radar has you from the first ring. `def.return` is the
  * leg Mission Control generated.
  */
-export function beginReturn(op: OperationState, def?: Pick<MissionDef, 'return'>, pose?: { x: number; y: number; z: number; yaw: number }, ground: Ground = flat, contact = false): void {
+export function beginReturn(op: OperationState, def?: Pick<MissionDef, 'return'>, pose?: { x: number; y: number; z: number; yaw: number }, ground: Ground = flat, contact = false, pace = CONTACT_PACE): void {
   if (op.stage !== 'recon' && op.stage !== 'outbound' && op.stage !== 'execute') return;
   // no drop run flown (no target), or one abandoned: execute did not happen
   if (op.execResult === null) op.execResult = op.stage === 'execute' ? 'missed' : 'skipped';
@@ -176,7 +178,7 @@ export function beginReturn(op: OperationState, def?: Pick<MissionDef, 'return'>
     const join = joinRing(pose, first && first.kind === 'ring' ? first : BASE, ground, deck && deck.kind === 'ceiling' ? deck.y : Infinity);
     op.routes.return = placeRoute(def.return, ground, pose, join);
   }
-  op.ret = newLeg(op.routes.return, op.outbound.detected || contact, true);
+  op.ret = newLeg(op.routes.return, op.outbound.detected || contact, true, pace);
 }
 
 /** Touch-down at base. Only the return leg ends with a landing. */

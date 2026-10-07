@@ -313,6 +313,56 @@ export class AudioSystem {
     }
   }
 
+  /**
+   * The master dips for a beat (the pass is made: the world holds its breath)
+   * and comes back on its own.
+   */
+  duck(amount = 0.35, seconds = 1.2): void {
+    if (!this.ctx || !this.master || this.muted) return;
+    const t = this.ctx.currentTime;
+    this.master.gain.cancelScheduledValues(t);
+    this.master.gain.setTargetAtTime(0.8 * (1 - amount), t, 0.08);
+    this.master.gain.setTargetAtTime(0.8, t + seconds, 0.35);
+  }
+
+  /** The sector wakes up: a low two-tone, three times, under everything. Not a siren. */
+  alarm(): void {
+    for (let i = 0; i < 3; i++) {
+      this.tone(196, 0.22, 0.11, 'triangle', i * 0.46);
+      this.tone(147, 0.26, 0.1, 'triangle', i * 0.46 + 0.2);
+    }
+  }
+
+  /** A ring materialises ahead: a soft rising shimmer. */
+  spawn(): void {
+    this.noise(0.5, 0.12, 900, 'bandpass', 2600);
+    this.tone(660, 0.35, 0.06, 'sine', 0.05);
+    this.tone(990, 0.4, 0.05, 'sine', 0.18);
+  }
+
+  /** The last ring, lined up on the runway: lower, resolved, the one that matters. */
+  finalRing(): void {
+    this.noise(0.35, 0.3, 2600, 'bandpass', 500);
+    this.tone(523, 0.16, 0.14, 'triangle', 0.04);
+    this.tone(659, 0.16, 0.13, 'triangle', 0.16);
+    this.tone(784, 0.5, 0.12, 'triangle', 0.28);
+  }
+
+  /** Wheels down at base: the airframe settles, a quiet resolved cadence. */
+  home(): void {
+    this.noise(1.4, 0.3, 600, 'lowpass', 120);
+    this.tone(392, 0.3, 0.1, 'sine', 0.3);
+    this.tone(494, 0.3, 0.1, 'sine', 0.5);
+    this.tone(587, 0.9, 0.1, 'sine', 0.7);
+  }
+
+  /** The aircraft is lost: a falling pair, then nothing. */
+  lost(): void {
+    this.tone(330, 0.5, 0.14, 'sawtooth');
+    this.tone(247, 0.9, 0.12, 'sawtooth', 0.3);
+    this.noise(1.2, 0.25, 500, 'lowpass', 80);
+  }
+
   /** The payload hits home: a thud and a lock-on chirp. */
   payload(): void {
     this.noise(0.3, 0.4, 400, 'lowpass', 90);

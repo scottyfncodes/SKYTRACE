@@ -21,6 +21,8 @@ export interface Career {
   lastLoadout: Loadout | null;
   /** Pages of the case file turned (see `story.ts`). */
   caseFile: number;
+  /** The last page was flown clean: the case is closed (every page stays open to replay). */
+  caseClosed: boolean;
 }
 
 export interface UnlockDef {
@@ -42,7 +44,7 @@ interface Storage {
 }
 
 export function newCareer(): Career {
-  return { version: 1, credits: 0, xp: 0, operations: 0, completed: 0, best: {}, controlBest: {}, unlocked: [], lastLoadout: null, caseFile: 0 };
+  return { version: 1, credits: 0, xp: 0, operations: 0, completed: 0, best: {}, controlBest: {}, unlocked: [], lastLoadout: null, caseFile: 0, caseClosed: false };
 }
 
 export function loadCareer(storage: Storage): Career {
@@ -51,7 +53,7 @@ export function loadCareer(storage: Storage): Career {
     if (!raw) return newCareer();
     const c = JSON.parse(raw) as Partial<Career>;
     if (c.version !== 1) return newCareer();
-    return { ...newCareer(), ...c, unlocked: Array.isArray(c.unlocked) ? c.unlocked : [], best: c.best ?? {}, controlBest: c.controlBest ?? {}, caseFile: typeof c.caseFile === 'number' ? c.caseFile : 0 };
+    return { ...newCareer(), ...c, unlocked: Array.isArray(c.unlocked) ? c.unlocked : [], best: c.best ?? {}, controlBest: c.controlBest ?? {}, caseFile: typeof c.caseFile === 'number' ? c.caseFile : 0, caseClosed: !!c.caseClosed };
   } catch {
     return newCareer();
   }

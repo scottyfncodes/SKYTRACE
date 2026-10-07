@@ -7,7 +7,9 @@
  * The rules live in `control/board.ts`; this file is only content.
  */
 import type { ControlDef } from '../control/board';
-import { MISSION_01 } from './mission01';
+
+/** The brief's clues, in order (also on the mission def). */
+export const CLUES_01: readonly string[] = ['LARGE', 'MOVING', 'ON A ROAD', 'RADIO DEAD', 'IN SECTOR 7'];
 
 const FINAL = { agl: 35, r: 34, cue: 'LINE UP · RUNWAY' } as const;
 
@@ -17,7 +19,7 @@ export const CONTROL_01: ControlDef = {
   limited: { drone: 2, scouts: 1 },
   cellMix: ['storm', 'storm', 'cloud', 'radar', 'cache', 'clear'],
   landing: { x: 528, z: 556, label: 'RIVER LANDING' },
-  clues: MISSION_01.clues,
+  clues: CLUES_01,
   corridors: [
     {
       id: 'north',
