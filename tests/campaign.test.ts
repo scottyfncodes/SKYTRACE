@@ -3,15 +3,16 @@
  * answering each other, and the pass flown every way it can go.
  */
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_RETURNS } from '../src/mission/mission01';
+import { DECOYS, DEFAULT_RETURNS, rollReturns, type ReturnDef } from '../src/mission/mission01';
 import { OPERATIONS, operationFor } from '../src/mission/operations';
-import { cleanOperation, escapePressure, MISS_HAZE, planExecute, RING_BY_RANK } from '../src/operation/consequence';
+import { cleanOperation, clockNote, escapePressure, FIRST_RING_FAST, FIRST_RING_SLOW, firstRingScale, MISS_HAZE, planExecute, RING_BY_RANK } from '../src/operation/consequence';
 import { CONTACT_PACE, CONTACT_SLACK, onClock, planDropRun, retargetRing, rings, ringScale, startWindow, tickLeg } from '../src/operation/gates';
 import { capabilities, defaultLoadout } from '../src/operation/loadout';
 import { activeLeg, beginExecute, beginReturn, launch, newOperation, tickOperation } from '../src/operation/operation';
 import { CASE_FILE } from '../src/operation/story';
 import { newBoard } from '../src/control/board';
 import { spawnLook, SPAWN_SECONDS } from '../src/mission/missionScene';
+import { boardStep } from '../src/ui/missionBoard';
 import { threadRings } from './helpers';
 
 const cap = capabilities(defaultLoadout());
@@ -54,10 +55,10 @@ describe('the operations: one per page, each pushed further', () => {
     }
   });
 
-  it('the board gets tighter and the tower lies more as the pages turn', () => {
-    const minutes = OPERATIONS.map((o) => o.control.minutes);
-    for (let i = 1; i < minutes.length; i++) expect(minutes[i]).toBeLessThanOrEqual(minutes[i - 1]);
-    expect(minutes[0]).toBeGreaterThan(minutes[minutes.length - 1]);
+  it('the board clock gets shorter and the tower lies more as the pages turn', () => {
+    const seconds = OPERATIONS.map((o) => o.control.seconds);
+    for (let i = 1; i < seconds.length; i++) expect(seconds[i]).toBeLessThanOrEqual(seconds[i - 1]);
+    expect(seconds[0]).toBeGreaterThan(seconds[seconds.length - 1]);
     expect(OPERATIONS[0].control.wrongForecasts ?? 1).toBe(1);
     expect(OPERATIONS[OPERATIONS.length - 1].control.wrongForecasts).toBe(2);
   });
@@ -264,5 +265,59 @@ describe('a ring irises in', () => {
     expect(mid.scale).toBeGreaterThan(0.8);
     expect(spawnLook(1)).toEqual({ scale: 1, halo: 0.3 });
     expect(SPAWN_SECONDS).toBeLessThan(0.8); // never hides the ring for long
+  });
+});
+
+describe('Mission Control runs on a clock, and the clock sets the first ring home', () => {
+  it('time to spare makes the first ring wait; none makes it close early; the rest of the route is untouched', () => {
+    expect(firstRingScale(1)).toBe(FIRST_RING_SLOW);
+    expect(firstRingScale(0)).toBe(FIRST_RING_FAST);
+    expect(firstRingScale(0.5)).toBeCloseTo((FIRST_RING_SLOW + FIRST_RING_FAST) / 2, 5);
+    expect(firstRingScale(7)).toBe(FIRST_RING_SLOW);
+    const def = OPERATIONS[0];
+    const fly = (first: number) => {
+      const op = newOperation(def, defaultLoadout());
+      launch(op);
+      threadRings(op, cap, def);
+      beginReturn(op, def, { x: 720, y: 60, z: 100, yaw: 0 }, flat, false, def.escape.pace, first);
+      const rs = rings(op.routes.return);
+      const at = (r: (typeof rs)[number]) => ({ x: r.x - r.nx * 200, y: r.y, z: r.z - r.nz * 200, agl: r.agl });
+      tickOperation(op, def, at(rs[0]), 0.01, cap);
+      const firstClock = op.ret.clockMax;
+      // through the first ring, then the second ring's clock is the usual one
+      for (const k of [-20, 20]) tickOperation(op, def, { x: rs[0].x + rs[0].nx * k, y: rs[0].y, z: rs[0].z + rs[0].nz * k, agl: rs[0].agl }, 0.4, cap);
+      tickOperation(op, def, at(rs[1]), 0.01, cap);
+      return { firstClock, secondClock: op.ret.clockMax };
+    };
+    const slow = fly(FIRST_RING_SLOW);
+    const fast = fly(FIRST_RING_FAST);
+    expect(slow.firstClock).toBeCloseTo(fast.firstClock * (FIRST_RING_SLOW / FIRST_RING_FAST), 1);
+    expect(slow.secondClock).toBeCloseTo(fast.secondClock, 1);
+  });
+
+  it('the escape card says what the clock bought you', () => {
+    expect(clockNote(40)).toEqual({ t: '40 s SPARE · FIRST RING HOLDS', bad: false });
+    expect(clockNote(9)).toMatchObject({ bad: true });
+    expect(clockNote(0)).toEqual({ t: 'OUT OF TIME · FIRST RING CLOSING', bad: true });
+    for (const s of [0, 9, 40]) within(clockNote(s).t, 34);
+  });
+
+  it('the board is two steps: marking the truck ends the first for good; a player can go on without one', () => {
+    expect(boardStep(false, false)).toBe('find');
+    expect(boardStep(false, true)).toBe('exit');
+    expect(boardStep(true, false)).toBe('exit');
+    expect(boardStep(true, true)).toBe('exit');
+  });
+
+  it('six look-alikes are dealt, each caught by something different, and the new ones really break the brief', () => {
+    const cast = rollReturns(seeded(11));
+    expect(cast.filter((r) => !r.hidden)).toHaveLength(6);
+    const A = OPERATIONS[0].operations.area;
+    const out = (r: ReturnDef) => !r.route.every(([x, z]) => x >= A.x0 && x <= A.x1 && z >= A.z0 && z <= A.z1);
+    expect(out({ ...DECOYS.north, id: 'A' })).toBe(true);
+    expect(out({ ...DECOYS.quarry, id: 'A' })).toBe(false);
+    expect(out({ ...DECOYS.convoy, id: 'A' })).toBe(false);
+    expect(DECOYS.quarry.radio).toBe(true);
+    expect(DECOYS.convoy.count).toBe(2);
   });
 });

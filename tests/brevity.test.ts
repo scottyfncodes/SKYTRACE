@@ -93,8 +93,8 @@ describe('word budgets', () => {
     events.push(...photograph(m, 'C', 0.8).events);
     events.push(...photograph(m, 'C', 0.9).events);
     events.push(...updateDestination(m, 5, true, true));
-    events.push(...inspectReturn(m, 'E', 5, true, 'thermal'));
-    events.push(...photograph(m, 'E', 0.6).events);
+    events.push(...inspectReturn(m, 'G', 5, true, 'thermal'));
+    events.push(...photograph(m, 'G', 0.6).events);
     events.push(...extract(newMission(), 'weather'));
     expect(events.length).toBeGreaterThan(10);
     for (const e of events) {

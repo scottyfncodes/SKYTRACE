@@ -14,8 +14,7 @@ export const CLUES_01: readonly string[] = ['LARGE', 'MOVING', 'ON A ROAD', 'RAD
 const FINAL = { agl: 35, r: 34, cue: 'LINE UP · RUNWAY' } as const;
 
 export const CONTROL_01: ControlDef = {
-  minutes: 12,
-  fuelPerMinute: 0.025,
+  seconds: 90,
   limited: { drone: 2, scouts: 1 },
   cellMix: ['storm', 'storm', 'cloud', 'radar', 'cache', 'clear'],
   landing: { x: 528, z: 556, label: 'RIVER LANDING' },

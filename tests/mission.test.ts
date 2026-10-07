@@ -53,13 +53,13 @@ describe('mission 01 content', () => {
   it('loads with one clear objective and a single target', () => {
     const m = newMission();
     expect(m.phase).toBe('locate');
-    expect(Object.keys(m.returns).sort()).toEqual(['A', 'B', 'C', 'D', 'E']);
+    expect(Object.keys(m.returns).sort()).toEqual(['A', 'B', 'C', 'D', 'E', 'F', 'G']);
     expect(RETURNS.filter((r) => r.isTarget)).toHaveLength(1);
     expect(TARGET.id).toBe('C');
     expect(MISSION_01.briefing.headline).toBe('LOCATE THE MISSING SUPPLY TRUCK');
     const ob = reconObjective(m, { station: 'operator' });
     expect(ob).toEqual({ kicker: 'PRIMARY', title: 'FIND THE SUPPLY TRUCK', detail: MISSION_01.intelShort, done: false });
-    expect(m.returns.E.hidden).toBe(true);
+    expect(m.returns.G.hidden).toBe(true);
     expect(Object.values(m.returns).every((r) => !r.detected && r.verdict === 'none')).toBe(true);
   });
 
@@ -149,8 +149,8 @@ describe('sensors', () => {
 
   it('the barge cannot be found until the recon reveals it', () => {
     const m = newMission();
-    scanReturn(m, 'E', 10, 528, 556);
-    expect(m.returns.E.detected).toBe(false);
+    scanReturn(m, 'G', 10, 528, 556);
+    expect(m.returns.G.detected).toBe(false);
   });
 
   it('photo quality: optical is sharpest, haze hurts optical not thermal, range and crew matter', () => {
@@ -236,7 +236,7 @@ describe('recon objectives and dynamic updates', () => {
     expect(ev[0].text).toBe(DESTINATION.short);
     expect(ev[1].title).toMatch(/BARGE/);
     expect(m.phase).toBe('landing');
-    expect(m.returns.E.detected && !m.returns.E.hidden).toBe(true);
+    expect(m.returns.G.detected && !m.returns.G.hidden).toBe(true);
     expect(reconObjective(m, { station: 'operator' }).title).toBe('PHOTOGRAPH THE BARGE');
   });
 

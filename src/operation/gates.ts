@@ -94,6 +94,8 @@ export interface LegState {
   clockMax: number;
   /** Metres per second the clock allows between rings (the escape profile sets it). */
   pace: number;
+  /** The first ring's clock, as a multiple of the usual one (what was left on Mission Control's clock sets it). */
+  first: number;
 }
 
 export interface LegEvent {
@@ -271,7 +273,7 @@ export function startWindow(s: LegState, seconds: number): void {
   s.clock = seconds;
 }
 
-export function newLeg(route: Route, contact = false, timed = false, pace = CONTACT_PACE): LegState {
+export function newLeg(route: Route, contact = false, timed = false, pace = CONTACT_PACE, first = 1): LegState {
   const status: Record<string, GateStatus> = {};
   for (const g of route.gates) status[g.id] = 'pending';
   const inside: Record<string, boolean> = {};
@@ -280,7 +282,7 @@ export function newLeg(route: Route, contact = false, timed = false, pace = CONT
     inside[h.id] = false;
     exposure[h.id] = 0;
   }
-  return { index: 0, status, inside, exposure, detected: false, prev: null, contact, timed, clock: null, clockMax: 0, pace };
+  return { index: 0, status, inside, exposure, detected: false, prev: null, contact, timed, clock: null, clockMax: 0, pace, first };
 }
 
 export function currentGate(s: LegState, route: Route): Gate | null {
@@ -366,7 +368,7 @@ export function tickLeg(s: LegState, route: Route, a: AircraftFix, dt: number, s
     // ---- the clock (the way home, or under contact)
     if (onClock(s)) {
       if (s.clock === null) {
-        s.clockMax = Math.hypot(g.x - a.x, g.y - a.y, g.z - a.z) / (s.pace || CONTACT_PACE) + CONTACT_SLACK;
+        s.clockMax = (Math.hypot(g.x - a.x, g.y - a.y, g.z - a.z) / (s.pace || CONTACT_PACE) + CONTACT_SLACK) * (s.index === 0 ? s.first || 1 : 1);
         s.clock = s.clockMax;
       } else s.clock -= dt;
     }

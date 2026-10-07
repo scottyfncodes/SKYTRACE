@@ -116,6 +116,20 @@ class ScoutMesh {
   }
 }
 
+/** Two large trucks nose to tail: the tanker pair. */
+class ConvoyMesh {
+  readonly group = new THREE.Group();
+  private trucks = [new TruckMesh(), new TruckMesh()];
+  constructor() {
+    for (const t of this.trucks) this.group.add(t.group);
+  }
+  setPose(x: number, z: number, heading: number, hf: HeightField): void {
+    const fx = -Math.sin(heading);
+    const fz = -Math.cos(heading);
+    this.trucks.forEach((t, i) => t.setPose(x - fx * i * 16, z - fz * i * 16, heading, hf));
+  }
+}
+
 /** River barge moored at the landing. */
 class BargeMesh {
   readonly group = new THREE.Group();
@@ -267,7 +281,7 @@ export class MissionScene {
     this.vehicles.clear();
     this.pins.clear();
     for (const r of cast) {
-      const m: Pose = r.kind === 'vessel' ? new BargeMesh() : r.size === 'small' ? new ScoutMesh() : new TruckMesh();
+      const m: Pose = r.kind === 'vessel' ? new BargeMesh() : r.size === 'small' ? new ScoutMesh() : r.count > 1 ? new ConvoyMesh() : new TruckMesh();
       this.vehicles.set(r.id, m);
       this.group.add(m.group);
       const pin = new THREE.Group();

@@ -1,11 +1,14 @@
 /**
- * MISSION CONTROL board: a map of the sector and the three ways home, a tray
- * of assets, a card for whatever is selected, the route plan with its live
- * exit forecast, and EXECUTE.
+ * MISSION CONTROL board, in two steps with one tap each:
  *
- * Play: tap (or drag) an asset onto a vehicle or a ? on a route; tap a
- * vehicle and MARK it; tap a route to fly it home; EXECUTE. Nothing here
- * changes the game: every action goes back through the handlers.
+ *   STEP 1 · FIND IT   the vehicles are lit, the routes dimmed. Tap a vehicle:
+ *                      its card shows the clues it fits and the looks you can
+ *                      take. LOOK, or MARK it as the truck. Marking ends the step.
+ *   STEP 2 · WAY OUT   the routes are lit, the vehicles dimmed. Tap a route to
+ *                      fly it home; tap a ? on it to scout it. LOCK THE PLAN.
+ *
+ * The clock runs the whole time, in real seconds. Nothing here changes the
+ * game: every action goes back through the handlers.
  */
 import type { AssetId, BoardEvent, CellTruth, ClueCheck, ControlResult, ExitTier, Target } from '../control/board';
 import { CELL_LABEL } from '../control/board';
@@ -15,8 +18,10 @@ import type { OperationsArea } from '../mission/missionDef';
 import type { ReturnId } from '../mission/mission01';
 import { RIVER, ROADS, type Pt } from '../world/worldData';
 
+export type BoardStep = 'find' | 'exit';
+
 export interface BoardAction {
-  /** 'asset' spends minutes; 'mark' calls the truck. */
+  /** 'asset' takes seconds off the clock; 'mark' calls the truck. */
   kind: 'asset' | 'mark';
   asset?: AssetId;
   label: string;
@@ -77,12 +82,21 @@ export interface BoardAsset {
   targets: string[];
 }
 
+/** An action that belongs to the step, not to a target (SIGINT on every radio; SHADOW the marked truck). */
+export interface StepAction extends BoardAction {
+  target: Target;
+}
+
 export interface BoardFrame {
-  minutes: number;
-  maxMinutes: number;
+  /** The clock, in real seconds. */
+  seconds: number;
+  maxSeconds: number;
   fuelSeconds: number;
   control: string;
-  goals: { label: string; state: 'todo' | 'done'; bonus: boolean }[];
+  step: BoardStep;
+  /** The truck is marked (step 1 is done for good). */
+  marked: boolean;
+  stepActions: StepAction[];
   returns: BoardReturn[];
   cells: BoardCell[];
   corridors: BoardCorridor[];
@@ -103,6 +117,7 @@ export interface BoardHandlers {
   onUse(asset: AssetId, target: Target): void;
   onMark(id: ReturnId): void;
   onCorridor(id: string): void;
+  onStep(step: BoardStep): void;
   onExecute(): void;
   onFlyOut(): void;
   onPause(): void;
@@ -120,6 +135,14 @@ const C = { ph: '#7cff9a', amber: '#f2a93b', warn: '#ff5a3c', ice: '#8fd0ff', di
 const TRUTH_COLOR: Record<CellTruth, string> = { clear: C.ph, storm: C.warn, cloud: '#c9d1d9', radar: C.warn, cache: C.ice };
 const STATUS_LABEL: Record<BoardReturn['status'], string> = { unknown: 'UNCHECKED', fits: 'FITS SO FAR', out: 'RULED OUT', truck: 'THE TRUCK', wrong: 'NOT THE TRUCK', barge: 'THE BARGE' };
 
+/** The clock turns red with this much left. */
+export const URGENT_SECONDS = 15;
+
+/** Which step the board is on: marking the truck ends step 1 for good; a player who cannot find it may go on without. */
+export function boardStep(marked: boolean, skipped: boolean): BoardStep {
+  return marked || skipped ? 'exit' : 'find';
+}
+
 /** Map bounds (world metres): the sector, the three routes and the runway. */
 const BOUNDS = { x0: -920, x1: 1060, z0: -330, z1: 830 };
 
@@ -131,9 +154,7 @@ export class MissionBoard {
   private el: Record<string, HTMLElement> = {};
   private last: BoardFrame | null = null;
   private selected: Target | null = null;
-  private armed: AssetId | null = null;
   private keys: Record<string, string> = {};
-  private drag: { asset: AssetId; x0: number; y0: number; moved: boolean; ghost: HTMLElement | null } | null = null;
   private toasts: { ev: BoardEvent; t: number }[] = [];
   private flashes = new Map<string, number>();
   private active = false;
@@ -149,16 +170,24 @@ export class MissionBoard {
       if (!e) throw new Error(`missing #${id}`);
       return e;
     };
-    for (const id of ['mb-control', 'mb-pips', 'mb-min', 'mb-fuel', 'mb-forecast', 'mb-goals', 'mb-tray', 'mb-card-head', 'mb-card-body', 'mb-vf', 'mb-vf-img', 'mb-routes', 'mb-preview', 'btn-execute', 'mb-exec-hint', 'mb-toast', 'mb-result', 'btn-mb-pause', 'mb-armed']) this.el[id] = q(id);
+    for (const id of ['mb-control', 'mb-bar-fill', 'mb-min', 'mb-fuel', 'mb-forecast', 'mb-step', 'mb-card-head', 'mb-card-body', 'mb-vf', 'mb-vf-img', 'mb-routes', 'mb-preview', 'btn-execute', 'mb-exec-hint', 'mb-toast', 'mb-result', 'btn-mb-pause', 'mb-plan-head']) this.el[id] = q(id);
     this.map = q('mb-map') as HTMLCanvasElement;
     this.ctx = this.map.getContext('2d')!;
     this.feed = q('mb-feed') as HTMLCanvasElement;
 
     this.map.addEventListener('pointerdown', (e) => this.onMapTap(e));
-    this.el['mb-tray'].addEventListener('pointerdown', (e) => this.onTrayDown(e));
-    window.addEventListener('pointermove', (e) => this.onDragMove(e));
-    window.addEventListener('pointerup', (e) => this.onDragEnd(e));
-    window.addEventListener('pointercancel', () => this.endDrag());
+    this.el['mb-step'].addEventListener('click', (e) => {
+      const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-step],[data-global]');
+      if (!b || b.disabled || !this.last || this.last.executed) return;
+      if (b.dataset.step) {
+        this.selected = null;
+        h.onStep(b.dataset.step as BoardStep);
+        h.onTap();
+      } else {
+        const a = this.last.stepActions.find((x) => x.asset === b.dataset.global);
+        if (a?.ok) h.onUse(a.asset!, a.target);
+      }
+    });
     this.el['mb-card-body'].addEventListener('click', (e) => {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-act]');
       if (!b || b.disabled || !this.selected) return;
@@ -167,7 +196,7 @@ export class MissionBoard {
     });
     this.el['mb-routes'].addEventListener('click', (e) => {
       const b = (e.target as HTMLElement).closest<HTMLElement>('[data-route]');
-      if (b) h.onCorridor(b.dataset.route!);
+      if (b && this.last?.step === 'exit') h.onCorridor(b.dataset.route!);
     });
     this.el['btn-execute'].addEventListener('click', () => {
       if (this.last?.canExecute) h.onExecute();
@@ -184,14 +213,13 @@ export class MissionBoard {
           if (this.el['mb-result'].classList.contains('done')) h.onFlyOut();
           else this.skipResult();
         } else if (this.last?.canExecute) h.onExecute();
-      } else if (e.key === 'Escape' && this.armed) this.arm(null);
+      }
     });
   }
 
   show(): void {
     this.active = true;
     this.selected = null;
-    this.armed = null;
     this.keys = {};
     this.toasts = [];
     this.flashes.clear();
@@ -202,7 +230,6 @@ export class MissionBoard {
 
   hide(): void {
     this.active = false;
-    this.endDrag();
     for (const t of this.resultTimers) window.clearTimeout(t);
     this.resultTimers = [];
     this.root.classList.add('hidden');
@@ -230,13 +257,6 @@ export class MissionBoard {
     this.el['mb-toast'].innerHTML = this.toasts.map(({ ev }) => `<div class="tst ${ev.type}"><b>${esc(ev.title)}</b><span>${esc(ev.text)}</span></div>`).join('');
   }
 
-  private arm(a: AssetId | null): void {
-    this.armed = a;
-    this.root.classList.toggle('armed', !!a);
-    const as = a && this.last?.assets.find((x) => x.id === a);
-    this.el['mb-armed'].textContent = as ? `${as.icon} ${as.label} · TAP A ${as.target === 'cell' ? '? ON A ROUTE' : as.id === 'drone' ? '? OR A VEHICLE' : 'VEHICLE'}` : '';
-  }
-
   // ------------------------------------------------------------------ map
   private view(): { s: number; ox: number; oy: number } {
     const w = this.map.clientWidth;
@@ -250,24 +270,27 @@ export class MissionBoard {
     return [v.ox + (x - BOUNDS.x0) * v.s, v.oy + (z - BOUNDS.z0) * v.s];
   }
 
-  /** What is under a screen point: a vehicle, a route spot, or a route line. */
+  /** What is under a screen point, on this step: a vehicle (step 1), or a route spot or route line (step 2). */
   private hit(px: number, py: number): { target: Target | null; corridor: string | null } {
     const f = this.last;
     if (!f) return { target: null, corridor: null };
     let best: { t: Target; d: number } | null = null;
-    for (const r of f.returns) {
-      const [x, y] = this.P(r.x, r.z);
-      const d = Math.hypot(x - px, y - py);
-      if (d < 24 && (!best || d < best.d)) best = { t: { kind: 'return', id: r.id }, d };
+    if (f.step === 'find') {
+      for (const r of f.returns) {
+        const [x, y] = this.P(r.x, r.z);
+        const d = Math.hypot(x - px, y - py);
+        if (d < 26 && (!best || d < best.d)) best = { t: { kind: 'return', id: r.id }, d };
+      }
+      return { target: best?.t ?? null, corridor: null };
     }
     for (const c of f.cells) {
       const [x, y] = this.P(c.x, c.z);
       const d = Math.hypot(x - px, y - py);
-      if (d < 24 && (!best || d < best.d - 4)) best = { t: { kind: 'cell', id: c.id }, d };
+      if (d < 26 && (!best || d < best.d)) best = { t: { kind: 'cell', id: c.id }, d };
     }
     if (best) return { target: best.t, corridor: null };
     let corridor: string | null = null;
-    let cd = 16;
+    let cd = 18;
     for (const c of f.corridors) {
       for (let i = 1; i < c.path.length; i++) {
         const [ax, ay] = this.P(c.path[i - 1].x, c.path[i - 1].z);
@@ -290,78 +313,13 @@ export class MissionBoard {
     e.preventDefault();
     const r = this.map.getBoundingClientRect();
     const { target, corridor } = this.hit(e.clientX - r.left, e.clientY - r.top);
-    if (this.armed) {
-      const a = this.last.assets.find((x) => x.id === this.armed);
-      if (a && target && a.targets.includes(key(target))) {
-        this.selected = target;
-        this.h.onUse(a.id, target);
-        this.arm(null);
-        return;
-      }
-      if (!target) {
-        this.arm(null);
-        return;
-      }
-    }
     if (target) {
       this.selected = target;
       this.h.onTap();
-    } else if (corridor) this.h.onCorridor(corridor);
-    else this.selected = null;
-  }
-
-  // ------------------------------------------------------------------ tray: tap to arm, or drag onto the map
-  private onTrayDown(e: PointerEvent): void {
-    const b = (e.target as HTMLElement).closest<HTMLElement>('[data-asset]');
-    if (!b || !this.last || this.last.executed) return;
-    const id = b.dataset.asset as AssetId;
-    const a = this.last.assets.find((x) => x.id === id);
-    if (!a) return;
-    e.preventDefault();
-    this.drag = { asset: id, x0: e.clientX, y0: e.clientY, moved: false, ghost: null };
-  }
-
-  private onDragMove(e: PointerEvent): void {
-    const d = this.drag;
-    if (!d) return;
-    if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) > 10) {
-      const a = this.last?.assets.find((x) => x.id === d.asset);
-      if (!a || !a.ok || a.target === 'none') return;
-      d.moved = true;
-      d.ghost = document.createElement('div');
-      d.ghost.className = 'mb-ghost';
-      d.ghost.textContent = `${a.icon} ${a.label}`;
-      document.body.appendChild(d.ghost);
-      this.arm(d.asset);
-    }
-    if (d.ghost) d.ghost.style.transform = `translate(${e.clientX - 40}px, ${e.clientY - 46}px)`;
-  }
-
-  private onDragEnd(e: PointerEvent): void {
-    const d = this.drag;
-    if (!d) return;
-    const a = this.last?.assets.find((x) => x.id === d.asset);
-    if (d.moved && a) {
-      const r = this.map.getBoundingClientRect();
-      const { target } = this.hit(e.clientX - r.left, e.clientY - r.top);
-      if (target && a.targets.includes(key(target))) {
-        this.selected = target;
-        this.h.onUse(a.id, target);
-      }
-      this.arm(null);
-    } else if (a) {
-      // a tap: SIGINT goes at once; anything else arms (or uses on the selected target if it fits)
-      if (!a.ok) this.events([{ type: 'nothing', title: a.label, text: a.reason }]);
-      else if (a.target === 'none') this.h.onUse(a.id, { kind: 'none' });
-      else if (this.selected && a.targets.includes(key(this.selected))) this.h.onUse(a.id, this.selected);
-      else this.arm(this.armed === a.id ? null : a.id);
-    }
-    this.endDrag();
-  }
-
-  private endDrag(): void {
-    this.drag?.ghost?.remove();
-    this.drag = null;
+    } else if (corridor) {
+      this.selected = null;
+      this.h.onCorridor(corridor);
+    } else this.selected = null;
   }
 
   // ------------------------------------------------------------------ frame
@@ -372,32 +330,30 @@ export class MissionBoard {
       this.keys[k] = html;
       el.innerHTML = html;
     };
+    this.root.classList.toggle('step-find', f.step === 'find');
+    this.root.classList.toggle('step-exit', f.step === 'exit');
     this.el['mb-control'].textContent = f.control;
-    // the clock: one pip per minute; the minutes an action is spending blink
-    const spending = f.pending ? (f.assets.find((a) => a.id === f.pending!.asset)?.cost ?? 0) : 0;
-    set('pips', Array.from({ length: f.maxMinutes }, (_, i) => `<i class="${i < f.minutes ? (i >= f.minutes - spending ? 'on spend' : 'on') : ''}"></i>`).join(''), this.el['mb-pips']);
-    this.el['mb-min'].textContent = String(f.minutes);
-    this.el['mb-pips'].parentElement!.classList.toggle('urgent', f.minutes <= 3);
+    // the clock: a bar that drains, the seconds, red when the front is close
+    const left = f.maxSeconds > 0 ? Math.max(0, Math.min(1, f.seconds / f.maxSeconds)) : 0;
+    this.el['mb-bar-fill'].style.width = `${(left * 100).toFixed(1)}%`;
+    this.el['mb-min'].textContent = mmss(f.seconds);
+    this.el['mb-min'].parentElement!.classList.toggle('urgent', f.seconds <= URGENT_SECONDS);
     this.el['mb-fuel'].textContent = mmss(f.fuelSeconds);
     const fc = f.forecast;
     set('fc', fc ? `<small>EXIT · ${fc.rank}</small><b class="t-${fc.tier}">${TIER_LABEL[fc.tier]}</b>` : '<small>EXIT</small><b>NO ROUTE</b>', this.el['mb-forecast']);
-    set('goals', f.goals.map((g) => `<li class="${g.state}${g.bonus ? ' bonus' : ''}"><i>${g.state === 'done' ? '✓' : g.bonus ? '◇' : '◎'}</i>${esc(g.label)}</li>`).join(''), this.el['mb-goals']);
-    // tray
-    set(
-      'tray',
-      f.assets
-        .map((a) => `<button type="button" class="ast${a.ok ? '' : ' off'}${this.armed === a.id ? ' armed' : ''}" data-asset="${a.id}" title="${esc(a.note)}"><i>${a.icon}</i><b>${a.label}</b><small>${a.cost} MIN${a.left !== null ? ` · ×${a.left}` : ''}</small></button>`)
-        .join(''),
-      this.el['mb-tray'],
-    );
+    // the step strip: where you are, the one or two actions that belong to the step, and the way to the other step
+    const globals = f.stepActions.map((a) => `<button type="button" class="sg" data-global="${a.asset}" ${a.ok ? '' : 'disabled'}><b>${esc(a.label)}</b><small>${a.ok ? `${a.cost} s` : esc(a.reason)}</small></button>`).join('');
+    const jump = f.step === 'find' ? `<button type="button" class="sj" data-step="exit">CAN'T FIND IT · WAY OUT ›</button>` : f.marked ? '' : `<button type="button" class="sj" data-step="find">‹ BACK · FIND IT</button>`;
+    set('step', `<div class="sn"><small>STEP ${f.step === 'find' ? '1' : '2'} OF 2</small><b>${f.step === 'find' ? 'FIND THE TRUCK' : 'WAY OUT'}</b></div>${globals}${jump}`, this.el['mb-step']);
     this.renderCard(f);
     // routes and the plan
+    this.el['mb-plan-head'].textContent = f.step === 'find' ? 'STEP 2 · WAY OUT' : 'WAY OUT';
     set(
       'routes',
-      f.corridors.map((c) => `<button type="button" class="rt${c.selected ? ' on' : ''}" data-route="${c.id}"><b>${c.short}</b><small>${c.known}/${c.total} SCOUTED</small></button>`).join(''),
+      f.corridors.map((c) => `<button type="button" class="rt${c.selected ? ' on' : ''}" data-route="${c.id}" ${f.step === 'find' ? 'disabled' : ''}><b>${c.short}</b><small>${c.known}/${c.total} SCOUTED</small></button>`).join(''),
       this.el['mb-routes'],
     );
-    set('preview', fc ? fc.lines.map((l) => `<li class="${l.tone}"><small>${l.label}</small><b>${esc(l.value)}</b></li>`).join('') : `<li class="mb-hint">Pick a route home. Its rings, weather and traffic come from what you know about it.</li>`, this.el['mb-preview']);
+    set('preview', fc ? fc.lines.map((l) => `<li class="${l.tone}"><small>${l.label}</small><b>${esc(l.value)}</b></li>`).join('') : `<li class="mb-hint">${f.step === 'find' ? 'Find the truck first. The way out comes next.' : 'Tap a route home. Tap a ? on it to scout it.'}</li>`, this.el['mb-preview']);
     const ex = this.el['btn-execute'] as HTMLButtonElement;
     ex.disabled = !f.canExecute;
     ex.classList.toggle('ready', f.canExecute);
@@ -421,7 +377,7 @@ export class MissionBoard {
     let headHtml = '';
     let bodyHtml = '';
     let photo: BoardReturn['photo'] = null;
-    if (sel?.kind === 'return') {
+    if (sel?.kind === 'return' && f.step === 'find') {
       const r = f.returns.find((x) => x.id === sel.id);
       if (r) {
         photo = r.photo;
@@ -429,7 +385,7 @@ export class MissionBoard {
         const checks = r.status === 'barge' ? '' : `<div class="clues">${r.checks.map((c) => `<i class="${c.check === 'yes' ? 'yes' : c.check === 'no' ? 'no' : 'unk'}">${c.check === 'yes' ? '✓' : c.check === 'no' ? '✕' : '?'} ${c.clue}</i>`).join('')}</div>`;
         bodyHtml = `${checks}<div class="traits">${r.traits.map((t) => `<i>${t}</i>`).join('')}</div>${this.actions(r.actions)}`;
       }
-    } else if (sel?.kind === 'cell') {
+    } else if (sel?.kind === 'cell' && f.step === 'exit') {
       const c = f.cells.find((x) => x.id === sel.id);
       if (c) {
         headHtml = `<b>${c.belief ? CELL_LABEL[c.belief] : 'UNKNOWN'}</b><span class="st">${esc(c.corridorLabel)}</span>`;
@@ -440,8 +396,13 @@ export class MissionBoard {
       }
     }
     if (!headHtml) {
-      headHtml = '<b>FIND THE TRUCK</b><span class="st">YOUR MOVE</span>';
-      bodyHtml = `<ol class="how"><li><b>LOOK</b> Drag a sensor onto a vehicle.</li><li><b>MARK</b> The one that fits every clue.</li><li><b>PICK</b> A way out. Then lock the plan.</li></ol>`;
+      if (f.step === 'find') {
+        headHtml = '<b>FIND THE TRUCK</b><span class="st">TAP A VEHICLE</span>';
+        bodyHtml = `<ol class="how"><li><b>TAP</b> a vehicle on the map.</li><li><b>LOOK</b> at it, or <b>MARK</b> it as the truck.</li></ol>`;
+      } else {
+        headHtml = '<b>WAY OUT</b><span class="st">TAP A ROUTE</span>';
+        bodyHtml = `<ol class="how"><li><b>TAP</b> a route home.</li><li><b>SCOUT</b> a ? on it, or <b>LOCK</b> the plan.</li></ol>`;
+      }
     }
     if (this.keys.cardHead !== headHtml) {
       this.keys.cardHead = headHtml;
@@ -465,7 +426,7 @@ export class MissionBoard {
     return `<div class="acts">${list
       .map((a) => {
         const cls = a.kind === 'mark' ? 'mark' : a.asset === 'shadow' ? 'shadow' : '';
-        const cost = a.cost ? `<small>${a.cost} MIN${a.front ? ' · LAST' : ''}</small>` : '';
+        const cost = a.cost ? `<small>${a.cost} s${a.front ? ' · LAST' : ''}</small>` : '';
         return `<button type="button" class="act ${cls}" data-act="${a.kind === 'mark' ? 'mark' : a.asset}" ${a.ok ? '' : 'disabled'}><b>${esc(a.label)}</b>${a.ok ? cost : `<small>${esc(a.reason)}</small>`}</button>`;
       })
       .join('')}</div>`;
@@ -541,9 +502,11 @@ export class MissionBoard {
     ctx.stroke();
     ctx.fillStyle = C.ph;
     ctx.fillText('BASE', bx - 12, by + 14);
-    // the routes home
-    const armed = this.armed ? f.assets.find((a) => a.id === this.armed) : null;
+    // the routes home (dimmed while the truck is still being found)
     const pulse = 0.5 + 0.5 * Math.sin(now / 220);
+    const exitStep = f.step === 'exit';
+    ctx.save();
+    if (!exitStep) ctx.globalAlpha = 0.3;
     for (const cr of f.corridors) {
       const pts = [{ x: (f.area.x0 + f.area.x1) / 2, z: 150 }, ...cr.path];
       if (cr.selected) {
@@ -556,15 +519,15 @@ export class MissionBoard {
       ctx.fillStyle = cr.selected ? C.amber : 'rgba(232,243,234,0.55)';
       ctx.fillText(cr.short, mx - 16, my + (cr.id === 'north' ? -12 : 18));
     }
-    // route spots
+    // route spots: on step 2 the unknown ones pulse (tap one to scout it)
     for (const cell of f.cells) {
       const [x, y] = P(cell.x, cell.z);
-      const target = armed?.targets.includes(`c:${cell.id}`);
+      const target = exitStep && !cell.belief;
       const fl = this.flashes.get(`c:${cell.id}`);
       const k = fl ? Math.max(0, 1 - (now - fl) / 900) : 0;
       ctx.fillStyle = '#071a0f';
       ctx.strokeStyle = cell.belief ? TRUTH_COLOR[cell.belief] : target ? C.amber : 'rgba(232,243,234,0.6)';
-      ctx.lineWidth = target ? 2 + pulse * 1.5 : 1.5;
+      ctx.lineWidth = target ? 1.5 + pulse * 1.2 : 1.5;
       diamond(ctx, x, y, 12 + k * 8);
       ctx.fill();
       ctx.stroke();
@@ -581,6 +544,7 @@ export class MissionBoard {
       }
       if (this.selected?.kind === 'cell' && this.selected.id === cell.id) brackets(ctx, x, y, 18);
     }
+    ctx.restore();
     // the landing and the barge
     if (f.landing) {
       const [lx, ly] = P(f.landing.x, f.landing.z);
@@ -614,11 +578,13 @@ export class MissionBoard {
     ctx.closePath();
     ctx.fill();
     ctx.restore();
-    // vehicles
+    // vehicles (dimmed on step 2, except the truck and the barge)
     ctx.font = 'bold 11px ui-monospace, Menlo, monospace';
     for (const r of f.returns) {
       const [x, y] = P(r.x, r.z);
-      const target = armed?.targets.includes(`r:${r.id}`);
+      ctx.save();
+      if (exitStep && r.status !== 'truck' && r.status !== 'barge') ctx.globalAlpha = 0.3;
+      const target = !exitStep && r.status !== 'out' && r.status !== 'wrong' && r.status !== 'barge' && !r.checks.every((c) => c.check === 'yes');
       const col = r.status === 'truck' ? C.amber : r.status === 'wrong' ? C.warn : r.status === 'out' ? 'rgba(232,243,234,0.35)' : r.status === 'barge' ? C.ice : r.status === 'fits' ? '#e8f3ea' : C.ph;
       const fl = this.flashes.get(`r:${r.id}`);
       const k = fl ? Math.max(0, 1 - (now - fl) / 900) : 0;
@@ -629,11 +595,11 @@ export class MissionBoard {
         ctx.arc(x, y, 8 + (1 - k) * 22, 0, Math.PI * 2);
         ctx.stroke();
       }
-      if (target) {
-        ctx.strokeStyle = `rgba(242,169,59,${0.5 + 0.5 * pulse})`;
-        ctx.lineWidth = 2;
+      if (target && r.status !== 'truck') {
+        ctx.strokeStyle = `rgba(232,243,234,${0.15 + 0.25 * pulse})`;
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.arc(x, y, 12 + pulse * 3, 0, Math.PI * 2);
+        ctx.arc(x, y, 11 + pulse * 2, 0, Math.PI * 2);
         ctx.stroke();
       }
       ctx.fillStyle = col;
@@ -660,6 +626,7 @@ export class MissionBoard {
       ctx.fillStyle = col;
       ctx.fillText(r.status === 'barge' ? 'BARGE' : r.id, x + 8, y - 6);
       if (this.selected?.kind === 'return' && this.selected.id === r.id) brackets(ctx, x, y, 14);
+      ctx.restore();
     }
     // the action in progress
     const p = f.pending;

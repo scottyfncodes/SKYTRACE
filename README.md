@@ -12,7 +12,7 @@ Every mission is played in the same three phases, whatever its story. The player
 
 | Phase | The question | Mission 01 |
 | --- | --- | --- |
-| **01 RECON** | What is happening? | Fly the rings into Sector 7, then find the truck at Mission Control |
+| **01 RECON** | What is happening? | Fly the rings into Sector 7, then find the truck at Mission Control, on a clock |
 | **02 EXECUTE** | What do I do about it? | Lined up on the truck: fly through the one ring over it and the tracker drops |
 | **03 ESCAPE** | What went wrong? Get out. | The truck bolts for the river, the sector turns red, the weather closes in: timed rings home |
 
@@ -24,11 +24,11 @@ The five lines of the case file are five operations. Same world, same Mission Co
 
 | Page | The line | EXECUTE | ESCAPE | Board |
 | --- | --- | --- | --- | --- |
-| 01 | A supply truck went dark in Sector 7. | Drop the tracker. Confirmed on evidence, the truck pulls over; marked on a hunch, it keeps rolling | As Mission Control built it | 12 min |
-| 02 | The tracker stopped at the river. A barge was waiting. | Tag it rolling: the ring moves with the truck | Tighter clocks | 11 min |
-| 03 | The tower forecast was wrong. Every time. On purpose? | One pass, 40 seconds: the ring closes on you | Haze | 10 min · the tower lies twice |
-| 04 | The barge answers on a military band. | A 22 m skim to read its radio. Nothing is dropped | RADAR CONTACT from the first ring | 10 min · the tower lies twice |
-| 05 | Someone flew this route before you. Their log ends in Sector 7. | Rolling, 35 seconds, 30 m | Everything at once | 9 min · the tower lies twice |
+| 01 | A supply truck went dark in Sector 7. | Drop the tracker. Confirmed on evidence, the truck pulls over; marked on a hunch, it keeps rolling | As Mission Control built it | 90 s |
+| 02 | The tracker stopped at the river. A barge was waiting. | Tag it rolling: the ring moves with the truck | Tighter clocks | 80 s |
+| 03 | The tower forecast was wrong. Every time. On purpose? | One pass, 40 seconds: the ring closes on you | Haze | 70 s · the tower lies twice |
+| 04 | The barge answers on a military band. | A 22 m skim to read its radio. Nothing is dropped | RADAR CONTACT from the first ring | 70 s · the tower lies twice |
+| 05 | Someone flew this route before you. Their log ends in Sector 7. | Rolling, 35 seconds, 30 m | Everything at once | 60 s · the tower lies twice |
 
 A clean operation on the newest page (target found, pass made, home safe) turns the next one; the last page turned closes the case with one more line. Every page turned stays open: the title card shows them as chips, and each keeps its own best grade and best board score. Replaying an earlier page never moves the story.
 
@@ -36,6 +36,7 @@ A clean operation on the newest page (target found, pass made, home safe) turns 
 
 - RECON → EXECUTE: the board's rank sizes the ring (ACE gets the whole hoop, SCRAMBLE two thirds of it). A target identified on evidence holds still for the run; one marked on a hunch is still rolling when you line up. The EXECUTE card says which.
 - EXECUTE → ESCAPE: a pass made is the plan Mission Control built. A pass missed was seen: RADAR CONTACT from the first ring home and a shade less to see by. No target at all: they know you are here anyway.
+- Mission Control → ESCAPE: the seconds left on the board's clock when the plan was locked set how fast the first ring home closes (1.5× the usual clock with a full clock to spare, 0.55× with none).
 - Outbound → ESCAPE (as before): spotted on the way in, the radar has you from the first ring.
 
 **The pass is the moment** (`Game.onDrop`, `tickReaction`), in three beats: the stamp, the payload falls, the sound dips, the instruments step back and the view widens a touch; a second later the truck's lamps come on and it bolts, the sector boundary turns from amber to red in a wave, a low alarm under everything, the camera shudders; then the first ring home irises in dead ahead, the HUD goes red and the clock starts. Wheels down at base gets the same care: a HOME stamp and a settling cadence before the debrief.
@@ -53,11 +54,12 @@ Under the three phases, every mission is a reconnaissance operation in these sta
    - **Crew:** a copilot flies the recon orbit for you, tighter than the autopilot. A sensor operator identifies faster or takes better photographs. A navigator puts storm cells on the scope from take-off.
    - **Equipment:** search radar, optical camera, thermal imager, SIGINT (unlocked). Each answers a different question. A checklist shows whether the plan can do the primary objective.
 2. **Outbound (you fly).** A route of eight rings: the take-off flies the first, then climb north around a storm cell, cross the high ground and drop under the ridge radar into Sector 7. The next ring glows amber, the two after it show the way. Through a ring: GATE CLEARED. Wide of it: MISSED, and the route moves on. Storm cells are deadly: inside one the airframe is pounded and struck by lightning, the aircraft flies worse as damage builds, and stay too long and it breaks up (AIRCRAFT LOST). Climbing over the sector above your stealth ceiling gets you spotted. The last ring puts you ON STATION and Mission Control takes over.
-3. **Recon (Mission Control).** A small strategy game on a board, and the bridge between the two flights. The autopilot (or your copilot) orbits; you have **12 minutes** before the front arrives. The map shows what the radar already knows (four vehicles, moving or parked) and **three ways home** (NORTH RIDGE, CENTRE LINE, RIVER VALLEY), each with two unscouted spots marked **?**. Every operation deals two storm cells, a low cloud deck, a radar site, a supply cache and one clear stretch across those six spots.
-   - **Assets cost minutes**, some are limited, and each answers a different question: **OPTICAL** (size, count, road), **THERMAL** (size, count, engine heat), **SIGINT** (every radio and every radar site at once), **DRONE ×2** (the whole truth about one spot or one vehicle), **SCOUTS ×1** (a ground report: weather only, so it can tell you a spot is not a storm without saying what it is). Tap an asset and then a target, drag it onto the map, or use the buttons on a selected card.
-   - **Information is partial and sometimes wrong.** The tower's forecast always gets one storm in the wrong place: finding out says *TOWER WAS WRONG*.
-   - **Decide:** MARK the truck (a wrong call costs a minute and points), SHADOW it to find where it is going (a barge), and pick a route home. The panel shows the live **exit forecast** for the plan as it stands. Your plan is fixed when you press **EXECUTE MISSION**.
-   - **Score:** OBJECTIVE, INTELLIGENCE, EFFICIENCY, RISK, BONUS, LOSSES → a total and a rank: **ACE / SOLID / ROUGH / SCRAMBLE**. If the clock runs out, the board executes itself.
+3. **Recon (Mission Control).** A small strategy game on a board, and the bridge between the two flights. The autopilot (or your copilot) orbits; a clock runs in **real seconds** (90 on the first page, down to 60 on the last) before the front arrives, and it never stops: thinking costs time too. The board is two steps with one tap each.
+   - **Step 1 · FIND THE TRUCK.** The map shows what the radar already knows: six vehicles, moving or parked, five of them look-alikes that each break the brief on one point (parked; three small 4x4s; two tankers running together; a tractor off road; a quarry tipper that is still talking; a lorry on the wrong side of the sector line). Tap a vehicle: its card shows the five clues it fits, fails or has not been checked against, and the looks you can take: **LOOK · OPTICAL** (size, count, road), **LOOK · THERMAL** (size, count, engine heat), a **DRONE** (everything about it, radio included, ×2). **SIGINT** on the step bar hears every radio at once. Each look takes its seconds off the clock while it plays. **MARK AS THE TRUCK** ends the step (a wrong call costs eight seconds and points). Can't find it? *WAY OUT ›* moves on without a target.
+   - **Step 2 · WAY OUT.** The vehicles dim and the **three ways home** (NORTH RIDGE, CENTRE LINE, RIVER VALLEY) light up, each with two unscouted spots marked **?**. Every operation deals two storm cells, a low cloud deck, a radar site, a supply cache and one clear stretch across those six spots. Tap a route to fly it; tap a **?** on it to scout it with a **DRONE** or the **SCOUTS** (×1, a ground report: weather only). **SHADOW** the marked truck from the step bar to find where it is going (a barge). The panel shows the live **exit forecast**. **LOCK THE PLAN** fixes it; when the clock reaches zero the board locks itself.
+   - **Information is partial and sometimes wrong.** The tower's forecast misplaces a storm (two, on later pages): finding out says *TOWER WAS WRONG*.
+   - **Score:** OBJECTIVE, INTELLIGENCE, EFFICIENCY (the seconds left when you locked), RISK, BONUS, LOSSES → a total and a rank: **ACE / SOLID / ROUGH / SCRAMBLE**.
+   - **The clock follows you out.** What was left on it when you locked sets how fast the first ring home closes: lock with time to spare and the first ring waits; lock as the front arrives and it is already shutting. The ESCAPE card says which.
    - **Score → Exit Profile:** the rank sets the tier (**OPTIMAL / STANDARD / DEGRADED / SCRAMBLE**: visibility, fuel, a shortcut, whether opportunities are open), and what you *found on your chosen route* builds its rings. A storm you found is routed around; one you missed sits on the rings. A radar site you found picks you up late; one you missed has you on the clock from the first ring. A cache you found (or the barge, if you shadowed the truck) becomes a bonus **photo-pass ring**, on a good exit only. A SCRAMBLE exit breaks low under radar lock with the front on your tail. The exit briefing reads it all out before you take the controls.
 4. **Execute (you fly).** With the truck marked, the controls come back lined up on it: the truck pulls over, a beam and a ground reticle mark it, and one big ring stands low over it. Fly through: the tracker parachutes down (*PAYLOAD AWAY*). Wide of it: *DROP MISSED*. Either way the world reacts and the escape begins. No truck marked: straight to the escape.
 5. **Escape (you fly again).** The controls come back wings-level with the first ring dead ahead of the nose, on screen at once, on the route Mission Control generated: its weather, cloud deck, storms, fuel and traffic are the ones your board produced. Every ring home is on a clock: it starts shrinking the moment you hit the one before it (the first one as soon as you have the controls) and closes if you are too slow. Under RADAR CONTACT the closing rings turn red and the heartbeat quickens. Bonus rings (ice blue, cued *PHOTO PASS*) are optional: fly through for the reward, pass them by at no cost. The last ring lines you up on the runway.
@@ -67,11 +69,12 @@ Progression (credits, XP, unlocks, best grade, last loadout) is saved in the bro
 
 | Mission Control | Touch | Mouse / keyboard |
 | --- | --- | --- |
-| Look at a vehicle or a route spot | tap it on the map | click |
-| Use an asset | drag it onto a target, or tap it then the target | same |
-| Mark the truck / shadow it | buttons on the vehicle's card | same |
-| Choose the way home | tap a route line or NORTH / CENTRE / RIVER | same |
-| Execute | EXECUTE MISSION | Enter |
+| Step 1: look at a vehicle | tap it on the map | click |
+| Look at it, or mark it | LOOK / MARK buttons on its card; SIGINT on the step bar | same |
+| Step 2: choose the way home | tap a route line or NORTH / CENTRE / RIVER | same |
+| Scout a spot on it | tap the ?, then DRONE or SCOUTS on its card | same |
+| Shadow the marked truck | SHADOW on the step bar | same |
+| Lock the plan | LOCK THE PLAN | Enter |
 | Take the controls after the briefing | TAKE CONTROLS | Enter |
 
 The original open-ended investigation is still available from the title screen as **Open case · Varrow Basin**.
@@ -148,10 +151,10 @@ Plain TypeScript + Vite + Three.js, no backend.
 | `src/mission/missionDef.ts` | What a mission declares: briefing, operations area, recon window, outbound and return legs |
 | `src/mission/crew.ts` | Crew stations (pilot / operator), entry rules, forced hand-back, hand-over report (pure, tested) |
 | `src/flight/autopilot.ts` | Orbit autopilot that drives the unchanged flight model while the player operates (pure, tested) |
-| `src/control/board.ts` | Mission Control rules: assets (data table), what each reveals, the tower forecast, marking, the clock, scoring and rank (pure, tested) |
+| `src/control/board.ts` | Mission Control rules: assets (data table), what each reveals, the tower forecast, marking, the real-time clock, scoring and rank (pure, tested) |
 | `src/control/exit.ts` | Score → Exit Profile: tier, then the return leg generated from the chosen corridor and what was discovered on it (pure, tested) |
 | `src/mission/mission01Control.ts` | Mission 01's board: the three corridors, their rings and unscouted spots, the cell mix, limited assets |
-| `src/ui/missionBoard.ts` | The board: map, asset tray (tap or drag), target card with live telephoto viewfinder, route plan with live exit forecast, EXECUTE and the result sequence |
+| `src/ui/missionBoard.ts` | The board in two steps: map, step bar, target card with live telephoto viewfinder, route plan with live exit forecast, LOCK and the result sequence |
 | `src/mission/mission.ts` | Mission 01 recon state read by the report (returns, verdicts, evidence, intelligence); also the original real-time sensor model (pure, tested) |
 | `src/mission/vehicles.ts` | Route-following vehicles (pure, tested); `missionScene.ts` renders sector and vehicles |
 | `src/game/Game.ts` | Orchestration: mission and case sorties, modes, actions, world markers |

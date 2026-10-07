@@ -268,8 +268,8 @@ describe('report, rewards and career', () => {
     photograph(m, 'C', opts.photo ?? 0.9);
     if (opts.full) {
       updateDestination(m, 3, true, true);
-      inspectReturn(m, 'E', 2, true);
-      photograph(m, 'E', 0.8);
+      inspectReturn(m, 'G', 2, true);
+      photograph(m, 'G', 0.8);
     }
     const op = newOperation(def, defaultLoadout());
     launch(op);

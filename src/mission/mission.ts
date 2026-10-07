@@ -13,7 +13,7 @@
  * count, road; best photos; haze hurts), thermal (size, count, engine heat;
  * sees through haze; fair photos), SIGINT (radio on or off).
  */
-import { DESTINATION, DESTINATION_TAIL, MINE_ROAD_PTS, MISSION_01, RETURNS, SECTOR_7, setReturns, type ReturnDef, type ReturnId, type Sector } from './mission01';
+import { BARGE_ID, DESTINATION, DESTINATION_TAIL, MINE_ROAD_PTS, MISSION_01, RETURNS, SECTOR_7, setReturns, type ReturnDef, type ReturnId, type Sector } from './mission01';
 import type { Pt } from '../world/worldData';
 import { DETECT_THRESHOLD } from '../sensors/radar';
 
@@ -95,14 +95,14 @@ export interface StationContext {
 const index = (defs: readonly ReturnDef[]) => Object.fromEntries(defs.map((r) => [r.id, r])) as Record<ReturnId, ReturnDef>;
 export let RETURN_BY_ID: Readonly<Record<ReturnId, ReturnDef>> = index(RETURNS);
 export let TARGET: ReturnDef = RETURNS.find((r) => r.isTarget)!;
-export let BARGE: ReturnDef = RETURN_BY_ID.E;
+export let BARGE: ReturnDef = RETURN_BY_ID[BARGE_ID];
 
 /** Play this operation with these returns (a fresh roll, or the fixed cast). */
 export function useReturns(defs: readonly ReturnDef[]): void {
   setReturns(defs);
   RETURN_BY_ID = index(defs);
   TARGET = defs.find((r) => r.isTarget)!;
-  BARGE = RETURN_BY_ID.E;
+  BARGE = RETURN_BY_ID[BARGE_ID];
 }
 
 export function newMission(): MissionState {
@@ -153,7 +153,7 @@ export function reconObjective(m: MissionState, ctx: StationContext = {}): Objec
     case 'track':
       return { kicker: 'BONUS', title: 'FOLLOW THE TRUCK', detail: pilot ? openMc : ctx.truckStopped ? 'IT STOPPED · HOLD THE CAMERA ON IT' : 'KEEP THE CAMERA ON IT', done: false };
     case 'landing':
-      return { kicker: 'BONUS', title: 'PHOTOGRAPH THE BARGE', detail: pilot ? openMc : 'CAMERA ON E · TAKE PHOTO', done: false };
+      return { kicker: 'BONUS', title: 'PHOTOGRAPH THE BARGE', detail: pilot ? openMc : `CAMERA ON ${BARGE_ID} · TAKE PHOTO`, done: false };
     case 'extract':
       return { kicker: 'EXTRACT', title: 'FLY HOME', detail: '', done: true };
   }
@@ -181,6 +181,7 @@ export function mismatchReason(def: ReturnDef, x: number, z: number): string | n
   if (!def.moving) return 'stationary, but the truck should be moving';
   if (!def.onRoad) return 'off road, but the truck was driving a road';
   if (!inSector(x, z)) return 'outside Sector 7';
+  if (def.radio) return 'transmitting, but the truck\'s radio is dead';
   return null;
 }
 
@@ -323,7 +324,7 @@ export function updateDestination(m: MissionState, dt: number, truckArrived: boo
   e.lastKnown = { x: BARGE.route[0][0], z: BARGE.route[0][1] };
   return [
     { type: 'objective-complete', title: 'DESTINATION FOUND', text: DESTINATION.short },
-    { type: 'objective-updated', title: 'A BARGE!', text: 'PHOTOGRAPH IT · RETURN E' },
+    { type: 'objective-updated', title: 'A BARGE!', text: `PHOTOGRAPH IT · RETURN ${BARGE_ID}` },
   ];
 }
 

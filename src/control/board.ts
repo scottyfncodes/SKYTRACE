@@ -1,13 +1,16 @@
 /**
  * MISSION CONTROL: the board game between the two flights.
  *
- * On station the crew has a few minutes before the weather front arrives.
- * The board shows what the radar already knows (where every vehicle is and
- * whether it moves) and three ways home, each with two unknown stretches.
- * Assets cost minutes and some are limited; each answers a different
+ * On station the crew has a clock, in real seconds, before the weather
+ * front arrives. The board shows what the radar already knows (where every
+ * vehicle is and whether it moves) and three ways home, each with two
+ * unknown stretches. Every look takes seconds off that clock while it plays
+ * (so does thinking), some assets are limited, each answers a different
  * question, some only partly, and the tower's forecast is not always right.
+ * The clock is the pressure: what is left on it when the plan is locked is
+ * scored, and it sets how fast the first ring home closes.
  *
- *   discover (spend minutes and assets) → decide (mark the truck, pick a
+ *   discover (spend seconds and assets) → decide (mark the truck, pick a
  *   corridor) → EXECUTE → score → Exit Profile (`exit.ts`) → fly out
  *
  * Pure and deterministic given a random source, so every rule is tested.
@@ -57,36 +60,35 @@ export interface AssetDef {
   label: string;
   /** Short glyph for the tray. */
   icon: string;
-  /** Minutes off the clock. */
+  /** Seconds the action takes: it plays out for this long, and the clock runs. */
   cost: number;
   target: TargetKind;
   /** Only with this sensor fitted. */
   needs?: EquipmentId;
   /** What it tells you, in a few words. */
   note: string;
-  /** How long the action plays on the board (seconds). */
-  seconds: number;
 }
 
 export const ASSETS: Record<AssetId, AssetDef> = {
-  optical: { id: 'optical', label: 'OPTICAL', icon: '◉', cost: 2, target: 'return', needs: 'optical', note: 'Size · count · road', seconds: 1.5 },
-  thermal: { id: 'thermal', label: 'THERMAL', icon: '◍', cost: 2, target: 'return', needs: 'thermal', note: 'Size · count · engine heat', seconds: 1.5 },
-  sigint: { id: 'sigint', label: 'SIGINT', icon: '≋', cost: 1, target: 'none', needs: 'sigint', note: 'Every radio · every radar site', seconds: 1.1 },
-  drone: { id: 'drone', label: 'DRONE', icon: '✈', cost: 1, target: 'cell', note: 'The whole truth about one spot', seconds: 1.2 },
-  scouts: { id: 'scouts', label: 'SCOUTS', icon: '⌂', cost: 1, target: 'cell', note: 'Ground report: weather only', seconds: 1.0 },
-  shadow: { id: 'shadow', label: 'SHADOW', icon: '➜', cost: 3, target: 'return', note: 'Follow the truck: where is it going?', seconds: 1.8 },
+  optical: { id: 'optical', label: 'OPTICAL', icon: '◉', cost: 6, target: 'return', needs: 'optical', note: 'Size · count · road' },
+  thermal: { id: 'thermal', label: 'THERMAL', icon: '◍', cost: 6, target: 'return', needs: 'thermal', note: 'Size · count · engine heat' },
+  sigint: { id: 'sigint', label: 'SIGINT', icon: '≋', cost: 5, target: 'none', needs: 'sigint', note: 'Every radio · every radar site' },
+  drone: { id: 'drone', label: 'DRONE', icon: '✈', cost: 7, target: 'cell', note: 'The whole truth about one spot' },
+  scouts: { id: 'scouts', label: 'SCOUTS', icon: '⌂', cost: 5, target: 'cell', note: 'Ground report: weather only' },
+  shadow: { id: 'shadow', label: 'SHADOW', icon: '➜', cost: 8, target: 'return', note: 'Follow the truck: where is it going?' },
 };
+
+/** A wrong mark costs this many seconds. */
+export const WRONG_MARK_SECONDS = 8;
 /** Tray order. */
 export const ASSET_ORDER: readonly AssetId[] = ['optical', 'thermal', 'sigint', 'drone', 'scouts', 'shadow'];
 
 /** What one mission's board is made of. */
 export interface ControlDef {
-  /** Minutes on the board before the front arrives. */
-  minutes: number;
-  /** Fraction of a full tank one board minute burns (the autopilot keeps orbiting). */
-  fuelPerMinute: number;
+  /** Seconds on the board before the front arrives. */
+  seconds: number;
   corridors: readonly CorridorDef[];
-  /** Limited assets (sensors from the loadout are unlimited, paid in minutes). */
+  /** Limited assets (sensors from the loadout are unlimited, paid in seconds). */
   limited: Partial<Record<AssetId, number>>;
   /** The mix of truths dealt across all cells. */
   cellMix: readonly CellTruth[];
@@ -118,8 +120,9 @@ export interface CellState {
 }
 
 export interface BoardState {
-  minutes: number;
-  maxMinutes: number;
+  /** Seconds left before the front (the clock runs in real time). */
+  seconds: number;
+  maxSeconds: number;
   /** Remaining uses of limited assets. */
   uses: Partial<Record<AssetId, number>>;
   /** Sensors fitted. */
@@ -181,7 +184,19 @@ export function newBoard(def: ControlDef, cast: readonly ReturnDef[], sensors: r
   const uses: Partial<Record<AssetId, number>> = { ...def.limited };
   const returns: Partial<Record<ReturnId, ReturnKnowledge>> = {};
   for (const r of cast) returns[r.id] = { size: false, road: false, radio: false, engine: false, look: null };
-  return { minutes: def.minutes, maxMinutes: def.minutes, uses, sensors: [...sensors], returns, cells: state, marked: null, wrong: [], shadowed: false, corridor: null, frontCaught: false, executed: false, actions: 0 };
+  return { seconds: def.seconds, maxSeconds: def.seconds, uses, sensors: [...sensors], returns, cells: state, marked: null, wrong: [], shadowed: false, corridor: null, frontCaught: false, executed: false, actions: 0 };
+}
+
+/** The clock runs: one frame of real time off it. At zero the front is here. */
+export function tickBoard(b: BoardState, dt: number): BoardEvent[] {
+  if (b.executed || b.frontCaught) return [];
+  b.seconds = Math.max(0, b.seconds - dt);
+  return frontCheck(b);
+}
+
+/** How much of the clock is left, 0..1. */
+export function clockLeft(b: Pick<BoardState, 'seconds' | 'maxSeconds'>): number {
+  return b.maxSeconds > 0 ? Math.max(0, Math.min(1, b.seconds / b.maxSeconds)) : 0;
 }
 
 // ------------------------------------------------------------------ the brief's clues
@@ -258,7 +273,7 @@ export function canUse(b: BoardState, cast: readonly ReturnDef[], id: AssetId, t
   if (b.executed) return { ok: false, reason: 'PLAN EXECUTED' };
   if (!assetFitted(b, id)) return { ok: false, reason: 'NOT FITTED' };
   if (id in b.uses && (b.uses[id] ?? 0) <= 0) return { ok: false, reason: 'NONE LEFT' };
-  if (a.cost > b.minutes) return { ok: false, reason: 'NO TIME' };
+  if (a.cost > b.seconds) return { ok: false, reason: 'NO TIME' };
   if (a.target !== t.kind && !(id === 'drone' && t.kind === 'return')) return { ok: false, reason: a.target === 'cell' ? 'PICK A ROUTE SPOT' : a.target === 'return' ? 'PICK A VEHICLE' : '' };
   if (t.kind === 'return') {
     const k = b.returns[t.id];
@@ -282,16 +297,15 @@ export function canUse(b: BoardState, cast: readonly ReturnDef[], id: AssetId, t
   return { ok: true, reason: '' };
 }
 
+/** An action is spent: a limited one is used up; its seconds come off the clock as it plays (`tickBoard`). */
 function spend(b: BoardState, id: AssetId): BoardEvent[] {
-  const a = ASSETS[id];
-  b.minutes = Math.max(0, b.minutes - a.cost);
   if (id in b.uses) b.uses[id] = (b.uses[id] ?? 0) - 1;
   b.actions += 1;
   return frontCheck(b);
 }
 
 function frontCheck(b: BoardState): BoardEvent[] {
-  if (b.minutes > 0 || b.frontCaught) return [];
+  if (b.seconds > 0 || b.frontCaught) return [];
   b.frontCaught = true;
   return [{ type: 'front', title: 'THE FRONT IS HERE', text: 'NO TIME LEFT · EXECUTING NOW' }];
 }
@@ -366,7 +380,7 @@ export function useAsset(b: BoardState, cast: readonly ReturnDef[], sector: Sect
   return events;
 }
 
-/** MARK a return as the truck. A wrong call costs a minute and points. */
+/** MARK a return as the truck. A wrong call costs seconds and points. */
 export function mark(b: BoardState, cast: readonly ReturnDef[], id: ReturnId): BoardEvent[] {
   if (b.executed || b.marked || b.wrong.includes(id)) return [];
   const def = cast.find((r) => r.id === id);
@@ -376,8 +390,8 @@ export function mark(b: BoardState, cast: readonly ReturnDef[], id: ReturnId): B
     return [{ type: 'locked', title: 'TARGET LOCKED', text: `RETURN ${id} · THE SUPPLY TRUCK`, target: { kind: 'return', id } }];
   }
   b.wrong.push(id);
-  b.minutes = Math.max(0, b.minutes - 1);
-  return [{ type: 'wrong', title: 'NEGATIVE', text: `RETURN ${id} IS NOT THE TRUCK · −1 MIN`, target: { kind: 'return', id } }, ...frontCheck(b)];
+  b.seconds = Math.max(0, b.seconds - WRONG_MARK_SECONDS);
+  return [{ type: 'wrong', title: 'NEGATIVE', text: `RETURN ${id} IS NOT THE TRUCK · −${WRONG_MARK_SECONDS} s`, target: { kind: 'return', id } }, ...frontCheck(b)];
 }
 
 export function chooseCorridor(b: BoardState, def: ControlDef, id: string): void {
@@ -414,7 +428,7 @@ export const POINTS = {
   explained: 150,
   cellKnown: 100,
   routeKnown: 200,
-  minute: 120,
+  second: 15,
   shadow: 700,
   cacheOnRoute: 500,
   wrong: 700,
@@ -449,7 +463,7 @@ export function scoreBoard(b: BoardState, def: ControlDef, cast: readonly Return
   const onRoute = route ? known.filter(([id]) => route.cells.some((c) => c.id === id)).length : 0;
   const intel = explained * POINTS.explained + known.length * POINTS.cellKnown + onRoute * POINTS.routeKnown;
 
-  const efficiency = b.frontCaught ? 0 : b.minutes * POINTS.minute;
+  const efficiency = b.frontCaught ? 0 : Math.round(b.seconds) * POINTS.second;
   const risk = route ? route.cells.reduce((t, c) => t + cellRisk(b.cells[c.id]), 0) : -1200;
   const cache = route ? route.cells.some((c) => belief(b.cells[c.id]) === 'cache') : false;
   const bonus = (b.shadowed ? POINTS.shadow : 0) + (cache ? POINTS.cacheOnRoute : 0);
@@ -458,7 +472,7 @@ export function scoreBoard(b: BoardState, def: ControlDef, cast: readonly Return
   const lines: ScoreLine[] = [
     { id: 'objective', label: 'OBJECTIVE', points: objective, detail: !b.marked ? 'TRUCK NOT FOUND' : confirmed ? 'TRUCK · CONFIRMED' : 'TRUCK · ON A HUNCH' },
     { id: 'intel', label: 'INTELLIGENCE', points: intel, detail: `${explained}/${visible.length} VEHICLES · ${known.length}/${Object.keys(b.cells).length} ROUTE SPOTS` },
-    { id: 'efficiency', label: 'EFFICIENCY', points: efficiency, detail: b.frontCaught ? 'CAUGHT BY THE FRONT' : `${b.minutes} MIN TO SPARE` },
+    { id: 'efficiency', label: 'EFFICIENCY', points: efficiency, detail: b.frontCaught ? 'CAUGHT BY THE FRONT' : `${Math.round(b.seconds)} s TO SPARE` },
     { id: 'risk', label: 'RISK', points: risk, detail: route ? riskWord(route, b) : 'NO ROUTE PLANNED' },
     { id: 'bonus', label: 'BONUS', points: bonus, detail: [b.shadowed && 'BARGE FOUND', cache && 'CACHE ON ROUTE'].filter(Boolean).join(' · ') || 'NONE' },
     { id: 'losses', label: 'LOSSES', points: losses, detail: [b.wrong.length && `${b.wrong.length} WRONG MARK${b.wrong.length > 1 ? 'S' : ''}`, b.frontCaught && 'NO TIME LEFT'].filter(Boolean).join(' · ') || 'NONE' },

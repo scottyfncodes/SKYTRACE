@@ -2,10 +2,10 @@
  * MISSION 01: FIND THE TRUCK. All mission content lives here; the rules in
  * `mission.ts` only read it.
  *
- * The puzzle: four vehicle returns, each matching the intelligence on every
- * point but one. Only the supply truck matches all four. Each sensor answers
- * a different part of the question (radar: where and moving; optical: size
- * and road; thermal: size and engine heat; SIGINT: radio).
+ * The puzzle: six vehicle returns, each matching the intelligence on every
+ * point but one. Only the supply truck matches all five clues. Each sensor
+ * answers a different part of the question (radar: where and moving;
+ * optical: size and road; thermal: size and engine heat; SIGINT: radio).
  *
  * The operation: route north of a storm cell, enter the sector low, find and
  * photograph the truck before the weather front arrives, then follow what the
@@ -27,7 +27,10 @@ export interface Sector {
 /** Sector 7: the eastern roads, from the haul road to the river landing. */
 export const SECTOR_7: Sector = { id: 'sector7', label: 'SECTOR 7', x0: 400, z0: -300, x1: 1000, z1: 560 };
 
-export type ReturnId = 'A' | 'B' | 'C' | 'D' | 'E';
+export type ReturnId = 'A' | 'B' | 'C' | 'D' | 'E' | 'F' | 'G';
+/** The letters the visible returns are dealt; the barge is always the last. */
+export const VISIBLE_IDS: readonly ReturnId[] = ['A', 'B', 'C', 'D', 'E', 'F'];
+export const BARGE_ID: ReturnId = 'G';
 
 export interface ReturnDef {
   id: ReturnId;
@@ -141,6 +144,46 @@ export const DEFAULT_RETURNS: readonly ReturnDef[] = [
     id: 'E',
     size: 'large',
     count: 1,
+    moving: true,
+    onRoad: true,
+    route: [
+      [690, 340],
+      [560, 190],
+      [430, 30],
+    ],
+    speed: 10,
+    start: 200,
+    signature: 0.7,
+    concealment: 0.1,
+    isTarget: false,
+    engine: 'running',
+    radio: true,
+    truth: 'A quarry tipper on the haul road, chattering on the works channel.',
+  },
+  {
+    id: 'F',
+    size: 'large',
+    count: 2,
+    moving: true,
+    onRoad: true,
+    route: [
+      [430, 505],
+      [600, 440],
+      [700, 380],
+    ],
+    speed: 11,
+    start: 90,
+    signature: 0.8,
+    concealment: 0.1,
+    isTarget: false,
+    engine: 'running',
+    radio: false,
+    truth: 'Two fuel tankers running together: twice the truck, and twice as easy to spot.',
+  },
+  {
+    id: 'G',
+    size: 'large',
+    count: 1,
     moving: false,
     onRoad: false,
     route: [[528, 556]],
@@ -169,13 +212,35 @@ const strip = ({ id: _id, ...rest }: ReturnDef): Decoy => rest;
 
 /**
  * The look-alikes. Each fits the brief on every point but one, and each is
- * caught out by a different sensor: radar (parked, outside the sector), a
- * camera (three small vehicles), or only the OPTICAL camera (off the road).
+ * caught out by a different sensor: radar (parked, or outside the sector),
+ * any camera (three small vehicles, or two large ones), only the OPTICAL
+ * camera (off the road), or only a radio check (a quarry tipper talking).
  */
-export const DECOYS: Record<'parked' | 'scouts' | 'west' | 'field', Decoy> = {
+export const DECOYS: Record<'parked' | 'scouts' | 'west' | 'field' | 'quarry' | 'convoy' | 'north', Decoy> = {
   parked: strip(by('A')),
   scouts: strip(by('B')),
   west: strip(by('D')),
+  quarry: strip(by('E')),
+  convoy: strip(by('F')),
+  north: {
+    size: 'large',
+    count: 1,
+    moving: true,
+    onRoad: true,
+    route: [
+      [245, -150],
+      [255, 10],
+      [320, 160],
+    ],
+    speed: 10,
+    start: 0,
+    signature: 0.7,
+    concealment: 0.1,
+    isTarget: false,
+    engine: 'running',
+    radio: false,
+    truth: 'A timber lorry on the forest track, west of the sector line the whole time.',
+  },
   field: {
     size: 'large',
     count: 1,
@@ -201,23 +266,23 @@ export const DECOYS: Record<'parked' | 'scouts' | 'west' | 'field', Decoy> = {
 const routeLength = (pts: readonly Pt[]) => pts.slice(1).reduce((t, p, i) => t + Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]), 0);
 
 /**
- * A fresh puzzle for each operation: three of the four look-alikes, the
- * letters A–D shuffled, everything starting at a different point on its
+ * A fresh puzzle for each operation: five of the seven look-alikes, the
+ * letters A–F shuffled, everything starting at a different point on its
  * road. The truck is always on the mine road (the recon that follows needs
- * it there); the barge is always E.
+ * it there); the barge is always G.
  */
 export function rollReturns(rand: () => number): ReturnDef[] {
   const pool = Object.values(DECOYS);
-  // drop one look-alike at random
-  pool.splice(Math.floor(rand() * pool.length), 1);
+  // drop two look-alikes at random
+  for (let k = 0; k < Object.keys(DECOYS).length - (VISIBLE_IDS.length - 1); k++) pool.splice(Math.floor(rand() * pool.length), 1);
   const cast: Decoy[] = [strip(by('C')), ...pool];
-  const letters: ReturnId[] = ['A', 'B', 'C', 'D'];
+  const letters: ReturnId[] = [...VISIBLE_IDS];
   for (let i = letters.length - 1; i > 0; i--) {
     const j = Math.floor(rand() * (i + 1));
     [letters[i], letters[j]] = [letters[j], letters[i]];
   }
   const rolled = cast.map((d, i) => ({ ...d, id: letters[i], start: d.route.length > 1 ? rand() * routeLength(d.route) : 0 }) as ReturnDef);
-  rolled.push(by('E'));
+  rolled.push(by(BARGE_ID));
   return rolled.sort((a, b) => a.id.localeCompare(b.id));
 }
 
@@ -245,7 +310,7 @@ export const MISSION_01 = {
   /** Layer 2: what the crew knows before take-off. */
   intel: [
     'Last radio contact 10 minutes ago, driving a road inside Sector 7. Its radio has been silent since.',
-    'It is a large cargo truck: bigger than our scout patrol of three light 4x4s, which is also in the sector.',
+    'It is one large cargo truck: bigger than our scout patrol of three light 4x4s, and alone, unlike the tanker pair, both also in the sector.',
     'It should still be moving.',
   ],
   /** Compact reminder shown under the objective while searching. */
@@ -255,11 +320,11 @@ export const MISSION_01 = {
     primary: 'Find the supply truck in Sector 7 and photograph it.',
     secondaries: ['Reach Sector 7 undetected', 'Find out where the truck is going', 'Scout a clean way home'],
     weather: 'Clear at take-off. A storm cell sits over the main road between base and the sector.',
-    conditions: 'A front arrives from the west 12 minutes after you reach the sector. Three ways home, each unscouted: storms, low cloud and radar are out there. How you fly home depends on what Mission Control finds.',
+    conditions: 'A front arrives from the west 90 seconds after you reach the sector: Mission Control runs on a real clock. Three ways home, each unscouted: storms, low cloud and radar are out there. How you fly home depends on what Mission Control finds, and what is left on the clock sets how fast the first ring home closes.',
     targetArea: 'Sector 7: the eastern roads, outlined in amber. Grid I–K / 5–9.',
     constraints: ['Fly the ring route north of the storm', 'Enter Sector 7 low: the ridge radar sees anything above your stealth ceiling', 'Land at base before fuel runs out'],
-    window: '12 min at Mission Control before the front arrives',
-    threats: ['Ridge radar watching the sector', 'Storm cell over the main road', 'Our own scout patrol is in the sector: do not misidentify it'],
+    window: '90 s at Mission Control before the front arrives',
+    threats: ['Ridge radar watching the sector', 'Storm cell over the main road', 'Six vehicles fit most of the brief: our scouts, a tanker pair and a chatty quarry tipper among them'],
   },
   story: {
     hook: 'A supply truck went dark in Sector 7.',
@@ -273,7 +338,7 @@ export const MISSION_01 = {
   risks: [
     { icon: '◯', text: 'Fly the rings · around the storm' },
     { icon: '📡', text: 'Ridge radar · rings take you in low' },
-    { icon: '⏱', text: 'Mission Control · 12 min to plan the exit' },
+    { icon: '⏱', text: 'Mission Control · 90 s to plan the exit' },
   ],
   operations: { area: SECTOR_7 },
   reconWindow: 300,

@@ -244,12 +244,12 @@ describe('the whole operation: PREFLIGHT → OUTBOUND → RECON → RETURN → D
     }
     expect(m.phase).toBe('landing');
     expect(Math.hypot(target.x - DESTINATION.x, target.z - DESTINATION.z)).toBeLessThan(1);
-    for (let t = 0; t < 60 && !m.returns.E.resolved; t += dt) {
-      retaskOrbit(crew, movers.get('E')!.x, movers.get('E')!.z);
+    for (let t = 0; t < 60 && !m.returns.G.resolved; t += dt) {
+      retaskOrbit(crew, movers.get('G')!.x, movers.get('G')!.z);
       sim(dt);
-      inspectReturn(m, 'E', dt, slant('E') < CAMERA_RANGE, 'thermal', 1.6 * cap.identifyTime);
+      inspectReturn(m, 'G', dt, slant('G') < CAMERA_RANGE, 'thermal', 1.6 * cap.identifyTime);
     }
-    expect(photograph(m, 'E', 0.7).result).toBe('transfer');
+    expect(photograph(m, 'G', 0.7).result).toBe('transfer');
     expect(op.stage).toBe('recon');
     expect(op.frontArrived).toBe(false); // done inside the window
 

@@ -167,7 +167,7 @@ export function tickOperation(op: OperationState, def: MissionDef, a: AircraftFi
  * Exit Profile), the radar has you from the first ring. `def.return` is the
  * leg Mission Control generated.
  */
-export function beginReturn(op: OperationState, def?: Pick<MissionDef, 'return'>, pose?: { x: number; y: number; z: number; yaw: number }, ground: Ground = flat, contact = false, pace = CONTACT_PACE): void {
+export function beginReturn(op: OperationState, def?: Pick<MissionDef, 'return'>, pose?: { x: number; y: number; z: number; yaw: number }, ground: Ground = flat, contact = false, pace = CONTACT_PACE, first = 1): void {
   if (op.stage !== 'recon' && op.stage !== 'outbound' && op.stage !== 'execute') return;
   // no drop run flown (no target), or one abandoned: execute did not happen
   if (op.execResult === null) op.execResult = op.stage === 'execute' ? 'missed' : 'skipped';
@@ -178,7 +178,7 @@ export function beginReturn(op: OperationState, def?: Pick<MissionDef, 'return'>
     const join = joinRing(pose, first && first.kind === 'ring' ? first : BASE, ground, deck && deck.kind === 'ceiling' ? deck.y : Infinity);
     op.routes.return = placeRoute(def.return, ground, pose, join);
   }
-  op.ret = newLeg(op.routes.return, op.outbound.detected || contact, true, pace);
+  op.ret = newLeg(op.routes.return, op.outbound.detected || contact, true, pace, first);
 }
 
 /** Touch-down at base. Only the return leg ends with a landing. */
