@@ -1254,7 +1254,7 @@ export class Game {
     this.missionScene.setAlarm(0);
     this.setPhaseTheme(null);
     this.hud.clearBanners();
-    this.hud.banner('HOME', 'WHEELS DOWN AT BASE', 'done', 1.4);
+    this.hud.banner('HOME', 'WHEELS DOWN', 'done', 1.4);
     this.audio.home();
   }
 
