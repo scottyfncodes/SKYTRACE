@@ -49,7 +49,7 @@ import { RouteMover } from '../mission/vehicles';
 import { CREW_BY_ID } from '../operation/catalog';
 import { capabilities as loadoutCapabilities, checkLoadout, defaultLoadout, seatCrew, toggleEquipment, withAircraft, type Capabilities, type Loadout } from '../operation/loadout';
 import { activeLeg, beginReturn, damagedPerf, endOperation, flightObjective, landAtBase, launch, newOperation, tickOperation, type OperationState } from '../operation/operation';
-import { bonusTaken, currentGate, inHazard, ringScale, type LegEvent } from '../operation/gates';
+import { bonusTaken, currentGate, inHazard, onClock, ringScale, type LegEvent } from '../operation/gates';
 import { buildReport, type Report } from '../operation/score';
 import { isUnlocked, loadCareer, recordOperation, saveCareer, type Career, type UnlockDef } from '../operation/career';
 import { pauseTransition, type Mode } from './modes';
@@ -951,6 +951,9 @@ export class Game {
     if (this.crew.station !== 'operator' || !this.control.executed || !this.exit) return;
     const session = this.crew.sessionTime;
     handBack(this.crew);
+    // wings level, nose on the horizon: the first ring is laid dead ahead and stays in frame
+    this.a.roll = 0;
+    this.a.pitch = 0;
     this.scanning = false;
     this.radarRing.visible = false;
     this.startReturnLeg();
@@ -1167,7 +1170,7 @@ export class Game {
     }
     const flying = activeLeg(this.op);
     const legView = flying ?? { def: this.op.routes.outbound, state: this.op.outbound };
-    const urgency = legView.state.contact && legView.state.clock !== null ? 1 - Math.max(0, Math.min(1, legView.state.clock / Math.max(0.01, legView.state.clockMax))) : 0;
+    const urgency = onClock(legView.state) && legView.state.clock !== null ? 1 - Math.max(0, Math.min(1, legView.state.clock / Math.max(0.01, legView.state.clockMax))) : 0;
     this.missionScene.updateRoute(legView.state.index, legView.state.status, ringScale(legView.state), urgency, dt, this.t);
 
     if (this.crew.station === 'operator') this.updateBoard(dt);
@@ -1544,7 +1547,7 @@ export class Game {
     }
     const R = leg?.def.radar;
     if (R && !leg!.state.detected && this.a.agl > this.cap.stealthCeiling - 40 && this.a.x > R.x0 - 300 && this.a.x < R.x1 + 300 && this.a.z > R.z0 - 300 && this.a.z < R.z1 + 300) chips.push({ text: `TOO HIGH · BELOW ${this.cap.stealthCeiling} m`, cls: 'bad' });
-    if (leg?.state.contact && leg.state.clock !== null && gate?.kind === 'ring') chips.push({ text: `⏱ ${Math.max(0, Math.ceil(leg.state.clock))} s`, cls: leg.state.clock < 3 ? 'bad' : 'caution' });
+    if (leg && onClock(leg.state) && leg.state.clock !== null && gate?.kind === 'ring') chips.push({ text: `⏱ ${Math.max(0, Math.ceil(leg.state.clock))} s`, cls: leg.state.clock < 3 ? 'bad' : 'caution' });
     if (this.op.damage >= 0.02) chips.push({ text: `HULL ${Math.round((1 - this.op.damage) * 100)}%`, cls: this.op.damage > 0.55 ? 'bad' : 'caution' });
     if (this.op.stage === 'recon' && !this.control.executed) chips.push({ text: `FRONT IN ${this.control.minutes} MIN`, cls: 'caution' });
 

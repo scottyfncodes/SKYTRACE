@@ -7,8 +7,9 @@
  * A ring is a vertical hoop facing along the route. It is passed by
  * crossing its plane inside the hoop, and missed by crossing the plane
  * outside it: the route moves on either way, so a mistake costs points,
- * never a loop back. On the way home a RADAR CONTACT puts each ring on a
- * clock: the hoop shrinks while it runs and closes when it runs out.
+ * never a loop back. On the way home every ring is on a clock that starts
+ * the moment the previous ring is hit: the hoop shrinks while it runs and
+ * closes when it runs out. A RADAR CONTACT puts outbound rings on it too.
  */
 import type { OperationsArea } from '../mission/missionDef';
 
@@ -84,8 +85,10 @@ export interface LegState {
   detected: boolean;
   /** Last position, for plane crossings. */
   prev: { x: number; y: number; z: number } | null;
-  /** RADAR CONTACT: the current ring is on a clock. */
+  /** RADAR CONTACT: the radar has you (the rings turn red as they close). */
   contact: boolean;
+  /** Every ring is on a clock (the way home), contact or not. */
+  timed: boolean;
   /** Seconds left on the current ring (null: starts next tick). */
   clock: number | null;
   clockMax: number;
@@ -109,11 +112,13 @@ export interface AircraftFix {
 export const RING_GRACE = 1.25;
 /** Crossing the plane this many radii from the centre is a miss; further out it is ignored. */
 export const MISS_BAND = 5;
-/** Under contact each ring gets distance / pace + slack seconds. */
+/** On the clock each ring gets distance / pace + slack seconds. */
 export const CONTACT_PACE = 40;
 export const CONTACT_SLACK = 6;
 /** The hoop closes to this fraction of its size as the clock runs out. */
 export const CLOSED_SCALE = 0.55;
+/** The join ring turns at most this far from the nose toward the route (radians). */
+export const JOIN_TURN = Math.PI / 18;
 
 type Ground = (x: number, z: number) => number;
 type Pt = { x: number; z: number };
@@ -148,18 +153,20 @@ export function placeRoute(leg: LegDef, ground: Ground, from: Pt, join?: Ring): 
 }
 
 /**
- * The first ring of the way home, placed where the pilot can take it the
- * moment they have the controls: ahead of the aircraft, turned part of the
- * way toward the route, below any cloud deck.
+ * The first ring of the way home, placed where the pilot sees it the moment
+ * they have the controls: dead ahead of the nose (turned at most a few
+ * degrees toward the route, so it stays in frame even on a narrow phone
+ * screen), at the aircraft's height unless the ground or a cloud deck says
+ * otherwise.
  */
 export function joinRing(pose: { x: number; y: number; z: number; yaw: number }, toward: Pt, ground: Ground, ceilingY = Infinity, dist = 380): Ring {
   const fx = -Math.sin(pose.yaw);
   const fz = -Math.cos(pose.yaw);
   const [tx, tz] = unit(toward.x - pose.x, toward.z - pose.z);
-  // turn from the heading toward the route, at most 45 degrees
+  // turn from the heading toward the route, only a little: it must be in view
   const cross = fx * tz - fz * tx;
   const dot = fx * tx + fz * tz;
-  const ang = Math.max(-Math.PI / 4, Math.min(Math.PI / 4, Math.atan2(cross, dot)));
+  const ang = Math.max(-JOIN_TURN, Math.min(JOIN_TURN, Math.atan2(cross, dot)));
   const c = Math.cos(ang);
   const s = Math.sin(ang);
   const nx = fx * c - fz * s;
@@ -168,11 +175,11 @@ export function joinRing(pose: { x: number; y: number; z: number; yaw: number },
   const x = Math.max(-lim, Math.min(lim, pose.x + nx * dist));
   const z = Math.max(-lim, Math.min(lim, pose.z + nz * dist));
   const g = ground(x, z);
-  const y = Math.max(g + 70, Math.min(pose.y, ceilingY - 60, g + 200));
+  const y = Math.max(g + 70, Math.min(pose.y, ceilingY - 60, g + 260));
   return { kind: 'ring', id: 'join', x, z, agl: y - g, r: 40, y, nx, nz };
 }
 
-export function newLeg(route: Route, contact = false): LegState {
+export function newLeg(route: Route, contact = false, timed = false): LegState {
   const status: Record<string, GateStatus> = {};
   for (const g of route.gates) status[g.id] = 'pending';
   const inside: Record<string, boolean> = {};
@@ -181,7 +188,7 @@ export function newLeg(route: Route, contact = false): LegState {
     inside[h.id] = false;
     exposure[h.id] = 0;
   }
-  return { index: 0, status, inside, exposure, detected: false, prev: null, contact, clock: null, clockMax: 0 };
+  return { index: 0, status, inside, exposure, detected: false, prev: null, contact, timed, clock: null, clockMax: 0 };
 }
 
 export function currentGate(s: LegState, route: Route): Gate | null {
@@ -202,9 +209,12 @@ export function ringOrdinal(route: Route, id: string): string {
   return `${rs.findIndex((r) => r.id === id) + 1}/${rs.length}`;
 }
 
-/** How open the current ring is (1 = full size; shrinks under contact as the clock runs). */
+/** The current ring is on a clock (the way home, or under contact). */
+export const onClock = (s: LegState): boolean => s.timed || s.contact;
+
+/** How open the current ring is (1 = full size; shrinks as its clock runs). */
 export function ringScale(s: LegState): number {
-  if (!s.contact || s.clock === null || s.clockMax <= 0) return 1;
+  if (!onClock(s) || s.clock === null || s.clockMax <= 0) return 1;
   return CLOSED_SCALE + (1 - CLOSED_SCALE) * Math.max(0, Math.min(1, s.clock / s.clockMax));
 }
 
@@ -261,8 +271,8 @@ export function tickLeg(s: LegState, route: Route, a: AircraftFix, dt: number, s
 
   const g = currentGate(s, route);
   if (g?.kind === 'ring') {
-    // ---- the clock (under contact)
-    if (s.contact) {
+    // ---- the clock (the way home, or under contact)
+    if (onClock(s)) {
       if (s.clock === null) {
         s.clockMax = Math.hypot(g.x - a.x, g.y - a.y, g.z - a.z) / CONTACT_PACE + CONTACT_SLACK;
         s.clock = s.clockMax;
@@ -300,7 +310,7 @@ export function tickLeg(s: LegState, route: Route, a: AircraftFix, dt: number, s
       }
     }
     // ---- the hoop closes
-    if (!done && s.contact && s.clock !== null && s.clock <= 0) {
+    if (!done && onClock(s) && s.clock !== null && s.clock <= 0) {
       s.status[g.id] = 'missed';
       ev.push({ type: 'gate-missed', id: g.id, text: ringOrdinal(route, g.id) });
       advance(s, route, s.index + 1, ev);
