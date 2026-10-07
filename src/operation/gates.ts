@@ -121,6 +121,8 @@ export const CLOSED_SCALE = 0.55;
 export const JOIN_TURN = Math.PI / 60;
 /** The join ring is never steeper below the nose than this (radians): a glide, not a dive. */
 export const JOIN_GLIDE = Math.PI / 12;
+/** A route ring closer than this to the join ring is taken by the join ring (m: about three tight turning radii). */
+export const JOIN_MERGE = 200;
 
 type Ground = (x: number, z: number) => number;
 type Pt = { x: number; z: number };
@@ -135,8 +137,19 @@ const unit = (dx: number, dz: number): [number, number] => {
  * facing along the route (the average of the way in and the way out).
  */
 export function placeRoute(leg: LegDef, ground: Ground, from: Pt, join?: Ring): Route {
+  let specs = leg.gates;
+  if (join) {
+    const j = join;
+    // a route ring right on top of the join ring could only be taken by looping back on its clock: the join ring stands in for it
+    let k = 0;
+    const merge = (g: GateSpec | undefined): g is RingSpec => g?.kind === 'ring' && !g.bonus && specs[k + 1]?.kind === 'ring' && Math.hypot(g.x - j.x, g.z - j.z) < JOIN_MERGE;
+    while (merge(specs[k])) {
+      if ((specs[k] as RingSpec).alert) join = { ...join, alert: true };
+      k++;
+    }
+    specs = specs.slice(k);
+  }
   const gates: Gate[] = join ? [join] : [];
-  const specs = leg.gates;
   let prev: Pt = join ?? from;
   for (let i = 0; i < specs.length; i++) {
     const g = specs[i];
