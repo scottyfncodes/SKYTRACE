@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyVerticalMode, DEFAULT_PREFS, loadPrefs, PREFS_KEY, savePrefs } from '../src/core/settings';
+import { applyVerticalMode, DEFAULT_PREFS, loadPrefs, otherSide, PREFS_KEY, savePrefs } from '../src/core/settings';
 import { Input } from '../src/core/input';
 import { initialAircraft, stepAircraft, type FlightInput } from '../src/flight/aircraft';
 import { clear, load, newState, save, SAVE_KEY, type Storage } from '../src/intel/state';
@@ -51,6 +51,27 @@ describe('vertical mode', () => {
   });
 });
 
+describe('steering side', () => {
+  it('defaults to steering on the left, for existing players too', () => {
+    const st = memStorage();
+    expect(DEFAULT_PREFS.steer).toBe('left');
+    expect(loadPrefs(st).steer).toBe('left');
+    st.setItem(PREFS_KEY, JSON.stringify({ verticalMode: 'inverted' })); // saved before the setting existed
+    expect(loadPrefs(st)).toEqual({ verticalMode: 'inverted', steer: 'left' });
+  });
+  it('round-trips, rejects junk, and keeps the vertical setting alongside', () => {
+    const st = memStorage();
+    savePrefs({ verticalMode: 'inverted', steer: 'right' }, st);
+    expect(loadPrefs(st)).toEqual({ verticalMode: 'inverted', steer: 'right' });
+    st.setItem(PREFS_KEY, JSON.stringify({ verticalMode: 'standard', steer: 'middle' }));
+    expect(loadPrefs(st).steer).toBe('left');
+  });
+  it('the throttle and the scope always sit opposite the steering thumb', () => {
+    expect(otherSide('left')).toBe('right');
+    expect(otherSide('right')).toBe('left');
+  });
+});
+
 describe('preference persistence', () => {
   it('defaults to standard for existing players with no preference saved', () => {
     const st = memStorage();
@@ -59,7 +80,7 @@ describe('preference persistence', () => {
   });
   it('round-trips and rejects junk', () => {
     const st = memStorage();
-    savePrefs({ verticalMode: 'inverted' }, st);
+    savePrefs({ ...DEFAULT_PREFS, verticalMode: 'inverted' }, st);
     expect(loadPrefs(st).verticalMode).toBe('inverted');
     st.setItem(PREFS_KEY, '{not json');
     expect(loadPrefs(st).verticalMode).toBe('standard');
@@ -68,7 +89,7 @@ describe('preference persistence', () => {
   });
   it('survives New Case and is independent of the case save', () => {
     const st = memStorage();
-    savePrefs({ verticalMode: 'inverted' }, st);
+    savePrefs({ ...DEFAULT_PREFS, verticalMode: 'inverted' }, st);
     const s = newState();
     s.sortie = 3;
     save(s, st);
@@ -80,7 +101,7 @@ describe('preference persistence', () => {
   it('tolerates storage that throws', () => {
     const bad = { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('denied'); } };
     expect(loadPrefs(bad).verticalMode).toBe('standard');
-    expect(() => savePrefs({ verticalMode: 'inverted' }, bad)).not.toThrow();
+    expect(() => savePrefs({ ...DEFAULT_PREFS, verticalMode: 'inverted' }, bad)).not.toThrow();
   });
 });
 

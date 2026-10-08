@@ -95,8 +95,8 @@ FLY → OBSERVE → SCAN → INVESTIGATE → IDENTIFY → MARK → RETURN → CO
 
 | Action | Touch (iPhone) | Keyboard |
 | --- | --- | --- |
-| Bank / climb / descend | Drag on the left half of the screen | Arrows or WASD |
-| Throttle | Slider on the right edge | Shift / Ctrl (or Q / Z) |
+| Bank / climb / descend | Drag on the left half of the screen (or the right half: *Steering* in the pause menu) | Arrows or WASD |
+| Throttle | Slider on the edge opposite the steering | Shift / Ctrl (or Q / Z) |
 | Ground radar | SCAN | Space |
 | Mark contact | MARK | M |
 | Drop sensor | DROP | E |
@@ -105,6 +105,8 @@ FLY → OBSERVE → SCAN → INVESTIGATE → IDENTIFY → MARK → RETURN → CO
 | Pause | II | Esc or P |
 
 Vertical stick direction can be switched between **Standard** (stick up / ↑ climbs) and **Inverted** (stick up / ↑ dives) under *Flight controls* in the pause menu. It applies to touch and keyboard, never to throttle, and is remembered across reloads and new cases.
+
+**Steering** can be set to **Left** (the default: steer with the left thumb, throttle and radar scope on the right) or **Right** (steer with the right thumb, throttle and scope on the left) in the same place. It is remembered the same way. In a mission the scope always sits opposite the steering thumb, with LAND and MISSION CONTROL beside it; the open case mirrors its whole layout.
 
 Progress is saved in the browser automatically.
 
