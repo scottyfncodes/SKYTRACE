@@ -1437,7 +1437,7 @@ export class Game {
         this.el['app'].classList.remove('carding');
       }
     }
-    if (this.returnCue && this.phaseTimer <= 0.4) {
+    if (this.returnCue && this.phaseTimer <= 0) {
       this.returnCue = false;
       if (this.op.ret.contact) this.hud.banner('RADAR CONTACT', 'THE RINGS ARE CLOSING', 'bad', 2.4);
     }
