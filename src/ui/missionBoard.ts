@@ -532,7 +532,7 @@ export class MissionBoard {
       ctx.fill();
       ctx.stroke();
       drawTruth(ctx, cell.belief, x, y);
-      if (!cell.belief && cell.forecast !== 'clear') {
+      if (!cell.belief && !cell.contradicted && cell.forecast !== 'clear') {
         ctx.font = '600 8px ui-monospace, Menlo, monospace';
         ctx.fillStyle = 'rgba(232,243,234,0.7)';
         ctx.fillText(`TWR:${cell.forecast === 'storm' ? 'STORM' : 'CLOUD'}`, x - 18, y - 16);

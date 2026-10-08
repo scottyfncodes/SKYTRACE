@@ -42,7 +42,7 @@ import { BARGE, destinationRoute, evidenceGrade, newMission, TARGET, useReturns,
 import { engageOperator, handBack, newCrew, operatorAvailability, tickCrew, type CrewState } from '../mission/crew';
 import { inArea } from '../mission/missionDef';
 import { orbitInput } from '../flight/autopilot';
-import { allCells, ASSET_ORDER, ASSETS, assetFitted, LOOK_LABEL, belief, canUse, chooseCorridor, clockLeft, clueChecks, isKnown as cellKnown, mark, newBoard, ruledOut, scoreBoard, tickBoard, traits, useAsset, type AssetId, type BoardEvent, type BoardState, type ControlResult, type Target } from '../control/board';
+import { allCells, ASSET_ORDER, ASSETS, assetFitted, CELL_LOOK_LABEL, LOOK_LABEL, towerWrong, belief, canUse, chooseCorridor, clockLeft, clueChecks, isKnown as cellKnown, mark, newBoard, ruledOut, scoreBoard, tickBoard, traits, useAsset, type AssetId, type BoardEvent, type BoardState, type ControlResult, type Target } from '../control/board';
 import { buildExit, TIER_LABEL, type ExitProfile } from '../control/exit';
 import { CONTROL_01 } from '../mission/mission01Control';
 import { boardStep, MissionBoard, URGENT_SECONDS, type BoardAction, type BoardFrame, type StepAction } from '../ui/missionBoard';
@@ -1684,7 +1684,6 @@ export class Game {
     const cells = allCells(def).map((c) => {
       const st = b.cells[c.id];
       const known = belief(st);
-      const weather = known === 'storm' || known === 'cloud' ? known : 'clear';
       return {
         id: c.id,
         corridor: c.corridor,
@@ -1694,8 +1693,9 @@ export class Game {
         belief: known,
         possible: st.possible,
         forecast: st.forecast,
-        contradicted: !!known && st.forecast !== weather,
-        actions: fitted.filter((a) => a === 'drone' || a === 'scouts').map((a) => act(a, { kind: 'cell', id: c.id })),
+        contradicted: towerWrong(st),
+        // two different questions: the weather (scouts), what is on the ground (drone)
+        actions: (['scouts', 'drone'] as const).filter((a) => fitted.includes(a)).map((a) => act(a, { kind: 'cell', id: c.id }, CELL_LOOK_LABEL[a])),
       };
     });
     const allTargets: Target[] = [...returns.map((r) => ({ kind: 'return', id: r.id }) as Target), ...cells.map((c) => ({ kind: 'cell', id: c.id }) as Target)];

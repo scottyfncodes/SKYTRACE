@@ -15,7 +15,7 @@ const FINAL = { agl: 35, r: 34, cue: 'LINE UP · RUNWAY' } as const;
 
 export const CONTROL_01: ControlDef = {
   seconds: 90,
-  limited: { drone: 2, scouts: 1 },
+  limited: { drone: 2, scouts: 2 },
   cellMix: ['storm', 'storm', 'cloud', 'radar', 'cache', 'clear'],
   landing: { x: 528, z: 556, label: 'RIVER LANDING' },
   clues: CLUES_01,
