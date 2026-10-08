@@ -3,7 +3,7 @@
  * ground. Shown as a subtitle (always) and spoken by the device's voice (if
  * it has one and the player has not turned it off). One line at a time.
  */
-export type Speaker = 'DISPATCH' | 'CREW' | 'GROUND' | 'HOSPITAL';
+export type Speaker = 'DISPATCH' | 'CREW' | 'GROUND' | 'HOSPITAL' | 'TANKER 42' | 'FIRE CREWS';
 
 export interface RadioLine {
   who: Speaker;

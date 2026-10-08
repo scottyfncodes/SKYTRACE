@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mat } from '../world/props';
 import type { AircraftState } from './aircraft';
 
-export type HeliStyle = 'rescue' | 'heavy';
+export type HeliStyle = 'rescue' | 'heavy' | 'fire';
 
 const blk = (w: number, h: number, d: number, m: THREE.Material) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
 const cylZ = (rt: number, rb: number, len: number, seg: number, m: THREE.Material) => {
@@ -30,10 +30,48 @@ export class HelicopterMesh {
   /** Where the cable leaves the hoist, in body space. */
   readonly winch = new THREE.Object3D();
   private spin = 0;
+  /** The firefighting bucket on its long line (hidden unless carried). */
+  readonly bucket = new THREE.Group();
+  private bucketWater: THREE.Mesh;
+  private bucketSwing = { x: 0, z: 0, vx: 0, vz: 0 };
+  /** Line length under the belly (m). */
+  static readonly BUCKET_LINE = 8;
 
   constructor(style: HeliStyle = 'rescue') {
     this.group.add(this.body);
     this.setStyle(style);
+    // a bambi bucket: orange, a little wider at the top, a dark line up to the belly hook
+    const line = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, HelicopterMesh.BUCKET_LINE, 4), mat(0x1d1f22));
+    line.position.y = HelicopterMesh.BUCKET_LINE / 2;
+    const pail = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 0.75, 1.4, 14, 1, true), new THREE.MeshLambertMaterial({ color: 0xff7a1a, side: THREE.DoubleSide }));
+    pail.position.y = -0.7;
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(1.05, 0.08, 6, 16), mat(0x333333));
+    rim.rotation.x = Math.PI / 2;
+    const bottom = new THREE.Mesh(new THREE.CircleGeometry(0.75, 14), mat(0xd85a10));
+    bottom.rotation.x = Math.PI / 2;
+    bottom.position.y = -1.4;
+    this.bucketWater = new THREE.Mesh(new THREE.CircleGeometry(0.98, 14), new THREE.MeshLambertMaterial({ color: 0x3aa0e6, emissive: 0x0d3a5e }));
+    this.bucketWater.rotation.x = -Math.PI / 2;
+    this.bucketWater.position.y = -0.15;
+    const hang = new THREE.Group();
+    hang.add(line, pail, rim, bottom, this.bucketWater);
+    hang.position.y = -HelicopterMesh.BUCKET_LINE;
+    this.bucket.add(hang);
+    this.bucket.position.y = -1.5;
+    this.bucket.visible = false;
+    this.group.add(this.bucket);
+  }
+
+  /** Show the bucket (`full`: water in it). */
+  setBucket(on: boolean, full = false): void {
+    this.bucket.visible = on;
+    this.bucketWater.visible = full;
+  }
+
+  /** The bucket's mouth in world space. */
+  bucketWorld(out: THREE.Vector3): THREE.Vector3 {
+    this.group.updateMatrixWorld(true);
+    return this.bucket.children[0].getWorldPosition(out);
   }
 
   setStyle(style: HeliStyle): void {
@@ -43,8 +81,9 @@ export class HelicopterMesh {
     this.tailRotors = [];
     this.discs = [];
     this.strobe = [];
-    const red = mat(style === 'rescue' ? 0xe23d28 : 0xff8a1f);
-    const white = mat(0xf6f4ef);
+    const red = mat(style === 'rescue' ? 0xe23d28 : style === 'fire' ? 0xc92a1a : 0xff8a1f);
+    // the fire helicopter: red over a yellow belly
+    const white = mat(style === 'fire' ? 0xffc21a : 0xf6f4ef);
     const yellow = mat(0xffd23f);
     const dark = mat(0x2a2e33);
     const grey = mat(0x9aa3ab);
@@ -90,7 +129,7 @@ export class HelicopterMesh {
       }
     };
 
-    if (style === 'rescue') {
+    if (style !== 'heavy') {
       const cabin = new THREE.Mesh(new THREE.SphereGeometry(1.7, 18, 12), red);
       cabin.scale.set(1, 0.95, 1.55);
       cabin.position.set(0, 0.3, -0.4);
@@ -207,6 +246,16 @@ export class HelicopterMesh {
     this.rotors.forEach((r, i) => (r.rotation.y = (i % 2 ? -1 : 1) * this.spin + i * 0.5));
     for (const tr of this.tailRotors) tr.rotation.x = this.spin * 2.2;
     for (const d of this.discs) d.visible = power > 0.5;
+    // the bucket trails behind as you speed up and swings a little
+    if (this.bucket.visible && dt > 0) {
+      const sw = this.bucketSwing;
+      const want = { x: a.roll * 0.5, z: -Math.min(0.55, a.speed * 0.012) };
+      sw.vx += ((want.x - sw.x) * 6 - sw.vx * 1.6) * dt;
+      sw.vz += ((want.z - sw.z) * 6 - sw.vz * 1.6) * dt;
+      sw.x += sw.vx * dt;
+      sw.z += sw.vz * dt;
+      this.bucket.rotation.set(sw.z, 0, sw.x);
+    }
     const k = (t % 1.1) / 1.1;
     const on = k < 0.05 || (k > 0.12 && k < 0.17);
     for (const s of this.strobe) s.visible = on;

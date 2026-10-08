@@ -8,11 +8,11 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="SKYTRACE" />
     <meta name="theme-color" content="#1f6fc0" />
-    <meta name="description" content="SKYTRACE: Search &amp; Rescue. Plan the rescue, fly the mission, lower the basket, bring people home." />
+    <meta name="description" content="SKYTRACE: aerial rescue and firefighting. Plan the response, fly the mission, lower the basket, stop the fire." />
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-180.png" />
-    <title>SKYTRACE · Search &amp; Rescue</title>
+    <title>SKYTRACE · Rescue &amp; Firefighting</title>
   </head>
   <body>
     <div id="app">
@@ -24,11 +24,11 @@
       <section id="title" class="screen title hidden" aria-label="Title">
         <div class="t-brand">
           <div class="t-logo"><span class="t-cross" aria-hidden="true">✚</span>SKYTRACE</div>
-          <div class="t-sub">SEARCH &amp; RESCUE</div>
-          <p class="t-line">Someone needs help. Fly out, lower the basket, bring them home.</p>
+          <div class="t-sub">RESCUE &amp; FIREFIGHTING</div>
+          <p class="t-line">Someone needs help. Plan the response, choose the aircraft, fly it, and change what happens.</p>
         </div>
         <div class="t-calls">
-          <div class="t-calls-head"><span>RESCUE CALLS</span><em id="t-saved"></em></div>
+          <div class="t-calls-head"><span>EMERGENCY CALLS</span><em id="t-saved"></em></div>
           <div id="call-list" class="call-list"></div>
           <div id="t-coming" class="t-coming"></div>
           <button id="btn-title-settings" class="text-btn" type="button">⚙︎ Controls &amp; sound</button>
@@ -39,7 +39,7 @@
       <section id="preflight" class="screen preflight hidden" aria-label="Pre-Flight">
         <header class="pf-head">
           <button id="btn-pf-back" class="round-btn" type="button" aria-label="Back">‹</button>
-          <div class="pf-alert"><i class="siren" aria-hidden="true"></i>NEW RESCUE</div>
+          <div class="pf-alert"><i class="siren" aria-hidden="true"></i><span id="pf-alert-text">NEW RESCUE</span></div>
           <div class="pf-step">PRE-FLIGHT</div>
         </header>
         <div class="pf-body">
@@ -78,6 +78,11 @@
           <div id="nav" class="nav"><i id="nav-arrow" class="nav-arrow"></i><b id="nav-dist"></b><small id="nav-label"></small></div>
           <div class="hud-right">
             <div id="people" class="people" aria-label="Survivors"></div>
+            <div id="firestat" class="firestat hidden" aria-label="Fire">
+              <div class="fs-top"><b id="fs-name"></b><em id="fs-word"></em></div>
+              <div class="bar"><i id="fs-fill"></i></div>
+              <div class="fs-bottom"><span id="fs-load"></span><small id="fs-hold"></small></div>
+            </div>
             <div class="fuel" aria-label="Fuel"><span>FUEL</span><div class="bar"><i id="fuel-fill"></i></div></div>
             <button id="btn-pause" class="round-btn pause" type="button" aria-label="Pause">II</button>
           </div>
@@ -96,6 +101,7 @@
           <small id="thr-hint">HOVER</small>
         </div>
         <button id="btn-action" class="action-btn hidden" type="button"></button>
+        <button id="btn-drop" class="drop-btn hidden" type="button"></button>
       </section>
 
       <!-- launch / landing cards, and the big moments -->
@@ -110,7 +116,7 @@
           <div class="sheet-actions">
             <button id="btn-resume" class="launch-btn" type="button">RESUME</button>
             <button id="btn-restart" class="ghost-btn" type="button">RESTART MISSION</button>
-            <button id="btn-abort" class="ghost-btn" type="button">BACK TO RESCUE CALLS</button>
+            <button id="btn-abort" class="ghost-btn" type="button">BACK TO EMERGENCY CALLS</button>
           </div>
           <div class="settings" aria-label="Settings">
             <div class="set-row">
@@ -134,7 +140,7 @@
                 <button type="button" id="btn-voice" class="on">RADIO VOICE</button>
               </div>
             </div>
-            <p class="muted">Keyboard: arrows / WASD steer and climb · Shift / Ctrl speed (in a hover: reel in / let out) · Space hover &amp; hoist · Esc pause</p>
+            <p class="muted">Keyboard: arrows / WASD steer and climb · Shift / Ctrl speed (in a hover: reel in / let out) · Space hover &amp; hoist (on a fire: drop) · F drop · Esc pause</p>
           </div>
         </div>
       </section>
@@ -142,15 +148,20 @@
       <!-- ===== DEBRIEF ===== -->
       <section id="debrief" class="screen overlay hidden" aria-label="Debrief">
         <div class="sheet debrief">
-          <div id="db-headline" class="db-headline">RESCUE COMPLETE</div>
-          <div id="db-mission" class="db-mission"></div>
-          <div id="db-stars" class="db-stars" aria-label="Stars"></div>
-          <ul id="db-lines" class="db-lines"></ul>
-          <div id="db-unlocks" class="db-unlocks"></div>
-          <div class="sheet-actions">
-            <button id="btn-db-next" class="launch-btn" type="button">NEXT RESCUE</button>
-            <button id="btn-db-again" class="ghost-btn" type="button">FLY IT AGAIN</button>
-            <button id="btn-db-menu" class="ghost-btn" type="button">RESCUE CALLS</button>
+          <div class="db-main">
+            <div id="db-headline" class="db-headline">RESCUE COMPLETE</div>
+            <div id="db-mission" class="db-mission"></div>
+            <div id="db-stars" class="db-stars" aria-label="Stars"></div>
+            <ul id="db-lines" class="db-lines"></ul>
+          </div>
+          <div class="db-side">
+            <div id="db-compare" class="db-compare"></div>
+            <div id="db-unlocks" class="db-unlocks"></div>
+            <div class="sheet-actions">
+              <button id="btn-db-next" class="launch-btn" type="button">NEXT RESCUE</button>
+              <button id="btn-db-again" class="ghost-btn" type="button">FLY IT AGAIN</button>
+              <button id="btn-db-menu" class="ghost-btn" type="button">EMERGENCY CALLS</button>
+            </div>
           </div>
         </div>
       </section>

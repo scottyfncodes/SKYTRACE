@@ -10,8 +10,16 @@ import { placeSurvivors, type Survivor } from './hoist';
 import type { Plan } from './loadout';
 import type { MissionDef } from './missions';
 import { PADS, type PadId } from '../world/worldData';
+import { forestAt, getHeightField } from '../world/terrain';
+import { cellX, cellZ, BURNING, type TerrainSampler } from '../fire/fireSim';
+import { newFireOps, nearestThreat, RELOAD, THREAT_WORDS, threatLevel, tickFire, type FireEvent, type FireOps } from '../fire/fireRun';
 
-export type Stage = 'takeoff' | 'search' | 'rescue' | 'return' | 'complete' | 'failed';
+/**
+ * A wildfire call adds the fire to the run: `attack` is the stage you spend
+ * fighting it (takeoff → attack → complete), and a fire with people trapped
+ * in its path runs alongside the usual rescue stages.
+ */
+export type Stage = 'takeoff' | 'search' | 'rescue' | 'attack' | 'return' | 'complete' | 'failed';
 
 export interface RunState {
   def: MissionDef;
@@ -34,9 +42,11 @@ export interface RunState {
   failReason: string | null;
   /** Mission time at the end. */
   endTime: number;
+  /** The fire, on a wildfire call. */
+  ops: FireOps | null;
 }
 
-export type RunEvent = 'airborne' | 'signal' | 'spotted' | 'cabin-full' | 'all-aboard' | 'low-fuel' | 'out-of-fuel' | 'delivered' | 'complete';
+export type RunEvent = 'airborne' | 'signal' | 'spotted' | 'cabin-full' | 'all-aboard' | 'low-fuel' | 'out-of-fuel' | 'delivered' | 'complete' | FireEvent;
 
 /** Within this of the site, slow enough, you can come into a hover and hoist (m, m/s). */
 export const HOIST_ZONE = 60;
@@ -46,7 +56,16 @@ export const PAD_RADIUS = 18;
 export const LAND_AGL = 14;
 export const LAND_SPEED = 9;
 
-export function newRun(def: MissionDef, plan: Plan): RunState {
+let valley: TerrainSampler | null = null;
+const valleyTerrain = (): TerrainSampler => {
+  if (!valley) {
+    const hf = getHeightField();
+    valley = { height: (x, z) => hf.sample(x, z), forest: forestAt };
+  }
+  return valley;
+};
+
+export function newRun(def: MissionDef, plan: Plan, terrain: TerrainSampler = valleyTerrain()): RunState {
   const fuel = def.fuel * plan.fuelMult;
   return {
     def,
@@ -63,6 +82,7 @@ export function newRun(def: MissionDef, plan: Plan): RunState {
     lowFuelWarned: false,
     failReason: null,
     endTime: 0,
+    ops: def.fire ? newFireOps(def.fire, def.wind, terrain, plan.attack, plan.fillMult) : null,
   };
 }
 
@@ -78,6 +98,9 @@ export interface Where {
   z: number;
   agl: number;
   speed: number;
+  /** Ground velocity (m/s), for where dropped water lands. */
+  vx?: number;
+  vz?: number;
 }
 
 export function distToSite(r: RunState, p: { x: number; z: number }): number {
@@ -91,8 +114,22 @@ export function tickRun(r: RunState, p: Where, dt: number, plan: Pick<Plan, 'spo
   r.t += dt;
   r.fuel = Math.max(0, r.fuel - dt);
   if (r.stage === 'takeoff' && p.agl > 18) {
-    r.stage = r.spotted ? 'rescue' : 'search';
+    r.stage = r.def.survivors === 0 ? 'attack' : r.spotted ? 'rescue' : 'search';
     ev.push('airborne');
+  }
+  if (r.ops) {
+    const fe = tickFire(r.ops, p, r.t, dt, r.def.wind, r.def.survivors === 0 || waiting(r) > 0);
+    ev.push(...fe);
+    if (fe.includes('breached')) {
+      fail(r, `The fire reached ${r.ops.lost!.name}.`);
+      return ev;
+    }
+    if ((fe.includes('contained') || fe.includes('held')) && r.def.survivors === 0) {
+      r.stage = 'complete';
+      r.endTime = r.t;
+      ev.push('complete');
+      return ev;
+    }
   }
   const d = distToSite(r, p);
   if (!r.signalled && r.def.signal !== 'none' && d < r.def.signalRange) {
@@ -171,17 +208,62 @@ export interface Objective {
   title: string;
   detail: string;
   /** Where the nav arrow points. */
-  target: { x: number; z: number; kind: 'search' | 'site' | 'pad'; label: string } | null;
+  target: { x: number; z: number; kind: TargetKind; label: string } | null;
+}
+
+export type TargetKind = 'search' | 'site' | 'pad' | 'fire' | 'water' | 'base';
+
+/** The head of the fire: the burning cell closest to what it threatens. */
+export function fireHead(ops: FireOps): { x: number; z: number } | null {
+  const th = nearestThreat(ops);
+  const f = ops.fire;
+  let best = -1;
+  let bd = Infinity;
+  for (let k = 0; k < f.state.length; k++) {
+    if (f.state[k] !== BURNING) continue;
+    const d = Math.hypot(cellX(f, k) - th.x, cellZ(f, k) - th.z);
+    if (d < bd) {
+      bd = d;
+      best = k;
+    }
+  }
+  return best < 0 ? null : { x: cellX(f, best), z: cellZ(f, best) };
+}
+
+const clockOf = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+/** What to do next on a fire. */
+export function fireObjective(r: RunState, p: { x: number; z: number }): Objective {
+  const ops = r.ops!;
+  const th = nearestThreat(ops);
+  const status = `${th.name} · ${THREAT_WORDS[threatLevel(ops.threat)]}`;
+  const head = fireHead(ops);
+  const fireTarget = head ? { ...head, kind: 'fire' as const, label: 'FIRE FRONT' } : null;
+  if (ops.dropping) return { icon: '🟥', title: 'DROPPING!', detail: 'Hold your line', target: null };
+  if (ops.marking) return { icon: '📍', title: 'FLY THE LINE', detail: 'Tanker 42 will follow you', target: null };
+  if (ops.attack === 'water' && ops.load === 0 && ops.falling.length === 0) {
+    const w = [...ops.spec.water].sort((a, b) => Math.hypot(p.x - a.x, p.z - a.z) - Math.hypot(p.x - b.x, p.z - b.z))[0];
+    return { icon: '💧', title: 'FILL THE BUCKET', detail: `${w.name} · hover low over it`, target: { x: w.x, z: w.z, kind: 'water', label: w.name.toUpperCase() } };
+  }
+  if (ops.attack === 'retardant' && ops.load === 0) return { icon: '⛽', title: 'RELOAD AT THE AIRFIELD', detail: 'Fly low over the runway', target: { x: RELOAD.x, z: RELOAD.z, kind: 'base', label: 'AIRFIELD' } };
+  if (!ops.attack || (ops.attack === 'lead' && ops.load === 0)) {
+    const left = ops.spec.hold > 0 ? `Crews in ${clockOf(ops.holdLeft)}` : status;
+    return { icon: '👀', title: ops.calls.some((c) => c.painted < c.len) ? 'TANKER 42 INBOUND' : 'WATCH THE FIRE', detail: left, target: fireTarget };
+  }
+  if (!ops.arrived) return { icon: '🔥', title: 'FLY TO THE FIRE', detail: r.def.place, target: fireTarget };
+  const title = ops.attack === 'retardant' ? 'LAY A LINE AHEAD OF IT' : ops.attack === 'water' ? 'DROP ON THE FIRE' : 'MARK A LINE AHEAD OF IT';
+  return { icon: ops.attack === 'water' ? '💧' : ops.attack === 'retardant' ? '🟥' : '📍', title, detail: status, target: fireTarget };
 }
 
 /** `beacon`: a beacon receiver is fitted, and points at them while you search. */
-export function objective(r: RunState, hoisting: boolean, beacon = false): Objective {
+export function objective(r: RunState, hoisting: boolean, beacon = false, pos?: { x: number; z: number }): Objective {
   const def = r.def;
   const who = def.survivors === 1 ? (def.look === 'hiker' ? 'THE HIKER' : 'THEM') : def.look === 'climber' ? 'THE CLIMBERS' : 'THEM';
   const pad = PADS[def.deliverTo];
   const site = { x: def.site.x, z: def.site.z, kind: 'site' as const, label: def.survivors === 1 ? 'SURVIVOR' : 'SURVIVORS' };
   switch (r.stage) {
     case 'takeoff':
+      if (r.def.survivors === 0) return { icon: '🔥', title: 'AIRBORNE', detail: def.place, target: null };
       return { icon: '🚁', title: 'LIFTING OFF', detail: r.trips > 0 ? `Back for the other ${waiting(r) === 1 ? 'one' : waiting(r)}` : def.place, target: null };
     case 'search':
       if (beacon) return { icon: '📡', title: `FIND ${who}`, detail: 'Follow the beacon', target: { ...site, label: 'BEACON' } };
@@ -194,9 +276,12 @@ export function objective(r: RunState, hoisting: boolean, beacon = false): Objec
       if (aboard(r) > 0 && waiting(r) > 0 && !cabinFull(r)) return { icon: '🛟', title: 'HOVER OVER THEM', detail: `${waiting(r)} still waiting`, target: site };
       return { icon: '🛟', title: 'HOVER OVER THEM', detail: r.trips > 0 ? `${waiting(r)} still waiting` : 'Slow down and come in above', target: site };
     }
+    case 'attack':
+      return fireObjective(r, pos ?? { x: def.search.x, z: def.search.z });
     case 'return':
       return { icon: '🏥', title: 'FLY TO THE HOSPITAL', detail: `${aboard(r)} aboard · land on the H`, target: { x: pad.x, z: pad.z, kind: 'pad', label: 'HOSPITAL' } };
     case 'complete':
+      if (r.ops && def.survivors === 0) return { icon: '✅', title: r.ops.outcome === 'contained' ? 'FIRE CONTAINED' : 'FIRE HELD', detail: '', target: null };
       return { icon: '✅', title: 'RESCUE COMPLETE', detail: '', target: null };
     case 'failed':
       return { icon: '⚠️', title: 'MISSION FAILED', detail: r.failReason ?? '', target: null };

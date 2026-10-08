@@ -8,13 +8,14 @@ import type { RadioLine } from '../core/radio';
 import { MAP_PX, valleyImage } from './valleyMap';
 import { WORLD_HALF } from '../world/worldData';
 import type { SurvivorState } from '../rescue/hoist';
+import type { TargetKind } from '../rescue/run';
 
 export interface MapFrame {
   mode: 'flight' | 'hoist';
   x: number;
   z: number;
   yaw: number;
-  target: { x: number; z: number; kind: 'search' | 'site' | 'pad' } | null;
+  target: { x: number; z: number; kind: TargetKind } | null;
   search: { x: number; z: number; r: number } | null;
   site: { x: number; z: number } | null;
   pads: { x: number; z: number; hospital: boolean }[];
@@ -26,9 +27,39 @@ export interface MapFrame {
     winch: { x: number; z: number };
     wind: { x: number; z: number };
   };
+  /** A fire: its burn map (and forecast), where it lies, what it threatens, where the water is. */
+  fire?: {
+    canvas: HTMLCanvasElement;
+    forecast: HTMLCanvasElement | null;
+    x0: number;
+    z0: number;
+    size: number;
+    threats: readonly { x: number; z: number; r: number }[];
+    water: readonly { x: number; z: number; r: number }[];
+    wind: { x: number; z: number };
+    /** A drop line being previewed: from (x, z) along (dx, dz) for len. */
+    line: { x: number; z: number; dx: number; dz: number; len: number; color: string } | null;
+  };
+}
+
+/** The fire panel: what is threatened and how badly, what you carry, how long to hold. */
+export interface FireStat {
+  name: string;
+  /** 0..1 */
+  threat: number;
+  word: string;
+  /** Load pips: filled, total, and the icon. */
+  load: number;
+  loadMax: number;
+  icon: string;
+  /** 0..1 while filling up. */
+  fill: number;
+  hold: string;
 }
 
 export type ActionState = { kind: 'hidden' } | { kind: 'hover' } | { kind: 'fly'; label: string } | { kind: 'wait'; label: string };
+/** The fire button: ready (with what it does), or why not. */
+export type DropState = { kind: 'hidden' } | { kind: 'ready'; label: string } | { kind: 'wait'; label: string };
 
 interface Banner {
   text: string;
@@ -45,9 +76,10 @@ export class Hud {
   private shown: Banner | null = null;
   private last: Record<string, string> = {};
   private actionKey = '';
+  private dropKey = '';
 
   constructor(root: HTMLElement) {
-    for (const id of ['objective', 'obj-icon', 'obj-title', 'obj-detail', 'nav', 'nav-arrow', 'nav-dist', 'nav-label', 'people', 'fuel-fill', 'radio', 'radio-who', 'radio-text', 'banner', 'banner-text', 'banner-sub', 'warn', 'hint', 'readout', 'throttle', 'thr-fill', 'thr-handle', 'thr-basket', 'thr-label', 'thr-hint', 'btn-action', 'stick-label']) {
+    for (const id of ['objective', 'obj-icon', 'obj-title', 'obj-detail', 'nav', 'nav-arrow', 'nav-dist', 'nav-label', 'people', 'fuel-fill', 'radio', 'radio-who', 'radio-text', 'banner', 'banner-text', 'banner-sub', 'warn', 'hint', 'readout', 'throttle', 'thr-fill', 'thr-handle', 'thr-basket', 'thr-label', 'thr-hint', 'btn-action', 'stick-label', 'firestat', 'fs-name', 'fs-word', 'fs-fill', 'fs-load', 'fs-hold', 'btn-drop']) {
       const e = root.querySelector<HTMLElement>(`#${id}`);
       if (!e) throw new Error(`missing #${id}`);
       this.el[id] = e;
@@ -90,10 +122,46 @@ export class Hud {
   }
 
   people(states: SurvivorState[]): void {
+    this.el['people'].classList.toggle('hidden', states.length === 0);
     const key = states.join(',');
     if (this.last['people'] === key) return;
     this.last['people'] = key;
     this.el['people'].innerHTML = states.map((s) => `<i class="${s === 'aboard' ? 'aboard' : s === 'delivered' ? 'delivered' : ''}"></i>`).join('');
+  }
+
+  /** The fire panel (null: hide it). */
+  fire(f: FireStat | null): void {
+    this.el['firestat'].classList.toggle('hidden', !f);
+    if (!f) return;
+    this.text('fs-name', f.name);
+    this.text('fs-word', f.word);
+    const lvl = f.threat < 0.35 ? 'low' : f.threat < 0.6 ? 'mid' : f.threat < 0.85 ? 'high' : 'crit';
+    if (this.last['fslvl'] !== lvl) {
+      this.last['fslvl'] = lvl;
+      this.el['firestat'].className = `firestat ${lvl}`;
+    }
+    const w = `${Math.round(Math.max(0.04, f.threat) * 100)}%`;
+    if (this.last['fsw'] !== w) {
+      this.last['fsw'] = w;
+      this.el['fs-fill'].style.width = w;
+    }
+    const pips = f.fill > 0 ? `${f.icon} ${'▮'.repeat(Math.round(f.fill * 5))}${'▯'.repeat(5 - Math.round(f.fill * 5))}` : f.loadMax > 0 ? Array.from({ length: f.loadMax }, (_, i) => `<i class="${i < f.load ? 'on' : ''}">${f.icon}</i>`).join('') : '';
+    if (this.last['fsl'] !== pips) {
+      this.last['fsl'] = pips;
+      this.el['fs-load'].innerHTML = pips;
+    }
+    this.text('fs-hold', f.hold);
+  }
+
+  /** The fire button. */
+  drop(d: DropState): void {
+    const key = JSON.stringify(d);
+    if (key === this.dropKey) return;
+    this.dropKey = key;
+    const b = this.el['btn-drop'];
+    b.classList.toggle('hidden', d.kind === 'hidden');
+    b.classList.toggle('wait', d.kind === 'wait');
+    b.textContent = d.kind === 'hidden' ? '' : d.label;
   }
 
   fuel(f: number): void {
@@ -162,15 +230,15 @@ export class Hud {
     this.text('stick-label', s);
   }
 
-  /** The speed lever (0..1). */
-  lever(throttle: number): void {
+  /** The speed lever (0..1). `plane`: there is no hover, the bottom is just slow. */
+  lever(throttle: number, plane = false): void {
     this.el['throttle'].classList.remove('winch');
     const p = `${Math.round(throttle * 1000) / 10}%`;
     this.el['thr-fill'].style.height = p;
     this.el['thr-fill'].style.top = '';
     this.el['thr-handle'].style.top = `${100 - Math.round(throttle * 1000) / 10}%`;
     this.text('thr-label', 'SPEED');
-    this.text('thr-hint', throttle < 0.04 ? 'HOVER' : '');
+    this.text('thr-hint', throttle < 0.04 ? (plane ? 'SLOW' : 'HOVER') : '');
   }
 
   /** The winch: `cmd` and `actual` as fractions of the cable (0 stowed, 1 all the way out). */
@@ -196,6 +264,79 @@ export class Hud {
   }
 
   // ---------------------------------------------------------------- minimap
+  /** The fire on the minimap: burn map, forecast, threatened places, water, the drop line, the wind. */
+  private drawFire(ctx: CanvasRenderingContext2D, f: MapFrame, R: number, scale: number, dpr: number, toScreen: (x: number, z: number, cx: number, cz: number, s: number) => { x: number; y: number }): void {
+    const F = f.fire!;
+    ctx.save();
+    ctx.translate(R, R);
+    ctx.rotate(f.yaw);
+    ctx.scale(scale, scale);
+    ctx.translate(-f.x, -f.z);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(F.canvas, F.x0, F.z0, F.size, F.size);
+    if (F.forecast) ctx.drawImage(F.forecast, F.x0, F.z0, F.size, F.size);
+    ctx.restore();
+    for (const w of F.water) {
+      const p = toScreen(w.x, w.z, f.x, f.z, scale);
+      ctx.fillStyle = 'rgba(95,208,255,0.55)';
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1.5 * dpr;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(4 * dpr, w.r * scale), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    for (const th of F.threats) {
+      const p = toScreen(th.x, th.z, f.x, f.z, scale);
+      ctx.strokeStyle = '#ffd23f';
+      ctx.fillStyle = 'rgba(255,210,63,0.35)';
+      ctx.lineWidth = 2.5 * dpr;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, Math.max(5 * dpr, th.r * scale), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+    if (F.line) {
+      const L = F.line;
+      const a = toScreen(L.x, L.z, f.x, f.z, scale);
+      const b = toScreen(L.x + L.dx * L.len, L.z + L.dz * L.len, f.x, f.z, scale);
+      ctx.strokeStyle = L.color;
+      ctx.lineCap = 'round';
+      ctx.lineWidth = Math.max(4 * dpr, 40 * scale);
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.lineCap = 'butt';
+    }
+    // the wind: which way the fire is being pushed
+    const ws = Math.hypot(F.wind.x, F.wind.z);
+    if (ws > 0.8) {
+      const c = Math.cos(f.yaw);
+      const s = Math.sin(f.yaw);
+      const wx = (F.wind.x * c - F.wind.z * s) / ws;
+      const wy = (F.wind.x * s + F.wind.z * c) / ws;
+      const bx = R - wx * R * 0.62;
+      const by = R - wy * R * 0.62;
+      const len = R * 0.28;
+      ctx.strokeStyle = 'rgba(18,38,63,0.8)';
+      ctx.fillStyle = 'rgba(18,38,63,0.8)';
+      ctx.lineWidth = 3 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx + wx * len, by + wy * len);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(bx + wx * (len + 7 * dpr), by + wy * (len + 7 * dpr));
+      ctx.lineTo(bx + wx * len - wy * 5 * dpr, by + wy * len + wx * 5 * dpr);
+      ctx.lineTo(bx + wx * len + wy * 5 * dpr, by + wy * len - wx * 5 * dpr);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
   drawMap(f: MapFrame): void {
     const cv = this.map;
     const rect = cv.getBoundingClientRect();
@@ -221,7 +362,7 @@ export class Hud {
       return { x: R + (dx * c - dz * s) * scale, y: R + (dx * s + dz * c) * scale };
     };
     if (f.mode === 'flight') {
-      const range = 900;
+      const range = f.fire && Math.hypot(f.x - (f.fire.x0 + f.fire.size / 2), f.z - (f.fire.z0 + f.fire.size / 2)) < f.fire.size * 0.9 ? 520 : 900;
       const scale = R / range;
       ctx.save();
       ctx.translate(R, R);
@@ -233,6 +374,7 @@ export class Hud {
       void MAP_PX;
       ctx.fillStyle = 'rgba(255,255,255,0.18)';
       ctx.fillRect(0, 0, S, S);
+      if (f.fire) this.drawFire(ctx, f, R, scale, dpr, toScreen);
       if (f.search) {
         const p = toScreen(f.search.x, f.search.z, f.x, f.z, scale);
         ctx.fillStyle = 'rgba(46,125,209,0.22)';
@@ -268,7 +410,7 @@ export class Hud {
         const d = Math.hypot(p.x - R, p.y - R);
         const max = R - 9 * dpr;
         if (d > max) p = { x: R + ((p.x - R) / d) * max, y: R + ((p.y - R) / d) * max };
-        ctx.fillStyle = f.target.kind === 'pad' ? '#22b35e' : f.target.kind === 'site' ? '#ff6a1a' : '#2e7dd1';
+        ctx.fillStyle = f.target.kind === 'pad' || f.target.kind === 'base' ? '#22b35e' : f.target.kind === 'site' ? '#ff6a1a' : f.target.kind === 'fire' ? '#e23d28' : f.target.kind === 'water' ? '#5fd0ff' : '#2e7dd1';
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 2.5 * dpr;
         ctx.beginPath();
