@@ -46,7 +46,7 @@ import { allCells, ASSET_ORDER, ASSETS, assetFitted, belief, canUse, chooseCorri
 import { buildExit, TIER_LABEL, type ExitProfile } from '../control/exit';
 import { CONTROL_01 } from '../mission/mission01Control';
 import { boardStep, MissionBoard, URGENT_SECONDS, type BoardAction, type BoardFrame, type StepAction } from '../ui/missionBoard';
-import { phaseStrip, Preflight } from '../ui/preflight';
+import { phaseLine, Preflight } from '../ui/preflight';
 import { MissionScene } from '../mission/missionScene';
 import { RouteMover } from '../mission/vehicles';
 import { CREW_BY_ID } from '../operation/catalog';
@@ -56,7 +56,7 @@ import { bonusTaken, currentGate, inHazard, onClock, planDropRun, retargetRing, 
 import { phaseInfo, phaseMarks, phaseOf, type Phase } from '../operation/phases';
 import { advanceCaseFile, casePage, currentLead, pagesOpen } from '../operation/story';
 import { buildReport, type Report } from '../operation/score';
-import { isUnlocked, loadCareer, recordOperation, saveCareer, type Career, type UnlockDef } from '../operation/career';
+import { isUnlocked, loadCareer, recordOperation, saveCareer, squadronLine, type Career, type UnlockDef } from '../operation/career';
 import { pauseTransition, type Mode } from './modes';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -424,13 +424,16 @@ export class Game {
     this.preflight.hide();
     const c = this.career;
     const M = this.def;
-    this.el['career-line'].textContent = c.operations ? `${c.operations} OPERATION${c.operations === 1 ? '' : 'S'} · ${c.credits} CR · ${c.xp} XP · BEST ${c.best[M.id] ?? '—'}` : 'NEW SQUADRON · NO OPERATIONS FLOWN';
+    // the squadron's record, or nothing at all: a new squadron sees the basin and the hook
+    const record = squadronLine(c, M.id);
+    this.el['career-line'].textContent = record ?? '';
+    this.el['career-line'].classList.toggle('hidden', !record);
     this.hud.clearBanners();
     const lead = currentLead(this.career, this.page);
     this.el['mission-brief'].innerHTML =
       `<p class="mb-code">${M.code} · CASE FILE ${lead.page}/${lead.total}${lead.closed ? ' · CLOSED' : ''}</p>` +
       `<h2 class="mb-head">${esc(lead.text)}</h2>` +
-      phaseStrip(M.story.verbs);
+      phaseLine(M.story.verbs);
     // the pages: the ones turned are open to fly again
     const open = pagesOpen(this.career);
     this.el['case-pages'].classList.toggle('hidden', open < 2);

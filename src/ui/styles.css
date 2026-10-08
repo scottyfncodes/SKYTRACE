@@ -1004,7 +1004,7 @@ img.thermal { filter: grayscale(1) invert(1) brightness(0.55) contrast(2.2); }
 .phase-strip .ph-recon { color: var(--ice); border-color: rgba(143, 208, 255, 0.5); }
 .phase-strip .ph-execute { color: var(--amber); border-color: rgba(242, 169, 59, 0.55); }
 .phase-strip .ph-escape { color: var(--warn); border-color: rgba(255, 90, 60, 0.55); }
-#mission-card .phase-strip { grid-column: 1 / -1; }
+#mission-card .phase-line { grid-column: 1 / -1; }
 .pf-clues small { width: 100%; font-size: 9px; letter-spacing: 0.22em; color: var(--ph-dim); }
 .pf-brief details .pf-risks { margin-top: 6px; }
 
@@ -1044,3 +1044,49 @@ img.thermal { filter: grayscale(1) invert(1) brightness(0.55) contrast(2.2); }
 /* the last page turned */
 .db-story.closed { border-left-color: var(--ice); background: rgba(143, 208, 255, 0.07); }
 .db-story.closed small { color: var(--ice); }
+
+/* ============================================================
+   Title: the basin is the hero. The card sits low and tight,
+   the terrain reads above it, and a reticle is already looking.
+   ============================================================ */
+#title { place-items: end center; background: linear-gradient(to bottom, rgba(11, 20, 16, 0) 35%, rgba(11, 20, 16, 0.55) 70%, rgba(11, 20, 16, 0.85)); padding-bottom: calc(var(--sab) + 20px); }
+#mission-card { position: relative; z-index: 1; max-width: 440px; padding: 18px 20px 14px; }
+#mission-card h1 { font-size: 34px; }
+#mission-card .tag { margin: 2px 0 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#mission-card .mb-code { font-size: 10px; letter-spacing: 0.24em; color: var(--ph-dim); }
+#mission-card .mission-brief h2.mb-head { font-size: 24px; letter-spacing: 0.02em; line-height: 1.25; margin: 4px 0 8px; }
+.phase-line { margin: 0 0 4px; font-size: 11px; letter-spacing: 0.14em; }
+.phase-line i { font-style: normal; margin: 0 8px; color: rgba(232, 243, 234, 0.4); }
+.phase-line .ph-recon { color: var(--ice); }
+.phase-line .ph-execute { color: var(--amber); }
+.phase-line .ph-escape { color: var(--warn); }
+#mission-card .title-actions { margin-top: 14px; }
+#mission-card .case-pages { margin: 10px 0 0; }
+#btn-mission { width: 100%; min-height: 60px; font-size: 17px; letter-spacing: 0.18em; }
+#mission-card .career-line { text-align: center; margin-top: 8px; }
+#mission-card .alt-mode { margin-top: 6px; padding-top: 0; border-top: 0; text-align: center; }
+#mission-card .alt-mode .btn { border: 0; padding: 10px 14px; min-height: 40px; color: rgba(232, 243, 234, 0.6); letter-spacing: 0.2em; }
+@media (min-width: 761px) { #title { padding-bottom: calc(var(--sab) + 7vh); } }
+
+/* the recon reticle: drifts over the fields, locks for a breath, drifts on */
+.recon-sweep { position: absolute; left: 0; right: 0; top: 0; height: 52%; pointer-events: none; overflow: hidden; }
+.rs-ret { position: absolute; left: 0; top: 0; width: 64px; height: 64px; margin: -32px 0 0 -32px; border: 1.5px solid rgba(124, 255, 154, 0.55); border-radius: 50%; box-shadow: 0 0 14px rgba(124, 255, 154, 0.18); animation: rs-drift 16s ease-in-out infinite; }
+.rs-ret::before, .rs-ret::after { content: ''; position: absolute; background: rgba(124, 255, 154, 0.55); }
+.rs-ret::before { left: 50%; top: -10px; bottom: -10px; width: 1px; }
+.rs-ret::after { top: 50%; left: -10px; right: -10px; height: 1px; }
+@keyframes rs-drift {
+  0% { transform: translate(22vw, 34vh) scale(1); }
+  22%, 30% { transform: translate(64vw, 26vh) scale(0.7); border-color: var(--amber); }
+  55% { transform: translate(40vw, 42vh) scale(1); border-color: rgba(124, 255, 154, 0.55); }
+  72%, 80% { transform: translate(78vw, 38vh) scale(0.7); border-color: var(--amber); }
+  100% { transform: translate(22vw, 34vh) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) { .rs-ret { animation: none; transform: translate(60vw, 30vh); } }
+@media (max-height: 460px) and (orientation: landscape) {
+  #title { place-items: center; padding-bottom: calc(var(--sab) + 12px); }
+  .recon-sweep { display: none; }
+  #mission-card .mission-brief h2.mb-head { font-size: 18px; }
+  #btn-mission { min-height: 48px; white-space: nowrap; }
+  #mission-card .mb-code { grid-column: 1 / -1; }
+  #mission-card .alt-mode { padding-top: 0; }
+}

@@ -5,7 +5,7 @@ import { currentGate, legComplete, missedCount, newLeg, passLanding, placeRoute,
 import { threadRings } from './helpers';
 import { activeLeg, beginReturn, damagedPerf, endOperation, STRIKE_EVERY, stormDamagePerSecond, flightObjective, landAtBase, launch, newOperation, reconVisibility, tickOperation, windowLeft } from '../src/operation/operation';
 import { buildReport, disciplineScore, gradeFor } from '../src/operation/score';
-import { CAREER_KEY, isUnlocked, loadCareer, newCareer, nextUnlock, recordOperation, saveCareer, UNLOCKS } from '../src/operation/career';
+import { CAREER_KEY, isUnlocked, loadCareer, newCareer, nextUnlock, recordOperation, saveCareer, squadronLine, UNLOCKS } from '../src/operation/career';
 import { MISSION_01 } from '../src/mission/mission01';
 import { identify, inspectReturn, newMission, photograph, scanReturn, updateDestination } from '../src/mission/mission';
 import { FLIGHT } from '../src/flight/aircraft';
@@ -353,5 +353,21 @@ describe('report, rewards and career', () => {
       expect(cap.aircraftName).toBe(AIRCRAFT_BY_ID[a.id].name);
       expect(cap.fuelSeconds).toBeGreaterThan(300);
     }
+  });
+});
+
+describe('title card: the squadron record', () => {
+  it('a new squadron shows no zero-state line', () => {
+    expect(squadronLine(newCareer(), MISSION_01.id)).toBeNull();
+  });
+
+  it('a returning squadron sees what it has flown and its best grade', () => {
+    const c = newCareer();
+    c.operations = 3;
+    expect(squadronLine(c, MISSION_01.id)).toBe('3 OPERATIONS FLOWN');
+    c.best[MISSION_01.id] = 'A';
+    expect(squadronLine(c, MISSION_01.id)).toBe('3 OPERATIONS FLOWN · BEST GRADE A');
+    c.operations = 1;
+    expect(squadronLine(c, MISSION_01.id)).toMatch(/^1 OPERATION FLOWN/);
   });
 });

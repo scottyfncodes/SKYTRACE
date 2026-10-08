@@ -23,17 +23,19 @@
 
       <!-- ===== TITLE / MISSION BRIEFING ===== -->
       <section id="title" class="screen hidden">
+        <!-- the sensor already looking: a reticle sweeps the basin behind the card -->
+        <div class="recon-sweep" aria-hidden="true"><i class="rs-ret"></i></div>
         <div id="mission-card" class="title-card">
           <h1>SKYTRACE</h1>
-          <p class="tag">AERIAL RECONNAISSANCE · VARROW BASIN</p>
+          <p class="tag">AERIAL RECON · VARROW BASIN</p>
           <div id="mission-brief" class="mission-brief"></div>
           <div id="case-pages" class="case-pages hidden" aria-label="Case file pages"></div>
           <div class="title-actions">
             <button id="btn-mission" class="btn big">PLAN OPERATION</button>
           </div>
-          <p id="career-line" class="career-line"></p>
+          <p id="career-line" class="career-line hidden"></p>
           <div class="alt-mode">
-            <button id="btn-open-case" class="btn ghost">OPEN CASE · VARROW BASIN ›</button>
+            <button id="btn-open-case" class="btn ghost">OPEN CASE ›</button>
           </div>
         </div>
         <div id="case-card" class="title-card hidden">

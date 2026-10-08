@@ -14,6 +14,10 @@ export function phaseStrip(verbs: Record<Phase, string>): string {
     .join('')}</ol>`;
 }
 
+/** The same three verbs on one quiet line, for the title card: the rhythm teased, not explained. */
+export function phaseLine(verbs: Record<Phase, string>): string {
+  return `<p class="phase-line">${(['recon', 'execute', 'escape'] as Phase[]).map((p) => `<span class="ph-${p}">${verbs[p]}</span>`).join('<i>›</i>')}</p>`;
+}
 
 export interface PreflightHandlers {
   onAircraft(id: string): void;
