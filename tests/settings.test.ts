@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyVerticalMode, DEFAULT_PREFS, loadPrefs, otherSide, PREFS_KEY, savePrefs } from '../src/core/settings';
 import { Input } from '../src/core/input';
 import { initialAircraft, stepAircraft, type FlightInput } from '../src/flight/aircraft';
-import { clear, load, newState, save, SAVE_KEY, type Storage } from '../src/intel/state';
+import { loadProgress, newProgress, PROGRESS_KEY, saveProgress } from '../src/rescue/progress';
+
+interface Storage {
+  getItem(k: string): string | null;
+  setItem(k: string, v: string): void;
+  removeItem(k: string): void;
+}
 
 function memStorage(): Storage & { map: Map<string, string> } {
   const map = new Map<string, string>();
@@ -87,15 +93,15 @@ describe('preference persistence', () => {
     st.setItem(PREFS_KEY, JSON.stringify({ verticalMode: 'sideways' }));
     expect(loadPrefs(st).verticalMode).toBe('standard');
   });
-  it('survives New Case and is independent of the case save', () => {
+  it('is independent of the rescue progress save', () => {
     const st = memStorage();
     savePrefs({ ...DEFAULT_PREFS, verticalMode: 'inverted' }, st);
-    const s = newState();
-    s.sortie = 3;
-    save(s, st);
-    expect(load(st)!.sortie).toBe(3);
-    clear(st); // what NEW CASE does
-    expect(st.map.has(SAVE_KEY)).toBe(false);
+    const p = newProgress();
+    p.saved = 3;
+    saveProgress(p, st);
+    expect(loadProgress(st).saved).toBe(3);
+    st.removeItem(PROGRESS_KEY);
+    expect(loadProgress(st).saved).toBe(0);
     expect(loadPrefs(st).verticalMode).toBe('inverted');
   });
   it('tolerates storage that throws', () => {
@@ -188,16 +194,41 @@ describe('Input vertical axis (stick + keyboard share one path)', () => {
     }
   });
 
-  it('O and Enter switch crew stations (Mission Control) without touching the flight axes', () => {
+  it('Space, Enter and H press the context button (HOVER & HOIST) without touching the flight axes', () => {
     const t = make();
     let n = 0;
-    t.input.onAction('ops', () => n++);
-    t.key('o', true);
-    t.key('o', false);
-    t.key('Enter', true);
-    t.key('Enter', false);
-    expect(n).toBe(2);
+    t.input.onAction('action', () => n++);
+    for (const k of [' ', 'Enter', 'h']) {
+      t.key(k, true);
+      t.key(k, false);
+    }
+    expect(n).toBe(3);
     expect(t.input.read()).toEqual({ roll: 0, pitch: 0, throttleDelta: 0 });
+  });
+
+  it('in a hover the stick is read as held: up always moves forward, whatever the climb setting', () => {
+    for (const mode of ['standard', 'inverted'] as const) {
+      const t = make();
+      t.input.verticalMode = mode;
+      t.stick(0, -54);
+      expect(t.input.readStick().y).toBe(1);
+      t.release();
+      t.stick(27, 0);
+      expect(t.input.readStick().x).toBeCloseTo(0.5);
+      t.release();
+      t.key('ArrowDown', true);
+      expect(t.input.readStick().y).toBe(-1);
+      t.key('ArrowDown', false);
+    }
+  });
+
+  it('throttle keys double as the winch: Shift / Q up, Ctrl / Z down', () => {
+    const t = make();
+    t.key('q', true);
+    expect(t.input.throttleKeys()).toBe(1);
+    t.key('q', false);
+    t.key('Control', true);
+    expect(t.input.throttleKeys()).toBe(-1);
   });
 
   it('switching mode takes effect on the next read without re-touching', () => {

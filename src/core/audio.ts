@@ -1,6 +1,7 @@
 /**
- * Procedural soundscape with WebAudio. No audio assets: engine, wind, radar sweep,
- * contact acquisition, stamps and chimes are all synthesised.
+ * Procedural soundscape with WebAudio. No audio assets: the rotor's thump,
+ * the turbine, the wind, the winch, the radio squelch and every chime are
+ * synthesised.
  */
 export class AudioSystem {
   private ctx: AudioContext | null = null;
@@ -14,6 +15,11 @@ export class AudioSystem {
   private noiseBuffer: AudioBuffer | null = null;
   private rainGain: GainNode | null = null;
   private rumbleGain: GainNode | null = null;
+  private rotorGain: GainNode | null = null;
+  private rotorLfo: OscillatorNode | null = null;
+  private rotorFilter: BiquadFilterNode | null = null;
+  private winchOsc: OscillatorNode | null = null;
+  private winchGain: GainNode | null = null;
   private thunderIn = 3;
   private creakIn = 4;
   muted = false;
@@ -96,6 +102,41 @@ export class AudioSystem {
       this.rumbleGain.gain.value = 0;
       rumble.connect(rumbleF).connect(this.rumbleGain).connect(this.master);
       rumble.start();
+
+      // rotor: low noise chopped by an LFO into the familiar thump
+      const rotorSrc = ctx.createBufferSource();
+      rotorSrc.buffer = buf;
+      rotorSrc.loop = true;
+      rotorSrc.playbackRate.value = 0.7;
+      this.rotorFilter = ctx.createBiquadFilter();
+      this.rotorFilter.type = 'lowpass';
+      this.rotorFilter.frequency.value = 260;
+      const chop = ctx.createGain();
+      chop.gain.value = 0.5;
+      this.rotorLfo = ctx.createOscillator();
+      this.rotorLfo.type = 'sine';
+      this.rotorLfo.frequency.value = 5;
+      const lfoDepth = ctx.createGain();
+      lfoDepth.gain.value = 0.5;
+      this.rotorLfo.connect(lfoDepth).connect(chop.gain);
+      this.rotorGain = ctx.createGain();
+      this.rotorGain.gain.value = 0;
+      rotorSrc.connect(this.rotorFilter).connect(chop).connect(this.rotorGain).connect(this.master);
+      rotorSrc.start();
+      this.rotorLfo.start();
+
+      // winch motor
+      this.winchOsc = ctx.createOscillator();
+      this.winchOsc.type = 'sawtooth';
+      this.winchOsc.frequency.value = 180;
+      const winchF = ctx.createBiquadFilter();
+      winchF.type = 'bandpass';
+      winchF.frequency.value = 900;
+      winchF.Q.value = 3;
+      this.winchGain = ctx.createGain();
+      this.winchGain.gain.value = 0;
+      this.winchOsc.connect(winchF).connect(this.winchGain).connect(this.master);
+      this.winchOsc.start();
       this.started = true;
     } catch {
       this.ctx = null;
@@ -120,6 +161,93 @@ export class AudioSystem {
     const w = active ? 0.02 + (speed / 95) * 0.14 : 0.015;
     this.windGain.gain.setTargetAtTime(w * (scanning ? 0.5 : 1), t, tc);
     this.windFilter.frequency.setTargetAtTime(350 + speed * 6, t, tc);
+  }
+
+  /**
+   * The helicopter: `power` 0..1 (rotor speed, 0 stopped), `load` 0..1 (how
+   * hard it is working: climbing, flying fast), `wind` 0..1 (gusts in the mic).
+   */
+  updateHeli(power: number, load: number, speed: number, wind: number): void {
+    if (!this.ctx || !this.rotorGain || !this.rotorLfo || !this.rotorFilter || !this.engineGain || !this.engineOsc || !this.engineOsc2 || !this.engineFilter || !this.windGain || !this.windFilter) return;
+    const t = this.ctx.currentTime;
+    const tc = 0.15;
+    this.rotorGain.gain.setTargetAtTime(power * (0.5 + load * 0.35), t, tc);
+    this.rotorLfo.frequency.setTargetAtTime(1.5 + power * 4.2 + load * 0.8, t, 0.4);
+    this.rotorFilter.frequency.setTargetAtTime(180 + load * 220, t, tc);
+    // the turbine: a thin whine under the rotor
+    this.engineGain.gain.setTargetAtTime(power * 0.035, t, tc);
+    this.engineOsc.frequency.setTargetAtTime(380 + power * 420 + load * 60, t, 0.5);
+    this.engineOsc2.frequency.setTargetAtTime(190 + power * 210, t, 0.5);
+    this.engineFilter.frequency.setTargetAtTime(1400, t, tc);
+    this.windGain.gain.setTargetAtTime(power > 0 ? 0.02 + (speed / 55) * 0.08 + wind * 0.07 : 0.012, t, tc);
+    this.windFilter.frequency.setTargetAtTime(400 + speed * 8 + wind * 300, t, tc);
+  }
+
+  /** Winch motor: `dir` -1 reeling in, 1 paying out, 0 stopped. */
+  winch(dir: number): void {
+    if (!this.ctx || !this.winchGain || !this.winchOsc) return;
+    const t = this.ctx.currentTime;
+    this.winchGain.gain.setTargetAtTime(dir === 0 ? 0 : 0.05, t, 0.05);
+    this.winchOsc.frequency.setTargetAtTime(dir < 0 ? 240 : 170, t, 0.08);
+  }
+
+  /** The basket meets the ground. */
+  clunk(hard = false): void {
+    this.noise(0.18, hard ? 0.5 : 0.28, 500, 'lowpass', 120);
+    this.tone(hard ? 90 : 140, 0.12, hard ? 0.22 : 0.12, 'square');
+  }
+
+  /** Someone is in the basket: a bright little "got you". */
+  boarded(): void {
+    this.tone(784, 0.1, 0.12, 'triangle');
+    this.tone(1046, 0.22, 0.12, 'triangle', 0.09);
+  }
+
+  /** Someone is aboard: the payoff chime. */
+  secured(): void {
+    this.tone(523, 0.14, 0.14, 'triangle');
+    this.tone(659, 0.14, 0.14, 'triangle', 0.12);
+    this.tone(784, 0.14, 0.14, 'triangle', 0.24);
+    this.tone(1046, 0.5, 0.16, 'triangle', 0.36);
+    this.tone(1568, 0.4, 0.05, 'sine', 0.36);
+  }
+
+  /** Spotted them: a rising "there!" */
+  spotted(): void {
+    this.tone(660, 0.12, 0.13, 'triangle');
+    this.tone(990, 0.3, 0.13, 'triangle', 0.1);
+  }
+
+  /** A flare goes up in the distance. */
+  flare(): void {
+    this.noise(0.9, 0.12, 600, 'bandpass', 3200);
+    this.tone(1200, 0.5, 0.025, 'sine', 0.05);
+  }
+
+  /** Radio: a squelch before someone speaks. */
+  squelch(): void {
+    this.noise(0.09, 0.12, 2400, 'bandpass');
+    this.tone(1750, 0.05, 0.04, 'square', 0.08);
+  }
+
+  /** Mission complete: a warm little fanfare. */
+  fanfare(): void {
+    const notes = [523, 659, 784, 1046, 784, 1046, 1318];
+    const when = [0, 0.12, 0.24, 0.38, 0.6, 0.72, 0.86];
+    notes.forEach((n, i) => this.tone(n, i === notes.length - 1 ? 0.9 : 0.16, 0.13, 'triangle', when[i]));
+    this.tone(262, 1.2, 0.08, 'sine', 0.86);
+  }
+
+  /** Something went wrong: two falling notes, gently. */
+  failed(): void {
+    this.tone(392, 0.4, 0.12, 'triangle');
+    this.tone(311, 0.8, 0.12, 'triangle', 0.3);
+  }
+
+  /** Coming into a hover: a soft settle. */
+  hoverIn(): void {
+    this.tone(330, 0.2, 0.08, 'sine');
+    this.tone(494, 0.3, 0.08, 'sine', 0.12);
   }
 
   /**

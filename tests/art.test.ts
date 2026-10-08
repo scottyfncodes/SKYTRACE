@@ -1,11 +1,11 @@
 /**
- * Art detail, within a phone's budget: three distinct airframes with working
- * details, a patchwork of fields that stays off the airfield, the forests and
- * the steep ground, and instanced countryside that stays inside its counts.
+ * Art detail, within a phone's budget: two distinct rescue helicopters with
+ * working details, a patchwork of fields that stays off the airfield, the
+ * forests and the steep ground, and instanced countryside inside its counts.
  */
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { AircraftMesh, type AircraftStyle } from '../src/flight/aircraftMesh';
+import { HelicopterMesh, type HeliStyle } from '../src/flight/helicopterMesh';
 import { initialAircraft } from '../src/flight/aircraft';
 import { buildCountryside, fieldAt, fieldCell, FIELD_KINDS, isFarmland } from '../src/world/countryside';
 import { forestAt, getHeightField } from '../src/world/terrain';
@@ -14,54 +14,62 @@ import { BASE, RUNWAY } from '../src/world/worldData';
 const hf = getHeightField();
 const slope = (x: number, z: number) => 1 - hf.normal(x, z)[1];
 
-describe('the aircraft', () => {
-  const styles: AircraftStyle[] = ['kestrel', 'heron', 'albatross'];
+describe('the helicopters', () => {
+  const styles: HeliStyle[] = ['rescue', 'heavy'];
 
-  it('each airframe has its own silhouette, inside the triangle budget', () => {
-    const stats = styles.map((s) => new AircraftMesh(s).stats());
-    expect(new Set(stats.map((s) => s.triangles)).size).toBe(3);
+  it('each has its own silhouette, inside the phone budget', () => {
+    const stats = styles.map((s) => new HelicopterMesh(s).stats());
+    expect(stats[0].triangles).not.toBe(stats[1].triangles);
     for (const s of stats) {
       expect(s.triangles).toBeLessThan(8000);
       expect(s.meshes).toBeLessThan(120);
     }
-    // bigger aircraft, more engines
-    expect(stats[2].triangles).toBeGreaterThan(stats[0].triangles);
   });
 
-  it('red light to port, green to starboard, a white strobe that blinks', () => {
+  it('red light to port, green to starboard, a strobe that blinks', () => {
     for (const s of styles) {
-      const m = new AircraftMesh(s);
-      const hex = (o: THREE.Object3D) => ((o as THREE.Mesh).material as THREE.MeshBasicMaterial).color?.getHex();
-      const lights = m.group.children.filter((c) => (c as THREE.Mesh).geometry?.type === 'SphereGeometry');
-      const red = lights.find((l) => hex(l) === 0xff3b30)!;
-      const green = lights.find((l) => hex(l) === 0x34e05a)!;
-      expect(red.position.x).toBeLessThan(0);
-      expect(green.position.x).toBeGreaterThan(0);
-      const a = initialAircraft(0, 100, 0, 0);
-      const seen = new Set<boolean>();
+      const m = new HelicopterMesh(s);
+      const lights: THREE.Mesh[] = [];
+      m.group.traverse((o) => {
+        const mm = o as THREE.Mesh;
+        if (mm.isMesh && mm.geometry.type === 'SphereGeometry' && (mm.material as THREE.MeshBasicMaterial).type === 'MeshBasicMaterial') lights.push(mm);
+      });
+      const hex = (o: THREE.Mesh) => (o.material as THREE.MeshBasicMaterial).color.getHex();
+      expect(lights.find((l) => hex(l) === 0xff3b30)!.position.x).toBeLessThan(0);
+      expect(lights.find((l) => hex(l) === 0x34e05a)!.position.x).toBeGreaterThan(0);
       const strobe = lights.find((l) => hex(l) === 0xffffff)!;
+      const seen = new Set<boolean>();
+      const a = initialAircraft(0, 100, 0, 0);
       for (let t = 0; t < 2.4; t += 0.02) {
-        m.sync(a, t);
+        m.sync(a, t, 0.02, 0, 1);
         seen.add(strobe.visible);
       }
       expect(seen).toEqual(new Set([true, false]));
     }
   });
 
-  it('every part of every airframe is drawable geometry', () => {
-    for (const s of styles)
-      new AircraftMesh(s).group.traverse((o) => {
-        const m = o as THREE.Mesh;
-        if (m.isMesh) expect(m.geometry?.attributes.position.count, s).toBeGreaterThan(0);
-      });
+  it('the winch hangs off the right-hand side, and follows the helicopter', () => {
+    const m = new HelicopterMesh('rescue');
+    const a = initialAircraft(50, 100, -20, 0);
+    m.sync(a, 0, 0.016, 0, 1);
+    const w = m.winchWorld(new THREE.Vector3());
+    expect(w.x).toBeGreaterThan(50 + 1.5); // heading north, right is east
+    expect(w.y).toBeLessThan(102);
+    a.yaw = Math.PI; // heading south: right is west
+    m.sync(a, 0, 0.016, 0, 1);
+    expect(m.winchWorld(new THREE.Vector3()).x).toBeLessThan(50 - 1.5);
   });
 
-  it('switching airframe rebuilds the model', () => {
-    const m = new AircraftMesh('kestrel');
+  it('every part is drawable geometry, and switching style rebuilds it', () => {
+    const m = new HelicopterMesh('rescue');
     const k = m.stats().triangles;
-    m.setStyle('albatross');
-    expect(m.style).toBe('albatross');
+    m.setStyle('heavy');
+    expect(m.style).toBe('heavy');
     expect(m.stats().triangles).not.toBe(k);
+    m.group.traverse((o) => {
+      const mm = o as THREE.Mesh;
+      if (mm.isMesh) expect(mm.geometry.attributes.position.count).toBeGreaterThan(0);
+    });
   });
 });
 

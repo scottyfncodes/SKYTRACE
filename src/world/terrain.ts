@@ -1,5 +1,5 @@
 import { clamp, fbm, lerp, polylineDist, smoothstep } from '../core/math';
-import { CLEARINGS, FLATS, FORESTS, LAKE, RIDGE, RIVER, WORLD_HALF, WORLD_SIZE } from './worldData';
+import { CLEARINGS, FLATS, FORESTS, LAKE, PEAK, RIDGE, RIVER, WORLD_HALF, WORLD_SIZE } from './worldData';
 
 /** Raw (unflattened) terrain height. */
 function rawHeight(x: number, z: number): number {
@@ -13,6 +13,10 @@ function rawHeight(x: number, z: number): number {
   // eastern hills behind the quarry
   const dq = Math.hypot(x - 1000, z - 420);
   h += 40 * Math.exp(-(dq * dq) / (330 * 330));
+  // Mount Kell: a craggy peak on the ridge
+  const dp = Math.hypot(x - PEAK.x, z - PEAK.z);
+  const crag = 0.85 + 0.3 * fbm(x / 90 + 2.2, z / 90 - 4.1, 3);
+  h += PEAK.h * Math.exp(-(dp * dp) / (PEAK.r * PEAK.r)) * crag;
   return h;
 }
 

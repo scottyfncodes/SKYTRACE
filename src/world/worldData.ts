@@ -1,5 +1,5 @@
 /**
- * Handcrafted layout of the Varrow Basin. Everything here is plain data so the
+ * Handcrafted layout of the Varrow Basin, the valley Rescue One covers. Everything here is plain data so the
  * terrain, the simulation and the tests all share one source of truth.
  *
  * Coordinates: x grows east, z grows south (Three.js -Z is north). Metres.
@@ -24,6 +24,8 @@ export const FLATS: ReadonlyArray<{ x: number; z: number; r: number; blend: numb
   { x: 680, z: -420, r: 45, blend: 50 }, // mine portal
   { x: -120, z: -640, r: 30, blend: 30 }, // tower
   { x: -600, z: 150, r: 50, blend: 40 }, // standing stones
+  { x: 205, z: -640, r: 13, blend: 12 }, // Mount Kell: the north ridge ledge
+  { x: 300, z: -735, r: 12, blend: 12 }, // Mount Kell: the summit shelf
 ];
 
 export const RIDGE: readonly Pt[] = [
@@ -50,6 +52,22 @@ export const RIVER: readonly Pt[] = [
 ];
 
 export const LAKE = { x: -850, z: 250, r: 130 } as const;
+
+/** Mount Kell: the snow peak on the north ridge, where the mountain rescues happen. */
+export const PEAK = { x: 260, z: -800, h: 330, r: 230 } as const;
+
+/** Helipads: the rescue base by the airfield, and the hospital in the village. */
+export const PADS = {
+  base: { id: 'base', name: 'Rescue Base', x: -800, z: 680, r: 11 },
+  hospital: { id: 'hospital', name: 'Varrow Hospital', x: -360, z: 556, r: 11 },
+} as const;
+export type PadId = keyof typeof PADS;
+
+/** Narrow shelves on Mount Kell where stranded climbers can stand. */
+export const LEDGES = {
+  northRidge: { x: 205, z: -640, r: 13 },
+  summit: { x: 300, z: -735, r: 12 },
+} as const;
 
 /** Forest blobs (centre, radius, strength). */
 export const FORESTS: ReadonlyArray<{ x: number; z: number; r: number; s: number }> = [
@@ -143,33 +161,6 @@ export const ROADS: readonly RoadDef[] = [
     ],
   },
 ];
-
-/** Segments where the vehicle is under tree canopy or inside the mine. */
-export const TRUCK_ROUTE: ReadonlyArray<{ p: Pt; wait?: number; hidden?: boolean }> = [
-  { p: [690, -412], wait: 28, hidden: true }, // inside the adit
-  { p: [720, -230] },
-  { p: [760, -60] },
-  { p: [770, 160] },
-  { p: [720, 360] },
-  { p: [690, 340] },
-  { p: [560, 190] },
-  { p: [430, 30], hidden: true }, // under canopy
-  { p: [330, -90], hidden: true },
-  { p: [250, -150], wait: 18, hidden: true }, // at the shed
-  { p: [255, 10], hidden: true },
-  { p: [320, 160] },
-  { p: [410, 330] },
-  { p: [455, 460] },
-  { p: [520, 495], wait: 18 }, // dock
-  { p: [455, 460] },
-  { p: [430, 505] },
-  { p: [600, 440] },
-  { p: [700, 380] },
-  { p: [770, 160] },
-  { p: [760, -60] },
-  { p: [720, -230] },
-];
-export const TRUCK_SPEED = 13; // m/s
 
 export const VILLAGE_HOUSES: readonly Pt[] = [
   [-400, 620],

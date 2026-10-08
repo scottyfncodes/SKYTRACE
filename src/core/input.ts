@@ -4,7 +4,8 @@
  */
 import { applyVerticalMode, type VerticalMode } from './settings';
 
-export type Action = 'scan' | 'mark' | 'drop' | 'map' | 'pause' | 'rtb' | 'ops';
+/** Pause, and the one context button (HOVER & HOIST, FLY). */
+export type Action = 'pause' | 'action';
 
 export interface InputState {
   roll: number;
@@ -144,7 +145,7 @@ export class Input {
   private onKey(e: KeyboardEvent, down: boolean): void {
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     if (down && !e.repeat) {
-      const map: Record<string, Action> = { ' ': 'scan', m: 'mark', e: 'drop', Tab: 'map', i: 'map', Escape: 'pause', p: 'pause', r: 'rtb', o: 'ops', Enter: 'ops' };
+      const map: Record<string, Action> = { Escape: 'pause', p: 'pause', Enter: 'action', ' ': 'action', h: 'action' };
       const a = map[k];
       if (a) {
         this.trigger(a);
@@ -154,6 +155,31 @@ export class Input {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'Tab'].includes(e.key)) e.preventDefault();
     if (down) this.keys.add(k);
     else this.keys.delete(k);
+  }
+
+  /**
+   * The stick as it is held, before any preference: x right, y up/forward
+   * (-1..1). The hover uses it: stick up always moves the helicopter forward.
+   */
+  readStick(): { x: number; y: number } {
+    const k = this.keys;
+    let x = 0;
+    let y = 0;
+    if (k.has('ArrowLeft') || k.has('a')) x -= 1;
+    if (k.has('ArrowRight') || k.has('d')) x += 1;
+    if (k.has('ArrowUp') || k.has('w')) y += 1;
+    if (k.has('ArrowDown') || k.has('s')) y -= 1;
+    if (this.stickId !== null) {
+      x = Math.abs(this.stickVec.x) < 0.08 ? 0 : this.stickVec.x;
+      y = Math.abs(this.stickVec.y) < 0.08 ? 0 : -this.stickVec.y;
+    }
+    return { x, y };
+  }
+
+  /** Throttle keys as a direction: +1 Shift / Q, -1 Ctrl / Z (the winch reels in on +1). */
+  throttleKeys(): number {
+    const k = this.keys;
+    return (k.has('Shift') || k.has('q') ? 1 : 0) - (k.has('Control') || k.has('z') ? 1 : 0);
   }
 
   read(): InputState {
