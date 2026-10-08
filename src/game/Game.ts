@@ -37,15 +37,15 @@ import { BASE, RUNWAY, gridRef } from '../world/worldData';
 import { DEFAULT_RETURNS, DESTINATION, MISSION_01, RETURNS, rollReturns, SECTOR_7, TARGET_SPEED_TO_DESTINATION, type ReturnDef, type ReturnId } from '../mission/mission01';
 import { OPERATIONS, operationFor } from '../mission/operations';
 import type { MissionDef } from '../mission/missionDef';
-import { cleanOperation, escapePressure, planExecute, type ExecutePlan } from '../operation/consequence';
+import { cleanOperation, clockNote, escapePressure, firstRingScale, planExecute, type ExecutePlan } from '../operation/consequence';
 import { BARGE, destinationRoute, evidenceGrade, newMission, TARGET, useReturns, type MissionState } from '../mission/mission';
 import { engageOperator, handBack, newCrew, operatorAvailability, tickCrew, type CrewState } from '../mission/crew';
 import { inArea } from '../mission/missionDef';
 import { orbitInput } from '../flight/autopilot';
-import { allCells, ASSET_ORDER, ASSETS, assetFitted, belief, canUse, chooseCorridor, clueChecks, isKnown as cellKnown, mark, newBoard, ruledOut, scoreBoard, traits, useAsset, type AssetId, type BoardEvent, type BoardState, type ControlResult, type Target } from '../control/board';
+import { allCells, ASSET_ORDER, ASSETS, assetFitted, belief, canUse, chooseCorridor, clockLeft, clueChecks, isKnown as cellKnown, mark, newBoard, ruledOut, scoreBoard, tickBoard, traits, useAsset, type AssetId, type BoardEvent, type BoardState, type ControlResult, type Target } from '../control/board';
 import { buildExit, TIER_LABEL, type ExitProfile } from '../control/exit';
 import { CONTROL_01 } from '../mission/mission01Control';
-import { MissionBoard, type BoardAction, type BoardFrame } from '../ui/missionBoard';
+import { boardStep, MissionBoard, URGENT_SECONDS, type BoardAction, type BoardFrame, type StepAction } from '../ui/missionBoard';
 import { phaseLine, Preflight } from '../ui/preflight';
 import { MissionScene } from '../mission/missionScene';
 import { RouteMover } from '../mission/vehicles';
@@ -133,6 +133,12 @@ export class Game {
   private pending: { asset: AssetId; target: Target; t: number; dur: number } | null = null;
   /** Seconds until the front forces EXECUTE (0: off). */
   private forceExec = 0;
+  /** The board's two steps: the player went on to the way out without a truck. */
+  private boardSkip = false;
+  /** What was left on the board's clock when the plan was locked (0..1): it sets the first ring home. */
+  private lockedClock = 1;
+  /** The last whole second the board clock ticked on. */
+  private lastTick = -1;
   private rankSounded = false;
   private forecastCache: { key: string; value: BoardFrame['forecast'] } = { key: '', value: null };
   private lastTier = '';
@@ -229,6 +235,10 @@ export class Game {
         if (this.control.executed) return;
         chooseCorridor(this.control, this.def.control, id);
         this.audio.click();
+      },
+      onStep: (s) => {
+        if (this.control.executed) return;
+        this.boardSkip = s === 'exit';
       },
       onExecute: () => this.executeBoard(),
       onFlyOut: () => this.flyOut(),
@@ -380,6 +390,9 @@ export class Game {
       boardRoute: (id: string) => chooseCorridor(this.control, this.def.control, id),
       boardExecute: () => this.executeBoard(),
       boardFlyOut: () => this.flyOut(),
+      boardStep: (s: 'find' | 'exit') => {
+        this.boardSkip = s === 'exit';
+      },
       boardPending: () => !!this.pending,
       getVisibility: () => this.visibility,
       getOperation: () => this.op,
@@ -856,6 +869,9 @@ export class Game {
     this.exit = null;
     this.pending = null;
     this.forceExec = 0;
+    this.boardSkip = false;
+    this.lockedClock = 1;
+    this.lastTick = -1;
     this.rankSounded = false;
     this.lastTier = '';
     this.forecastCache = { key: '', value: null };
@@ -976,7 +992,7 @@ export class Game {
     const fo = flightObjective(this.op, this.def, this.cap);
     if (fo) return fo;
     if (this.op.stage === 'execute') return { kicker: 'PASS', title: this.op.execResult === 'tagged' ? this.def.execute.done.kicker : this.def.execute.missed.kicker, detail: 'STAND BY' };
-    if (this.crew.station === 'operator') return { kicker: 'MISSION CONTROL', title: this.control.marked ? 'PLAN THE WAY HOME' : 'FIND THE SUPPLY TRUCK', detail: `FRONT IN ${this.control.minutes} MIN` };
+    if (this.crew.station === 'operator') return { kicker: 'MISSION CONTROL', title: this.control.marked ? 'PLAN THE WAY HOME' : 'FIND THE SUPPLY TRUCK', detail: `FRONT IN ${Math.ceil(this.control.seconds)} s` };
     return { kicker: 'ON STATION', title: 'MISSION CONTROL', detail: this.inOpsArea() ? 'OPEN MISSION CONTROL' : `FLY BACK TO ${this.def.operations.area.label}` };
   }
 
@@ -1006,7 +1022,7 @@ export class Game {
     this.board.show();
     this.audio.radarOn();
     const crewFlies = this.cap.flightControl.mode === 'crew';
-    this.showHandoff('enter', crewFlies ? this.cap.flightControl.label : 'AUTOPILOT ENGAGED', 'MISSION CONTROL', [], [`THE FRONT ARRIVES IN ${this.control.minutes} MIN`], 1.6);
+    this.showHandoff('enter', crewFlies ? this.cap.flightControl.label : 'AUTOPILOT ENGAGED', 'MISSION CONTROL', [], [`THE FRONT ARRIVES IN ${Math.ceil(this.control.seconds)} s · THE CLOCK IS RUNNING`], 1.6);
   }
 
   /** The flight out: the leg Mission Control's Exit Profile generated. */
@@ -1016,7 +1032,8 @@ export class Game {
     // EXECUTE answers ESCAPE: a pass made is the plan as built; a pass missed, or never flown, was seen
     const exec = this.op.execResult ?? (this.op.stage === 'execute' ? 'missed' : 'skipped');
     const press = escapePressure(this.def.escape, exec, { contactFromStart: ex.contactFromStart, visibility: ex.leg.visibility });
-    beginReturn(this.op, { return: ex.leg }, { x: this.a.x, y: this.a.y, z: this.a.z, yaw: this.a.yaw }, (x, z) => this.bundle.heightField.sample(x, z), press.contact, press.pace);
+    // what was left on Mission Control's clock sets how fast the first ring home closes
+    beginReturn(this.op, { return: ex.leg }, { x: this.a.x, y: this.a.y, z: this.a.z, yaw: this.a.yaw }, (x, z) => this.bundle.heightField.sample(x, z), press.contact, press.pace, firstRingScale(this.lockedClock));
     // the first ring is laid wherever the aircraft happens to be: never start in a storm, never fly into one at once
     const join = this.op.routes.return.gates[0];
     const clear = (h: { x: number; z: number; r: number }) => Math.hypot(h.x - this.a.x, h.z - this.a.z) > h.r + 80 && (join?.kind !== 'ring' || Math.hypot(h.x - join.x, h.z - join.z) > h.r + 50);
@@ -1167,7 +1184,8 @@ export class Game {
     const deck = this.op.routes.return.hazards.find((h) => h.kind === 'ceiling');
     if (deck && deck.kind === 'ceiling' && this.a.y > deck.y) notices.unshift('IN CLOUD · DESCEND');
     const good = this.exit.opportunities.length ? [`BONUS: ${this.exit.opportunities.map((o) => o.label).join(' · ')}`] : [];
-    this.showPhase('escape', line ?? undefined, [...notices.slice(0, 2).map((t) => ({ t, bad: true })), ...good.map((t) => ({ t, bad: false }))]);
+    const clock = clockNote(this.lockedClock * this.control.maxSeconds);
+    this.showPhase('escape', line ?? undefined, [clock, ...notices.slice(0, clock.bad ? 1 : 2).map((t) => ({ t, bad: true })), ...good.map((t) => ({ t, bad: false }))]);
   }
 
   // ---- phases: the card when one begins, and the HUD theme while it lasts
@@ -1302,7 +1320,7 @@ export class Game {
     this.hud.clearBanners();
     this.shots = this.evidence();
     const cr = this.controlResult;
-    const r = buildReport(this.mission, this.op, this.def, this.fuel / this.fuelMax, (this.control.maxMinutes - this.control.minutes) * 60, cr ? { total: cr.total, rank: cr.rank } : undefined);
+    const r = buildReport(this.mission, this.op, this.def, this.fuel / this.fuelMax, this.control.maxSeconds - this.control.seconds, cr ? { total: cr.total, rank: cr.rank } : undefined);
     const unlocks = recordOperation(this.career, this.def.id, r);
     this.newLead = advanceCaseFile(this.career, cleanOperation(r.success, this.op.execResult), this.page);
     saveCareer(this.career, localStorage);
@@ -1422,7 +1440,7 @@ export class Game {
         this.el['app'].classList.remove('carding');
       }
     }
-    if (this.returnCue && this.phaseTimer <= 0.4) {
+    if (this.returnCue && this.phaseTimer <= 0) {
       this.returnCue = false;
       if (this.op.ret.contact) this.hud.banner('RADAR CONTACT', 'THE RINGS ARE CLOSING', 'bad', 2.4);
     }
@@ -1484,7 +1502,7 @@ export class Game {
       return;
     }
     if (target.kind !== 'none') this.board.select(target);
-    this.pending = { asset, target, t: 0, dur: ASSETS[asset].seconds };
+    this.pending = { asset, target, t: 0, dur: ASSETS[asset].cost };
     if (asset === 'drone' || asset === 'scouts') this.audio.drop();
     else if (asset === 'sigint') this.audio.link();
     else if (asset === 'shadow') this.audio.contact();
@@ -1493,15 +1511,7 @@ export class Game {
 
   private boardMark(id: ReturnId): void {
     if (this.pending || this.control.executed || this.crew.station !== 'operator') return;
-    const before = this.control.minutes;
-    const ev = mark(this.control, RETURNS, id);
-    this.burnBoardFuel(before - this.control.minutes);
-    this.boardEvents(ev);
-  }
-
-  /** Board minutes are flying time: the autopilot keeps orbiting on the tank. */
-  private burnBoardFuel(minutes: number): void {
-    if (minutes > 0) this.fuel = Math.max(1, this.fuel - minutes * this.def.control.fuelPerMinute * this.fuelMax);
+    this.boardEvents(mark(this.control, RETURNS, id));
   }
 
   private boardEvents(ev: BoardEvent[]): void {
@@ -1519,9 +1529,7 @@ export class Game {
   private resolvePending(): void {
     const p = this.pending!;
     this.pending = null;
-    const before = this.control.minutes;
     const ev = useAsset(this.control, RETURNS, inSector, this.def.control.clues, p.asset, p.target);
-    this.burnBoardFuel(before - this.control.minutes);
     if (p.target.kind === 'return' && (p.asset === 'optical' || p.asset === 'thermal' || p.asset === 'drone')) {
       // the look leaves a print: the last frame of the telephoto feed
       const q = { optical: 0.92, drone: 0.8, thermal: 0.72 }[p.asset] + this.cap.photoBonus;
@@ -1555,6 +1563,7 @@ export class Game {
     }
     b.executed = true;
     this.forceExec = 0;
+    this.lockedClock = clockLeft(b);
     const res = scoreBoard(b, C, RETURNS, inSector);
     this.controlResult = res;
     this.exit = buildExit({ board: b, def: C, result: res, fuel: this.fuel, fuelMax: this.fuelMax, cruise: this.cap.perf.maxSpeed * 0.7, ground: (x, z) => this.bundle.heightField.sample(x, z) });
@@ -1578,7 +1587,7 @@ export class Game {
     const cache = allCells(this.def.control).find((c) => b.cells[c.id].truth === 'cache');
     if (cache && belief(b.cells[cache.id]) !== 'cache') return 'Something else was out there. Did you see it?';
     if (!b.shadowed) return 'Where was the truck going?';
-    return `A clean board. Can you do it with more than ${b.minutes} min to spare?`;
+    return `A clean board. Can you do it with more than ${Math.round(b.seconds)} s to spare?`;
   }
 
   /** The board's findings become the recon the report reads. */
@@ -1617,6 +1626,15 @@ export class Game {
 
   private updateBoard(dt: number): void {
     tickCrew(this.crew, dt);
+    // the clock runs in real time; its last seconds tick
+    const before = this.control.seconds;
+    const front = tickBoard(this.control, dt);
+    if (front.length) this.boardEvents(front);
+    const whole = Math.ceil(this.control.seconds);
+    if (!this.control.executed && this.control.seconds <= URGENT_SECONDS && whole !== this.lastTick && this.control.seconds < before) {
+      this.lastTick = whole;
+      this.audio.tick();
+    }
     if (this.pending) {
       this.pending.t += dt;
       if (this.pending.t >= this.pending.dur) this.resolvePending();
@@ -1645,7 +1663,7 @@ export class Game {
     const busy = !!this.pending || b.executed;
     const act = (asset: AssetId, t: Target, label = ASSETS[asset].label): BoardAction => {
       const u = canUse(b, RETURNS, asset, t);
-      return { kind: 'asset', asset, label: `${ASSETS[asset].icon} ${label}`, cost: ASSETS[asset].cost, ok: u.ok && !busy, reason: u.reason, front: ASSETS[asset].cost >= b.minutes };
+      return { kind: 'asset', asset, label: `${ASSETS[asset].icon} ${label}`, cost: ASSETS[asset].cost, ok: u.ok && !busy, reason: u.reason, front: ASSETS[asset].cost >= b.seconds };
     };
     const fitted = ASSET_ORDER.filter((a) => assetFitted(b, a));
     const returns = RETURNS.filter((r) => !r.hidden || b.shadowed).map((r) => {
@@ -1656,10 +1674,9 @@ export class Game {
       const status = r.hidden ? 'barge' : b.marked === r.id ? 'truck' : b.wrong.includes(r.id) ? 'wrong' : ruledOut(checks) ? 'out' : k.size || k.road || k.radio ? 'fits' : 'unknown';
       const actions: BoardAction[] = [];
       if (!r.hidden) {
-        // the decision first, then the ways to learn more
+        // the looks first, then the decision
+        for (const a of fitted) if (a === 'optical' || a === 'thermal' || a === 'drone') actions.push(act(a, { kind: 'return', id: r.id }, `LOOK · ${ASSETS[a].label}`));
         if (!b.marked && !b.wrong.includes(r.id)) actions.push({ kind: 'mark', label: 'MARK AS THE TRUCK', ok: !busy, reason: '' });
-        if (b.marked === r.id && !b.shadowed) actions.push(act('shadow', { kind: 'return', id: r.id }, 'SHADOW · WHERE IS IT GOING?'));
-        for (const a of fitted) if (a === 'optical' || a === 'thermal' || a === 'drone') actions.push(act(a, { kind: 'return', id: r.id }));
       }
       return { id: r.id, x: mv.x, z: mv.z, moving: mv.moving, status: status as BoardFrame['returns'][number]['status'], traits: traits(r, k, sec), checks, photo: this.photos.get(r.id) ?? null, actions };
     });
@@ -1687,13 +1704,13 @@ export class Game {
       const targets = busy ? [] : allTargets.filter((t) => canUse(b, RETURNS, id, t).ok).map((t) => (t.kind === 'return' ? `r:${t.id}` : `c:${(t as { id: string }).id}`));
       const global = a.target === 'none' ? canUse(b, RETURNS, id, { kind: 'none' }) : null;
       const ok = !busy && (global ? global.ok : targets.length > 0);
-      const reason = busy ? 'BUSY' : global ? global.reason : left === 0 ? 'NONE LEFT' : a.cost > b.minutes ? 'NO TIME' : id === 'shadow' && !b.marked ? 'MARK THE TRUCK FIRST' : 'NOTHING TO DO';
+      const reason = busy ? 'BUSY' : global ? global.reason : left === 0 ? 'NONE LEFT' : a.cost > b.seconds ? 'NO TIME' : id === 'shadow' && !b.marked ? 'MARK THE TRUCK FIRST' : 'NOTHING TO DO';
       return { id, label: a.label, icon: a.icon, cost: a.cost, left, ok, reason, note: a.note, target: a.target, targets };
     });
     const route = def.corridors.find((c) => c.id === b.corridor);
     const corridors = def.corridors.map((c) => ({ id: c.id, label: c.label, short: c.short, note: c.note, path: c.rings.map((r) => ({ x: r.x, z: r.z })), selected: c.id === b.corridor, known: c.cells.filter((x) => cellKnown(b.cells[x.id])).length, total: c.cells.length }));
     // the live forecast: what EXECUTE would make of the board right now
-    const fkey = `${b.actions}|${b.corridor}|${b.marked}|${b.wrong.length}|${b.shadowed}|${b.minutes}`;
+    const fkey = `${b.actions}|${b.corridor}|${b.marked}|${b.wrong.length}|${b.shadowed}|${Math.round(b.seconds)}`;
     if (this.forecastCache.key !== fkey) {
       let value: BoardFrame['forecast'] = null;
       if (route) {
@@ -1711,16 +1728,19 @@ export class Game {
     }
     const scouts = RETURNS.find((r) => r.count === 3 && r.radio && !r.isTarget);
     const from = this.pending?.asset === 'scouts' && scouts ? this.movers.get(scouts.id)! : { x: this.a.x, z: this.a.z };
+    // the step's own actions: SIGINT on every radio while finding; SHADOW the marked truck on the way out
+    const step = boardStep(!!b.marked, this.boardSkip);
+    const stepActions: StepAction[] = [];
+    if (step === 'find' && fitted.includes('sigint')) stepActions.push({ ...act('sigint', { kind: 'none' }, 'SIGINT · ALL RADIOS'), target: { kind: 'none' } });
+    if (step === 'exit' && b.marked && !b.shadowed) stepActions.push({ ...act('shadow', { kind: 'return', id: b.marked }, 'SHADOW · WHERE IS IT GOING?'), target: { kind: 'return', id: b.marked } });
     return {
-      minutes: b.minutes,
-      maxMinutes: b.maxMinutes,
+      seconds: b.seconds,
+      maxSeconds: b.maxSeconds,
       fuelSeconds: this.fuel,
       control: this.cap.flightControl.mode === 'crew' ? this.cap.flightControl.label : 'AUTOPILOT ORBITING',
-      goals: [
-        { label: 'FIND THE TRUCK', state: b.marked ? 'done' : 'todo', bonus: false },
-        { label: 'WHERE IS IT GOING?', state: b.shadowed ? 'done' : 'todo', bonus: true },
-        { label: 'SCOUT YOUR WAY HOME', state: route && route.cells.every((c) => cellKnown(b.cells[c.id])) ? 'done' : 'todo', bonus: true },
-      ],
+      step,
+      marked: !!b.marked,
+      stepActions,
       returns,
       cells,
       corridors,
@@ -1732,8 +1752,8 @@ export class Game {
       assets,
       pending: this.pending ? { asset: this.pending.asset, target: this.pending.target, k: this.pending.t / this.pending.dur, from: { x: from.x, z: from.z } } : null,
       forecast: this.forecastCache.value,
-      canExecute: !!b.corridor && !busy,
-      executeHint: b.executed ? '' : !b.corridor ? 'PICK A WAY OUT FIRST' : !b.marked ? 'NO TARGET MARKED · NOTHING TO TAG' : '',
+      canExecute: !!b.corridor && !busy && step === 'exit',
+      executeHint: b.executed ? '' : step === 'find' ? '' : !b.corridor ? 'TAP A ROUTE FIRST' : !b.marked ? 'NO TARGET MARKED · NOTHING TO TAG' : '',
       executed: b.executed,
     };
   }
@@ -1843,7 +1863,7 @@ export class Game {
     if (R && !leg!.state.detected && this.a.agl > this.cap.stealthCeiling - 40 && this.a.x > R.x0 - 300 && this.a.x < R.x1 + 300 && this.a.z > R.z0 - 300 && this.a.z < R.z1 + 300) chips.push({ text: `TOO HIGH · BELOW ${this.cap.stealthCeiling} m`, cls: 'bad' });
     if (leg && onClock(leg.state) && leg.state.clock !== null && gate?.kind === 'ring') chips.push({ text: `⏱ ${Math.max(0, Math.ceil(leg.state.clock))} s`, cls: leg.state.clock < 3 ? 'bad' : 'caution' });
     if (this.op.damage >= 0.02) chips.push({ text: `HULL ${Math.round((1 - this.op.damage) * 100)}%`, cls: this.op.damage > 0.55 ? 'bad' : 'caution' });
-    if (this.op.stage === 'recon' && !this.control.executed) chips.push({ text: `FRONT IN ${this.control.minutes} MIN`, cls: 'caution' });
+    if (this.op.stage === 'recon' && !this.control.executed) chips.push({ text: `FRONT IN ${Math.ceil(this.control.seconds)} s`, cls: this.control.seconds <= URGENT_SECONDS ? 'bad' : 'caution' });
 
     // ---- contextual hint: always says what to do next
     const touch = this.input.isTouch;
@@ -2012,8 +2032,8 @@ export class Game {
     }
     this.a = stepAircraft(this.a, inp, dt, (x, z) => hf.sample(x, z), perf);
     this.input.syncThrottle(this.a.throttle);
-    // on the board, fuel is paid in board minutes (see burnBoardFuel)
-    if (!(this.play === 'mission' && this.crew.station === 'operator')) this.fuel -= dt * stormBurn;
+    // the tank runs the whole time, on the board too: the autopilot is orbiting on it
+    this.fuel -= dt * stormBurn;
     if (this.play === 'mission') {
       this.updateMission(dt);
       return;

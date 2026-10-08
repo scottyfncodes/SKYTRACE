@@ -325,6 +325,12 @@ export class AudioSystem {
     this.master.gain.setTargetAtTime(0.8, t + seconds, 0.35);
   }
 
+  /** The board clock in its last seconds: a dry tick, once a second. */
+  tick(): void {
+    this.tone(1500, 0.03, 0.07, 'square');
+    this.tone(600, 0.05, 0.05, 'sine', 0.01);
+  }
+
   /** The sector wakes up: a low two-tone, three times, under everything. Not a siren. */
   alarm(): void {
     for (let i = 0; i < 3; i++) {

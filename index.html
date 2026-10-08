@@ -125,20 +125,18 @@
       <section id="board" class="screen board hidden" aria-label="Mission control">
         <header class="mb-bar">
           <div class="mb-id"><b><em class="ph-tag">01 RECON <i class="dots"><i class="now"></i><i></i><i></i></i></em> MISSION CONTROL</b><span><i></i><em id="mb-control">AUTOPILOT ORBITING</em></span></div>
-          <div class="mb-clock"><small>FRONT IN</small><div id="mb-pips" class="pips"></div><b id="mb-min">12</b><small>MIN</small></div>
+          <div class="mb-clock"><small>FRONT IN</small><div class="mb-bar-track"><i id="mb-bar-fill"></i></div><b id="mb-min">1:30</b></div>
           <div class="mb-fuel"><small>FUEL</small><b id="mb-fuel">0:00</b></div>
           <div id="mb-forecast" class="mb-forecast"></div>
           <button id="btn-mb-pause" class="icon" aria-label="Pause">II</button>
         </header>
         <div class="mb-body">
           <div class="mb-left">
+            <div id="mb-step" class="mb-step" aria-label="Step"></div>
             <div class="mb-mapwrap">
               <canvas id="mb-map"></canvas>
-              <ul id="mb-goals" class="mb-goals"></ul>
-              <div id="mb-armed" class="mb-armed"></div>
               <div id="mb-toast" class="mb-toast" aria-live="polite"></div>
             </div>
-            <div id="mb-tray" class="mb-tray" aria-label="Assets"></div>
           </div>
           <aside class="mb-panel">
             <div class="mb-card">
@@ -147,7 +145,7 @@
               <div id="mb-card-body" class="mb-card-body"></div>
             </div>
             <div class="mb-plan">
-              <h3>WAY OUT</h3>
+              <h3 id="mb-plan-head">WAY OUT</h3>
               <div id="mb-routes" class="mb-routes"></div>
               <ul id="mb-preview" class="mb-preview"></ul>
               <button id="btn-execute" type="button" class="btn execute" disabled>LOCK THE PLAN ▶</button>

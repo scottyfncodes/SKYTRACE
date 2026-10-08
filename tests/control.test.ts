@@ -5,7 +5,7 @@
  * meaningfully different exits.
  */
 import { describe, expect, it } from 'vitest';
-import { allCells, belief, canUse, chooseCorridor, clueChecks, isKnown, mark, newBoard, ruledOut, scoreBoard, useAsset, type AssetId, type BoardState, type CellTruth, type Target } from '../src/control/board';
+import { allCells, ASSETS, belief, canUse, chooseCorridor, clockLeft, clueChecks, isKnown, mark, newBoard, ruledOut, scoreBoard, tickBoard, useAsset, WRONG_MARK_SECONDS, type AssetId, type BoardState, type CellTruth, type Target } from '../src/control/board';
 import { buildExit, DECK_BLIND, DECK_KNOWN, TIER } from '../src/control/exit';
 import { CONTROL_01 } from '../src/mission/mission01Control';
 import { DECOYS, DEFAULT_RETURNS, rollReturns, SECTOR_7, type ReturnDef, type ReturnId } from '../src/mission/mission01';
@@ -77,7 +77,30 @@ describe('the board: what it starts with', () => {
     expect(dealt).toEqual([...def.cellMix].sort());
     // nothing is known yet: every spot could be anything
     expect(Object.values(b.cells).every((c) => !isKnown(c))).toBe(true);
-    expect(b.minutes).toBe(12);
+    expect(b.seconds).toBe(90);
+    expect(b.maxSeconds).toBe(90);
+    expect(clockLeft(b)).toBe(1);
+  });
+
+  it('the clock runs in real time and the front arrives at zero', () => {
+    const b = fresh(2);
+    expect(tickBoard(b, 30)).toEqual([]);
+    expect(b.seconds).toBe(60);
+    expect(clockLeft(b)).toBeCloseTo(2 / 3, 5);
+    expect(tickBoard(b, 59.5)).toEqual([]);
+    const ev = tickBoard(b, 1);
+    expect(ev.map((e) => e.type)).toEqual(['front']);
+    expect(b.seconds).toBe(0);
+    expect(b.frontCaught).toBe(true);
+    expect(tickBoard(b, 5)).toEqual([]); // said once
+    expect(canUse(b, DEFAULT_RETURNS, 'optical', ret('C')).ok).toBe(false);
+  });
+
+  it('every look takes real seconds, not clock deductions: the clock is the only currency', () => {
+    for (const a of Object.values(ASSETS)) expect(a.cost).toBeGreaterThanOrEqual(5);
+    const b = fresh();
+    use(b, 'optical', ret('C'));
+    expect(b.seconds).toBe(90); // the seconds pass while the look plays (tickBoard), never up front
   });
 
   it('the tower forecasts the weather, and gets exactly one storm in the wrong place', () => {
@@ -114,7 +137,6 @@ describe('assets: each answers a different question, for a price', () => {
     expect(ruledOut(clueChecks(field, b.returns.B!, inSector(field), def.clues))).toBe(false); // off road: thermal can't tell
     use(b, 'optical', ret('B'), c2);
     expect(ruledOut(clueChecks(field, b.returns.B!, inSector(field), def.clues))).toBe(true);
-    expect(b.minutes).toBe(8);
     void cast;
   });
 
@@ -125,7 +147,7 @@ describe('assets: each answers a different question, for a price', () => {
     use(b, 'drone', cell('N1'));
     use(b, 'drone', cell('N2'));
     expect(canUse(b, DEFAULT_RETURNS, 'drone', cell('C1')).reason).toBe('NONE LEFT');
-    b.minutes = 1;
+    b.seconds = 1;
     expect(canUse(b, DEFAULT_RETURNS, 'optical', ret('C')).reason).toBe('NO TIME');
   });
 
@@ -152,14 +174,29 @@ describe('assets: each answers a different question, for a price', () => {
   it('SIGINT hears every radio and finds every radar site at once', () => {
     const b = fresh(5, DEFAULT_RETURNS, ['radar', 'optical', 'sigint']);
     use(b, 'sigint', { kind: 'none' });
-    expect(['A', 'B', 'C', 'D'].every((id) => b.returns[id as ReturnId]!.radio)).toBe(true);
+    expect(['A', 'B', 'C', 'D', 'E', 'F'].every((id) => b.returns[id as ReturnId]!.radio)).toBe(true);
     for (const c of Object.values(b.cells)) {
       if (c.truth === 'radar') expect(belief(c)).toBe('radar');
       else expect(c.possible).not.toContain('radar');
     }
     // the scouts transmit: SIGINT rules them out without a camera
     expect(ruledOut(clueChecks(DEFAULT_RETURNS[1], b.returns.B!, true, def.clues))).toBe(true);
-    expect(b.minutes).toBe(11);
+    // so does the quarry tipper: the one look-alike only a radio check catches
+    expect(ruledOut(clueChecks(DEFAULT_RETURNS[4], b.returns.E!, true, def.clues))).toBe(true);
+  });
+
+  it('the tanker pair is caught by any camera (two large, not one); the quarry tipper by none of them', () => {
+    const b = fresh(5, DEFAULT_RETURNS, ['radar', 'optical', 'thermal']);
+    const F = DEFAULT_RETURNS[5];
+    const E = DEFAULT_RETURNS[4];
+    expect(ruledOut(clueChecks(F, b.returns.F!, inSector(F), def.clues))).toBe(false);
+    use(b, 'thermal', ret('F'));
+    expect(ruledOut(clueChecks(F, b.returns.F!, inSector(F), def.clues))).toBe(true);
+    use(b, 'optical', ret('E'));
+    use(b, 'thermal', ret('E'));
+    expect(ruledOut(clueChecks(E, b.returns.E!, inSector(E), def.clues))).toBe(false);
+    use(b, 'drone', ret('E'));
+    expect(ruledOut(clueChecks(E, b.returns.E!, inSector(E), def.clues))).toBe(true);
   });
 
   it('when the tower was wrong, finding out says so', () => {
@@ -177,16 +214,15 @@ describe('assets: each answers a different question, for a price', () => {
 });
 
 describe('decisions', () => {
-  it('a wrong mark costs a minute; the right one locks the truck; SHADOW needs the lock and finds the barge', () => {
+  it('a wrong mark costs seconds; the right one locks the truck; SHADOW needs the lock and finds the barge', () => {
     const b = fresh();
     expect(canUse(b, DEFAULT_RETURNS, 'shadow', ret('C')).reason).toBe('MARK THE TRUCK FIRST');
     expect(mark(b, DEFAULT_RETURNS, 'B')[0].type).toBe('wrong');
-    expect(b.minutes).toBe(11);
+    expect(b.seconds).toBe(90 - WRONG_MARK_SECONDS);
     expect(mark(b, DEFAULT_RETURNS, 'C')[0].type).toBe('locked');
     expect(mark(b, DEFAULT_RETURNS, 'A')).toEqual([]); // locked in
     expect(use(b, 'shadow', ret('C'))[0].type).toBe('barge');
     expect(b.shadowed).toBe(true);
-    expect(b.minutes).toBe(8);
   });
 
   it('the corridor can be changed until EXECUTE', () => {
@@ -198,10 +234,10 @@ describe('decisions', () => {
     expect(b.corridor).toBe('river');
   });
 
-  it('the front: spending the last minute ends the board', () => {
+  it('the front: a wrong mark in the last seconds ends the board', () => {
     const b = fresh();
-    b.minutes = 2;
-    const ev = use(b, 'optical', ret('C'));
+    b.seconds = WRONG_MARK_SECONDS - 1;
+    const ev = mark(b, DEFAULT_RETURNS, 'B');
     expect(ev.at(-1)!.type).toBe('front');
     expect(b.frontCaught).toBe(true);
     expect(canUse(b, DEFAULT_RETURNS, 'drone', cell('N1')).ok).toBe(false);
@@ -241,6 +277,8 @@ describe('score: different decisions, different results', () => {
   it('confirming by elimination counts as much as a look at the truck', () => {
     const b = fresh();
     use(b, 'optical', ret('B')); // the scouts: three small vehicles
+    use(b, 'optical', ret('F')); // the tanker pair: two large
+    use(b, 'drone', ret('E')); // the quarry tipper: talking
     mark(b, DEFAULT_RETURNS, 'C');
     expect(score(b).confirmed).toBe(true);
     const h = fresh();
@@ -248,13 +286,15 @@ describe('score: different decisions, different results', () => {
     expect(score(h).confirmed).toBe(false);
   });
 
-  it('flying blind is the risk: scouting the chosen route raises the score more than its minutes cost', () => {
+  it('flying blind is the risk: scouting the chosen route raises the score, even with the seconds it took', () => {
     const b = fresh(7);
     mark(b, DEFAULT_RETURNS, 'C');
     chooseCorridor(b, def, 'river');
     const blind = score(b).total;
     use(b, 'drone', cell('R1'));
+    tickBoard(b, ASSETS.drone.cost);
     use(b, 'drone', cell('R2'));
+    tickBoard(b, ASSETS.drone.cost);
     expect(score(b).total).toBeGreaterThan(blind);
   });
 

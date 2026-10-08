@@ -19,15 +19,15 @@ const rolls = (n: number) => Array.from({ length: n }, (_, i) => rollReturns(rng
 const decoysOf = (cast: ReturnDef[]) => cast.filter((r) => !r.isTarget && r.kind !== 'vessel');
 
 describe('the roll', () => {
-  it('always a fair cast: one truck on the mine road, three look-alikes, the barge as E', () => {
+  it('always a fair cast: one truck on the mine road, five look-alikes, the barge as G', () => {
     for (const cast of rolls(300)) {
-      expect(cast.map((r) => r.id)).toEqual(['A', 'B', 'C', 'D', 'E']);
+      expect(cast.map((r) => r.id)).toEqual(['A', 'B', 'C', 'D', 'E', 'F', 'G']);
       const trucks = cast.filter((r) => r.isTarget);
       expect(trucks).toHaveLength(1);
       expect(trucks[0].route).toEqual(MINE_ROAD_PTS);
-      expect(cast[4]).toMatchObject({ kind: 'vessel', hidden: true });
+      expect(cast[6]).toMatchObject({ kind: 'vessel', hidden: true });
       const decoys = decoysOf(cast);
-      expect(decoys).toHaveLength(3);
+      expect(decoys).toHaveLength(5);
       // each look-alike breaks the brief on exactly one point
       for (const d of decoys) expect(mismatchReason(d, d.route[0][0], d.route[0][1]), d.truth).not.toBeNull();
       // and at least one of them can only be caught by looking (a camera)
@@ -37,7 +37,7 @@ describe('the roll', () => {
 
   it('really varies: the truck takes every letter, every look-alike sits some runs out, starts differ', () => {
     const cast = rolls(300);
-    expect(new Set(cast.map((c) => c.find((r) => r.isTarget)!.id))).toEqual(new Set(['A', 'B', 'C', 'D']));
+    expect(new Set(cast.map((c) => c.find((r) => r.isTarget)!.id))).toEqual(new Set(['A', 'B', 'C', 'D', 'E', 'F']));
     for (const d of Object.values(DECOYS)) {
       const present = cast.filter((c) => c.some((r) => r.truth === d.truth)).length;
       expect(present, d.truth).toBeGreaterThan(150);
@@ -72,7 +72,7 @@ describe('the roll', () => {
     expect(RETURN_BY_ID[truck.id]).toBe(truck);
     expect(RETURNS).toBe(cast);
     const m = newMission();
-    expect(m.returns.E.hidden).toBe(true);
+    expect(m.returns.G.hidden).toBe(true);
     useReturns(DEFAULT_RETURNS);
     expect(TARGET.id).toBe('C');
   });
