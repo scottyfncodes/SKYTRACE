@@ -1754,7 +1754,7 @@ export class Game {
       pending: this.pending ? { asset: this.pending.asset, target: this.pending.target, k: this.pending.t / this.pending.dur, from: { x: from.x, z: from.z } } : null,
       forecast: this.forecastCache.value,
       canExecute: !!b.corridor && !busy && step === 'exit',
-      executeHint: b.executed ? '' : step === 'find' ? '' : !b.corridor ? 'TAP A ROUTE FIRST' : !b.marked ? 'NO TARGET MARKED · NOTHING TO TAG' : '',
+      executeHint: b.executed ? '' : step === 'find' || !b.corridor ? '' : !b.marked ? 'NO TARGET MARKED · NOTHING TO TAG' : '',
       executed: b.executed,
     };
   }

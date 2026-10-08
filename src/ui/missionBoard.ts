@@ -194,10 +194,6 @@ export class MissionBoard {
       if (b.dataset.act === 'mark' && this.selected.kind === 'return') h.onMark(this.selected.id);
       else if (b.dataset.act) h.onUse(b.dataset.act as AssetId, this.selected);
     });
-    this.el['mb-routes'].addEventListener('click', (e) => {
-      const b = (e.target as HTMLElement).closest<HTMLElement>('[data-route]');
-      if (b && this.last?.step === 'exit') h.onCorridor(b.dataset.route!);
-    });
     this.el['btn-execute'].addEventListener('click', () => {
       if (this.last?.canExecute) h.onExecute();
     });
@@ -348,12 +344,15 @@ export class MissionBoard {
     this.renderCard(f);
     // routes and the plan
     this.el['mb-plan-head'].textContent = f.step === 'find' ? 'STEP 2 · WAY OUT' : 'WAY OUT';
+    // the route is picked on the map; here it is only read back, in one line
+    const pick = f.corridors.find((c) => c.selected);
     set(
       'routes',
-      f.corridors.map((c) => `<button type="button" class="rt${c.selected ? ' on' : ''}" data-route="${c.id}" ${f.step === 'find' ? 'disabled' : ''}><b>${c.short}</b><small>${c.known}/${c.total} SCOUTED</small></button>`).join(''),
+      pick ? `<b>${esc(pick.label)}</b><small>${pick.known}/${pick.total} SPOTS SCOUTED · TAP ANOTHER LINE TO CHANGE</small>` : f.step === 'exit' ? '<small>TAP A ROUTE LINE ON THE MAP</small>' : '',
       this.el['mb-routes'],
     );
-    set('preview', fc ? fc.lines.map((l) => `<li class="${l.tone}"><small>${l.label}</small><b>${esc(l.value)}</b></li>`).join('') : `<li class="mb-hint">${f.step === 'find' ? 'Find the truck first. The way out comes next.' : 'Tap a route home. Tap a ? on it to scout it.'}</li>`, this.el['mb-preview']);
+    this.el['mb-routes'].classList.toggle('on', !!pick);
+    set('preview', fc ? fc.lines.map((l) => `<li class="${l.tone}"><small>${l.label}</small><b>${esc(l.value)}</b></li>`).join('') : `<li class="mb-hint">${f.step === 'find' ? 'Find the truck first. The way out comes next.' : 'Tap a ? on a route to scout it first, if you like.'}</li>`, this.el['mb-preview']);
     const ex = this.el['btn-execute'] as HTMLButtonElement;
     ex.disabled = !f.canExecute;
     ex.classList.toggle('ready', f.canExecute);

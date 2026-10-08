@@ -728,7 +728,6 @@ img.thermal { filter: grayscale(1) invert(1) brightness(0.55) contrast(2.2); }
 .mb-step .sg:disabled { opacity: 0.4; }
 .mb-step .sj { min-height: 38px; padding: 4px 10px; border-radius: 8px; border: 1px dashed rgba(232, 243, 234, 0.3); background: transparent; color: rgba(232, 243, 234, 0.7); font-size: 9px; letter-spacing: 0.14em; }
 .board.step-find .mb-plan { opacity: 0.4; }
-.board.step-find .mb-plan .rt { pointer-events: none; }
 @keyframes mb-go { 50% { box-shadow: 0 0 0 5px rgba(242, 169, 59, 0.28); } }
 .mb-toast { position: absolute; right: 8px; bottom: 8px; display: flex; flex-direction: column-reverse; align-items: flex-end; gap: 4px; max-width: 64%; pointer-events: none; }
 .tst { background: rgba(4, 18, 10, 0.93); border: 1px solid var(--ph-dim); border-left: 3px solid var(--ph); border-radius: 6px; padding: 4px 9px; animation: mb-tst 0.28s cubic-bezier(0.2, 1.4, 0.4, 1); }
@@ -797,11 +796,12 @@ img.thermal { filter: grayscale(1) invert(1) brightness(0.55) contrast(2.2); }
 .how i { font-style: normal; color: var(--ph); }
 .mb-plan { display: flex; flex-direction: column; gap: 6px; margin-top: auto; padding-top: 6px; border-top: 1px solid rgba(242, 169, 59, 0.3); }
 .mb-plan h3 { margin: 0; font-size: 9px; letter-spacing: 0.24em; color: var(--amber); font-weight: 500; }
-.mb-routes { display: flex; gap: 5px; }
-.rt { flex: 1; min-height: 42px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; border: 1px solid rgba(232, 243, 234, 0.3); border-radius: 7px; background: transparent; color: rgba(232, 243, 234, 0.8); }
-.rt b { font-size: 11px; letter-spacing: 0.14em; }
-.rt small { font-size: 8px; letter-spacing: 0.1em; color: rgba(232, 243, 234, 0.5); }
-.rt.on { border-color: var(--amber); background: rgba(242, 169, 59, 0.16); color: var(--amber); }
+/* the route picked on the map, read back in one line (no buttons: the map is where you choose) */
+.mb-routes { display: flex; flex-direction: column; gap: 2px; min-height: 34px; justify-content: center; padding: 4px 10px; border-left: 3px solid rgba(232, 243, 234, 0.2); }
+.mb-routes:empty { display: none; }
+.mb-routes b { font-size: 12px; letter-spacing: 0.18em; color: var(--amber); }
+.mb-routes small { font-size: 9px; letter-spacing: 0.1em; color: rgba(232, 243, 234, 0.6); }
+.mb-routes.on { border-left-color: var(--amber); background: rgba(242, 169, 59, 0.08); }
 .mb-preview { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 3px 10px; }
 .mb-preview li { display: flex; align-items: baseline; gap: 4px; min-width: 0; }
 .mb-preview li small { font-size: 8px; letter-spacing: 0.16em; color: rgba(232, 243, 234, 0.45); }
@@ -873,7 +873,6 @@ img.thermal { filter: grayscale(1) invert(1) brightness(0.55) contrast(2.2); }
   .mb-card { padding: 6px; gap: 5px; }
   .mb-card .traits { display: none; }
   .mb-plan { gap: 4px; padding-top: 4px; }
-  .rt { min-height: 36px; }
   .btn.execute { min-height: 42px; font-size: 13px; padding: 8px; }
   .act { min-height: 40px; }
   .mr-card { gap: 16px; }
@@ -1093,4 +1092,25 @@ img.thermal { filter: grayscale(1) invert(1) brightness(0.55) contrast(2.2); }
   #btn-mission { min-height: 48px; white-space: nowrap; }
   #mission-card .mb-code { grid-column: 1 / -1; }
   #mission-card .alt-mode { padding-top: 0; }
+}
+
+/* ============================================================
+   The scope lives on the right in a mission: the left thumb steers
+   (the stick zone is the left half), so on the left it was always
+   under a finger. Bottom-right, under the throttle; the buttons sit
+   just left of it; the station tag takes the old corner under the
+   steering thumb, where covering it costs nothing.
+   ============================================================ */
+#hud.mission { --scope: 150px; }
+#hud.mission .scope-wrap { left: auto; right: calc(var(--sar) + 12px); bottom: calc(var(--sab) + 12px); width: var(--scope); height: var(--scope); }
+#hud.mission .buttons { right: calc(var(--sar) + 22px + var(--scope)); left: auto; transform: none; }
+#hud.mission .station-tag { left: calc(var(--sal) + 12px); bottom: calc(var(--sab) + 14px); transform: none; }
+@media (max-width: 760px), (max-height: 460px) {
+  #hud.mission { --scope: 120px; }
+}
+@media (orientation: portrait) and (max-width: 600px) {
+  #hud.mission { --scope: 112px; }
+  /* tall and narrow: the buttons keep the centre of the bottom edge; the tag sits above the stick */
+  #hud.mission .buttons { right: auto; left: 50%; transform: translateX(-50%); }
+  #hud.mission .station-tag { bottom: calc(var(--sab) + 186px); left: 50%; transform: translateX(-50%); }
 }
