@@ -42,7 +42,7 @@ import { BARGE, destinationRoute, evidenceGrade, newMission, TARGET, useReturns,
 import { engageOperator, handBack, newCrew, operatorAvailability, tickCrew, type CrewState } from '../mission/crew';
 import { inArea } from '../mission/missionDef';
 import { orbitInput } from '../flight/autopilot';
-import { allCells, ASSET_ORDER, ASSETS, assetFitted, belief, canUse, chooseCorridor, clockLeft, clueChecks, isKnown as cellKnown, mark, newBoard, ruledOut, scoreBoard, tickBoard, traits, useAsset, type AssetId, type BoardEvent, type BoardState, type ControlResult, type Target } from '../control/board';
+import { allCells, ASSET_ORDER, ASSETS, assetFitted, LOOK_LABEL, belief, canUse, chooseCorridor, clockLeft, clueChecks, isKnown as cellKnown, mark, newBoard, ruledOut, scoreBoard, tickBoard, traits, useAsset, type AssetId, type BoardEvent, type BoardState, type ControlResult, type Target } from '../control/board';
 import { buildExit, TIER_LABEL, type ExitProfile } from '../control/exit';
 import { CONTROL_01 } from '../mission/mission01Control';
 import { boardStep, MissionBoard, URGENT_SECONDS, type BoardAction, type BoardFrame, type StepAction } from '../ui/missionBoard';
@@ -1504,7 +1504,7 @@ export class Game {
     if (target.kind !== 'none') this.board.select(target);
     this.pending = { asset, target, t: 0, dur: ASSETS[asset].cost };
     if (asset === 'drone' || asset === 'scouts') this.audio.drop();
-    else if (asset === 'sigint') this.audio.link();
+    else if (asset === 'sigint' || asset === 'listen') this.audio.link();
     else if (asset === 'shadow') this.audio.contact();
     else this.audio.radarOn();
   }
@@ -1530,9 +1530,9 @@ export class Game {
     const p = this.pending!;
     this.pending = null;
     const ev = useAsset(this.control, RETURNS, inSector, this.def.control.clues, p.asset, p.target);
-    if (p.target.kind === 'return' && (p.asset === 'optical' || p.asset === 'thermal' || p.asset === 'drone')) {
+    if (p.target.kind === 'return' && (p.asset === 'optical' || p.asset === 'thermal')) {
       // the look leaves a print: the last frame of the telephoto feed
-      const q = { optical: 0.92, drone: 0.8, thermal: 0.72 }[p.asset] + this.cap.photoBonus;
+      const q = { optical: 0.92, thermal: 0.72 }[p.asset] + this.cap.photoBonus;
       const old = this.photos.get(p.target.id);
       if (!old || q >= old.quality) {
         try {
@@ -1675,7 +1675,8 @@ export class Game {
       const actions: BoardAction[] = [];
       if (!r.hidden) {
         // the looks first, then the decision
-        for (const a of fitted) if (a === 'optical' || a === 'thermal' || a === 'drone') actions.push(act(a, { kind: 'return', id: r.id }, `LOOK · ${ASSETS[a].label}`));
+        // each look answers a different question: the shape and the road, the shape and the engine, the radio
+        for (const a of fitted) if (a === 'optical' || a === 'thermal' || a === 'listen') actions.push(act(a, { kind: 'return', id: r.id }, LOOK_LABEL[a]));
         if (!b.marked && !b.wrong.includes(r.id)) actions.push({ kind: 'mark', label: 'MARK AS THE TRUCK', ok: !busy, reason: '' });
       }
       return { id: r.id, x: mv.x, z: mv.z, moving: mv.moving, status: status as BoardFrame['returns'][number]['status'], traits: traits(r, k, sec), checks, photo: this.photos.get(r.id) ?? null, actions };
@@ -1764,7 +1765,7 @@ export class Game {
    */
   private renderBoardFeed(): void {
     const p = this.pending;
-    if (!p || p.target.kind !== 'return' || !(p.asset === 'optical' || p.asset === 'thermal' || p.asset === 'drone')) return;
+    if (!p || p.target.kind !== 'return' || !(p.asset === 'optical' || p.asset === 'thermal')) return;
     const canvas = this.board.feed;
     const w = Math.round(canvas.clientWidth);
     const h = Math.round(canvas.clientHeight);
@@ -1780,8 +1781,8 @@ export class Game {
     const dx = this.a.x - mv.x;
     const dz = this.a.z - mv.z;
     const l = Math.hypot(dx, dz) || 1;
-    const back = p.asset === 'drone' ? 40 : 230;
-    const up = p.asset === 'drone' ? 140 : 170;
+    const back = 230;
+    const up = 170;
     const cam = this.sensorCam;
     cam.position.set(mv.x + (dx / l) * back, gy + up, mv.z + (dz / l) * back);
     cam.up.set(0, 1, 0);

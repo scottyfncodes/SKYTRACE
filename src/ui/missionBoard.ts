@@ -373,7 +373,7 @@ export class MissionBoard {
     const vf = this.el['mb-vf'];
     const img = this.el['mb-vf-img'] as HTMLImageElement;
     const pend = f.pending && sel && key(f.pending.target) === key(sel) ? f.pending : null;
-    const looking = !!pend && pend.target.kind === 'return' && (pend.asset === 'optical' || pend.asset === 'thermal' || pend.asset === 'drone');
+    const looking = !!pend && pend.target.kind === 'return' && (pend.asset === 'optical' || pend.asset === 'thermal');
     let headHtml = '';
     let bodyHtml = '';
     let photo: BoardReturn['photo'] = null;
@@ -634,7 +634,18 @@ export class MissionBoard {
       const to = p.target.kind === 'return' ? f.returns.find((r) => r.id === (p.target as { id: ReturnId }).id) : p.target.kind === 'cell' ? f.cells.find((c) => c.id === (p.target as { id: string }).id) : null;
       const [fx, fy] = P(p.from.x, p.from.z);
       const k = Math.min(1, p.k);
-      if (p.asset === 'sigint') {
+      if (p.asset === 'listen' && to) {
+        // tuning in on one vehicle: rings close in on it
+        const [tx, ty] = P(to.x, to.z);
+        for (let i = 0; i < 3; i++) {
+          const kk = (k * 1.4 + i / 3) % 1;
+          ctx.strokeStyle = `rgba(143,208,255,${0.85 * kk})`;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(tx, ty, 6 + (1 - kk) * 26, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      } else if (p.asset === 'sigint') {
         for (let i = 0; i < 3; i++) {
           const kk = (k * 1.6 + i / 3) % 1;
           ctx.strokeStyle = `rgba(143,208,255,${0.8 * (1 - kk)})`;
@@ -659,6 +670,7 @@ export class MissionBoard {
         ctx.stroke();
         ctx.setLineDash([]);
         if (p.asset === 'drone' || p.asset === 'scouts') {
+          // flown out to a route spot
           ctx.fillStyle = C.ice;
           ctx.font = 'bold 13px ui-monospace, Menlo, monospace';
           ctx.fillText(p.asset === 'drone' ? '✈' : '⌂', fx + (tx - fx) * ease - 6, fy + (ty - fy) * ease + 5);

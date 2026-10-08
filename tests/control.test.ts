@@ -5,7 +5,7 @@
  * meaningfully different exits.
  */
 import { describe, expect, it } from 'vitest';
-import { allCells, ASSETS, belief, canUse, chooseCorridor, clockLeft, clueChecks, isKnown, mark, newBoard, ruledOut, scoreBoard, tickBoard, useAsset, WRONG_MARK_SECONDS, type AssetId, type BoardState, type CellTruth, type Target } from '../src/control/board';
+import { allCells, ASSETS, VEHICLE_LOOKS, belief, canUse, chooseCorridor, clockLeft, clueChecks, isKnown, mark, newBoard, ruledOut, scoreBoard, tickBoard, useAsset, WRONG_MARK_SECONDS, type AssetId, type BoardState, type CellTruth, type Target } from '../src/control/board';
 import { buildExit, DECK_BLIND, DECK_KNOWN, TIER } from '../src/control/exit';
 import { CONTROL_01 } from '../src/mission/mission01Control';
 import { DECOYS, DEFAULT_RETURNS, rollReturns, SECTOR_7, type ReturnDef, type ReturnId } from '../src/mission/mission01';
@@ -97,7 +97,7 @@ describe('the board: what it starts with', () => {
   });
 
   it('every look takes real seconds, not clock deductions: the clock is the only currency', () => {
-    for (const a of Object.values(ASSETS)) expect(a.cost).toBeGreaterThanOrEqual(5);
+    for (const a of Object.values(ASSETS)) expect(a.cost, a.id).toBeGreaterThanOrEqual(3);
     const b = fresh();
     use(b, 'optical', ret('C'));
     expect(b.seconds).toBe(90); // the seconds pass while the look plays (tickBoard), never up front
@@ -195,8 +195,41 @@ describe('assets: each answers a different question, for a price', () => {
     use(b, 'optical', ret('E'));
     use(b, 'thermal', ret('E'));
     expect(ruledOut(clueChecks(E, b.returns.E!, inSector(E), def.clues))).toBe(false);
-    use(b, 'drone', ret('E'));
+    use(b, 'listen', ret('E'));
     expect(ruledOut(clueChecks(E, b.returns.E!, inSector(E), def.clues))).toBe(true);
+  });
+
+  it('every look at a vehicle answers a different question, and the drone never looks at one', () => {
+    const b = fresh(5, DEFAULT_RETURNS, ['radar', 'optical', 'thermal']);
+    const known = (id: ReturnId) => { const k = b.returns[id]!; return { size: k.size, road: k.road, engine: k.engine, radio: k.radio }; };
+    use(b, 'optical', ret('B'));
+    expect(known('B')).toEqual({ size: true, road: true, engine: false, radio: false });
+    use(b, 'thermal', ret('D'));
+    expect(known('D')).toEqual({ size: true, road: false, engine: true, radio: false });
+    use(b, 'listen', ret('C'));
+    expect(known('C')).toEqual({ size: false, road: false, engine: false, radio: true });
+    // the three answer three different sets of questions; LISTEN shares nothing with the camera
+    const sets = Object.values(VEHICLE_LOOKS).map((q) => [...q].sort().join('+'));
+    expect(new Set(sets).size).toBe(sets.length);
+    expect(VEHICLE_LOOKS.listen.some((q) => (VEHICLE_LOOKS.optical as readonly string[]).includes(q))).toBe(false);
+    // the drone is a route asset only
+    expect(canUse(b, DEFAULT_RETURNS, 'drone', ret('A')).ok).toBe(false);
+    expect(canUse(b, DEFAULT_RETURNS, 'drone', cell('N1')).ok).toBe(true);
+    // asking the same question twice is refused
+    expect(canUse(b, DEFAULT_RETURNS, 'listen', ret('C')).reason).toBe('NOTHING NEW');
+    expect(canUse(b, DEFAULT_RETURNS, 'optical', ret('C')).ok).toBe(true);
+  });
+
+  it('with the default kit, every clue the radar leaves open has exactly one button', () => {
+    const b = fresh(5);
+    // radar answers MOVING and IN SECTOR 7 for free; OPTICAL answers LARGE and ON A ROAD; LISTEN answers RADIO DEAD
+    const C = DEFAULT_RETURNS[2];
+    const open = () => clueChecks(C, b.returns.C!, inSector(C), def.clues).filter((c) => c.check === '?').map((c) => c.clue);
+    expect(open()).toEqual(['LARGE', 'ON A ROAD', 'RADIO DEAD']);
+    use(b, 'optical', ret('C'));
+    expect(open()).toEqual(['RADIO DEAD']);
+    use(b, 'listen', ret('C'));
+    expect(open()).toEqual([]);
   });
 
   it('when the tower was wrong, finding out says so', () => {
@@ -278,7 +311,7 @@ describe('score: different decisions, different results', () => {
     const b = fresh();
     use(b, 'optical', ret('B')); // the scouts: three small vehicles
     use(b, 'optical', ret('F')); // the tanker pair: two large
-    use(b, 'drone', ret('E')); // the quarry tipper: talking
+    use(b, 'listen', ret('E')); // the quarry tipper: talking
     mark(b, DEFAULT_RETURNS, 'C');
     expect(score(b).confirmed).toBe(true);
     const h = fresh();
