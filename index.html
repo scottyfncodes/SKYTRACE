@@ -7,227 +7,152 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="SKYTRACE" />
-    <meta name="theme-color" content="#0b1410" />
-    <meta name="description" content="SKYTRACE — an aerial reconnaissance mystery. Fly, scan, mark, deploy, connect the dots." />
+    <meta name="theme-color" content="#1f6fc0" />
+    <meta name="description" content="SKYTRACE: Search &amp; Rescue. Plan the rescue, fly the mission, lower the basket, bring people home." />
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./icon-180.png" />
-    <title>SKYTRACE</title>
+    <title>SKYTRACE · Search &amp; Rescue</title>
   </head>
   <body>
     <div id="app">
       <canvas id="gl"></canvas>
-      <div id="fx" class="fx" aria-hidden="true"><i class="rain"></i></div>
 
-      <div id="loading">LOADING TERRAIN MODEL…</div>
+      <div id="loading"><div class="ld-mark">✚</div><div>SKYTRACE</div><small>Warming up the rotors…</small></div>
 
-      <!-- ===== TITLE / MISSION BRIEFING ===== -->
-      <section id="title" class="screen hidden">
-        <!-- the sensor already looking: a reticle sweeps the basin behind the card -->
-        <div class="recon-sweep" aria-hidden="true"><i class="rs-ret"></i></div>
-        <div id="mission-card" class="title-card">
-          <h1>SKYTRACE</h1>
-          <p class="tag">AERIAL RECON · VARROW BASIN</p>
-          <div id="mission-brief" class="mission-brief"></div>
-          <div id="case-pages" class="case-pages hidden" aria-label="Case file pages"></div>
-          <div class="title-actions">
-            <button id="btn-mission" class="btn big">PLAN OPERATION</button>
-          </div>
-          <p id="career-line" class="career-line hidden"></p>
-          <div class="alt-mode">
-            <button id="btn-open-case" class="btn ghost">OPEN CASE ›</button>
-          </div>
+      <!-- ===== TITLE ===== -->
+      <section id="title" class="screen title hidden" aria-label="Title">
+        <div class="t-brand">
+          <div class="t-logo"><span class="t-cross" aria-hidden="true">✚</span>SKYTRACE</div>
+          <div class="t-sub">SEARCH &amp; RESCUE</div>
+          <p class="t-line">Someone needs help. Fly out, lower the basket, bring them home.</p>
         </div>
-        <div id="case-card" class="title-card hidden">
-          <h1>SKYTRACE</h1>
-          <p class="tag">OPEN CASE · VARROW BASIN</p>
-          <div id="brief"></div>
-          <div class="title-actions">
-            <button id="btn-begin" class="btn big">TAKE OFF</button>
-            <button id="btn-continue" class="btn big hidden">CONTINUE</button>
-            <button id="btn-newcase-title" class="btn ghost hidden">NEW CASE</button>
-            <button id="btn-case-back" class="btn ghost">‹ MISSION 01</button>
-          </div>
-          <p class="controls-hint">Stick or arrows to fly · SCAN for ground radar · MARK a contact · DROP a sensor · MAP for intelligence</p>
+        <div class="t-calls">
+          <div class="t-calls-head"><span>RESCUE CALLS</span><em id="t-saved"></em></div>
+          <div id="call-list" class="call-list"></div>
+          <div id="t-coming" class="t-coming"></div>
+          <button id="btn-title-settings" class="text-btn" type="button">⚙︎ Controls &amp; sound</button>
         </div>
       </section>
 
-      <!-- ===== PREFLIGHT: briefing + aircraft, crew, equipment ===== -->
-      <section id="preflight" class="screen preflight hidden" aria-label="Preflight">
-        <header class="pf-bar">
-          <button id="btn-pf-back" class="btn ghost" aria-label="Back">‹</button>
-          <div class="pf-id"><b>PREFLIGHT</b><span id="pf-career"></span></div>
+      <!-- ===== PRE-FLIGHT ===== -->
+      <section id="preflight" class="screen preflight hidden" aria-label="Pre-Flight">
+        <header class="pf-head">
+          <button id="btn-pf-back" class="round-btn" type="button" aria-label="Back">‹</button>
+          <div class="pf-alert"><i class="siren" aria-hidden="true"></i>NEW RESCUE</div>
+          <div class="pf-step">PRE-FLIGHT</div>
         </header>
         <div class="pf-body">
-          <div id="pf-brief" class="pf-brief"></div>
-          <div class="pf-load">
+          <div class="pf-left">
+            <div class="pf-situation">
+              <div id="pf-icon" class="pf-icon">🏔️</div>
+              <div>
+                <h1 id="pf-title">MOUNTAIN RESCUE</h1>
+                <p id="pf-situation" class="pf-sit"></p>
+                <p id="pf-place" class="pf-place"></p>
+              </div>
+            </div>
+            <div id="pf-conditions" class="pf-conditions" aria-label="Conditions"></div>
+            <div class="pf-map"><canvas id="pf-map" aria-label="Map"></canvas></div>
+          </div>
+          <div class="pf-right">
+            <div id="pf-recommended" class="pf-recommended"></div>
             <h3>AIRCRAFT</h3>
-            <div id="pf-aircraft" class="pf-cards"></div>
-            <div class="pf-crew-wrap"><h3>CREW</h3><div id="pf-crew" class="pf-crew"></div></div>
+            <div id="pf-vehicles" class="pf-row"></div>
+            <h3>CREW</h3>
+            <div id="pf-crew" class="pf-row"></div>
             <h3>EQUIPMENT <small id="pf-slots"></small></h3>
-            <div id="pf-equip" class="pf-cards"></div>
+            <div id="pf-equip" class="pf-row"></div>
           </div>
         </div>
         <footer class="pf-foot">
-          <div id="pf-check" class="pf-check"></div>
-          <button id="btn-launch" class="btn big">TAKE OFF</button>
+          <div id="pf-notes" class="pf-notes" aria-live="polite"></div>
+          <button id="btn-launch" class="launch-btn" type="button">LAUNCH MISSION</button>
         </footer>
       </section>
 
       <!-- ===== FLIGHT HUD ===== -->
-      <section id="hud" class="screen hidden">
-        <div class="instr">
-          <div class="inst"><label>ALT</label><b id="alt">0</b><small>m AGL</small></div>
-          <div class="inst"><label>SPD</label><b id="spd">0</b><small>km/h</small></div>
-          <div class="inst"><label>HDG</label><b id="hdg">000</b><small>°</small></div>
-          <div id="compass" class="compass"><div class="tape"><span>N</span><span>NE</span><span>E</span><span>SE</span><span>S</span><span>SW</span><span>W</span><span>NW</span><span>N</span></div><i></i></div>
+      <section id="hud" class="screen hud hidden" aria-label="Flight">
+        <div class="hud-top">
+          <div id="objective" class="objective" role="status" aria-live="polite"><span id="obj-icon" class="obj-icon">🔎</span><div class="obj-text"><b id="obj-title"></b><small id="obj-detail"></small></div></div>
+          <div id="nav" class="nav"><i id="nav-arrow" class="nav-arrow"></i><b id="nav-dist"></b><small id="nav-label"></small></div>
+          <div class="hud-right">
+            <div id="people" class="people" aria-label="Survivors"></div>
+            <div class="fuel" aria-label="Fuel"><span>FUEL</span><div class="bar"><i id="fuel-fill"></i></div></div>
+            <button id="btn-pause" class="round-btn pause" type="button" aria-label="Pause">II</button>
+          </div>
         </div>
-        <div class="status">
-          <div id="sortie" class="sortie">SORTIE 1</div>
-          <div class="fuel"><label>FUEL</label><div class="bar"><i id="fuel-fill"></i></div><b id="fuel-txt">5:00</b></div>
-          <div class="pk"><label>SENSOR PKGS</label><b id="sensors">1</b></div>
-          <button id="btn-pause" class="icon" aria-label="Pause">II</button>
-        </div>
-        <div id="objective" class="objective hidden" role="status" aria-live="polite"><div class="obj-top"><span id="obj-phase" class="obj-phase"></span><small id="obj-kicker" class="obj-kicker"></small></div><div class="obj-title"><i class="reticle"></i><b id="obj-title">LOCATE THE SUPPLY TRUCK</b></div><div id="obj-detail" class="obj-detail"></div><div class="obj-progress"><i id="obj-progress"></i></div></div>
-        <div id="nav" class="nav"></div>
-        <div id="chips" class="chips"></div>
-        <div id="signal" class="signal"></div>
-        <div id="msgs" class="msgs"></div>
+        <div id="radio" class="radio" aria-live="polite"><b id="radio-who"></b><span id="radio-text"></span></div>
+        <div id="banner" class="banner" aria-live="assertive"><b id="banner-text"></b><small id="banner-sub"></small></div>
         <div id="warn" class="warn"></div>
         <div id="hint" class="hint"></div>
-        <div id="radar-state" class="radar-state">RADAR STANDBY</div>
-        <div id="station-tag" class="station-tag"><i></i>PILOT · YOU ARE FLYING</div>
+        <canvas id="minimap" class="minimap" aria-hidden="true"></canvas>
+        <div id="readout" class="readout"></div>
 
-        <div class="scope-wrap"><canvas id="scope"></canvas></div>
-
-        <div id="contact-card" class="contact-card">
-          <div class="cc-head"><b id="cc-code">K-1</b><span id="cc-status">DETECTED</span></div>
-          <div id="cc-label" class="cc-label">UNIDENTIFIED RETURN</div>
-          <div class="cc-meta"><span id="cc-grid">F-5</span> · CONFIDENCE <span id="cc-conf">0%</span></div>
-          <div id="cc-traits" class="cc-traits"></div>
-          <div id="cc-action" class="cc-action"></div>
+        <div id="stick-zone" class="stick-zone"><div id="stick-knob" class="stick-knob"></div><span class="stick-label" id="stick-label">STEER · CLIMB</span></div>
+        <div id="throttle" class="throttle">
+          <label id="thr-label">SPEED</label>
+          <div class="thr-track"><i id="thr-fill"></i><span id="thr-handle" class="thr-handle"></span><span id="thr-basket" class="thr-basket"></span></div>
+          <small id="thr-hint">HOVER</small>
         </div>
-
-        <div id="stick-zone" class="stick-zone"><div id="stick-knob" class="stick-knob"></div></div>
-        <div id="throttle" class="throttle"><div class="thr-track"><i id="thr-fill"></i></div><label>THR</label></div>
-
-        <div class="buttons">
-          <button id="btn-rtb" class="hb rtb">LAND</button>
-          <button id="btn-scan" class="hb scan">SCAN</button>
-          <button id="btn-mark" class="hb mark">MARK</button>
-          <button id="btn-drop" class="hb drop">DROP</button>
-          <button id="btn-map" class="hb map">MAP</button>
-          <button id="btn-ops" class="hb ops">MISSION<br />CONTROL</button>
-        </div>
+        <button id="btn-action" class="action-btn hidden" type="button"></button>
       </section>
 
-      <!-- ===== MISSION CONTROL: the board between the two flights ===== -->
-      <section id="board" class="screen board hidden" aria-label="Mission control">
-        <header class="mb-bar">
-          <div class="mb-id"><b><em class="ph-tag">01 RECON <i class="dots"><i class="now"></i><i></i><i></i></i></em> MISSION CONTROL</b><span><i></i><em id="mb-control">AUTOPILOT ORBITING</em></span></div>
-          <div class="mb-clock"><small>FRONT IN</small><div class="mb-bar-track"><i id="mb-bar-fill"></i></div><b id="mb-min">1:30</b></div>
-          <div class="mb-fuel"><small>FUEL</small><b id="mb-fuel">0:00</b></div>
-          <div id="mb-forecast" class="mb-forecast"></div>
-          <button id="btn-mb-pause" class="icon" aria-label="Pause">II</button>
-        </header>
-        <div class="mb-body">
-          <div class="mb-left">
-            <div id="mb-step" class="mb-step" aria-label="Step"></div>
-            <div class="mb-mapwrap">
-              <canvas id="mb-map"></canvas>
-              <div id="mb-toast" class="mb-toast" aria-live="polite"></div>
-            </div>
-          </div>
-          <aside class="mb-panel">
-            <div class="mb-card">
-              <div id="mb-card-head" class="mb-card-head"></div>
-              <div id="mb-vf" class="mb-vf hidden"><canvas id="mb-feed"></canvas><img id="mb-vf-img" alt="" /><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i></div>
-              <div id="mb-card-body" class="mb-card-body"></div>
-            </div>
-            <div class="mb-plan">
-              <h3 id="mb-plan-head">WAY OUT</h3>
-              <div id="mb-routes" class="mb-routes"></div>
-              <ul id="mb-preview" class="mb-preview"></ul>
-              <button id="btn-execute" type="button" class="btn execute" disabled>LOCK THE PLAN ▶</button>
-              <p id="mb-exec-hint" class="mb-exec-hint"></p>
-            </div>
-          </aside>
-        </div>
-        <div id="mb-result" class="mb-result hidden" aria-live="polite"></div>
-      </section>
-
-      <!-- hand-over between stations -->
-      <div id="handoff" class="handoff hidden" aria-live="assertive"><div class="handoff-card"><small id="ho-kicker"></small><b id="ho-title"></b><ul id="ho-warn" class="ho-warn"></ul><ul id="ho-status" class="ho-status"></ul></div></div>
-      <!-- a phase begins: 01 RECON / 02 EXECUTE / 03 ESCAPE -->
-      <div id="phase-card" class="phase-card hidden" aria-live="assertive"><div class="pc-in"><div class="pc-num"><b id="pc-n">01</b><span id="pc-dots" class="pc-dots"></span></div><small id="pc-label">RECON</small><b id="pc-title"></b><p id="pc-line"></p></div></div>
-      <div id="banner" class="banner" aria-live="assertive"><small id="banner-kicker"></small><b id="banner-text"></b></div>
+      <!-- launch / landing cards, and the big moments -->
+      <div id="card" class="moment hidden" aria-live="assertive"><small id="card-kicker"></small><b id="card-title"></b><span id="card-line"></span></div>
+      <div id="flash" class="flash"></div>
 
       <!-- ===== PAUSE ===== -->
-      <section id="pause" class="screen overlay hidden">
-        <div class="card">
-          <h2>PAUSED</h2>
-          <div id="pause-objective" class="pause-objective hidden"></div>
-          <p class="muted">Keyboard: arrows / WASD fly · Shift / Ctrl throttle · Space radar · M mark · E drop · Tab map · R land · Esc pause</p>
-          <button id="btn-resume-pause" class="btn big">RESUME</button>
-          <button id="btn-map-pause" class="btn">INTELLIGENCE MAP</button>
-          <button id="btn-end-sortie" class="btn ghost">END SORTIE · RETURN TO BASE</button>
-          <button id="btn-sound-pause" class="btn ghost">SOUND ON</button>
-          <div class="settings" aria-label="Flight controls">
-            <div class="set-head">FLIGHT CONTROLS</div>
+      <section id="pause" class="screen overlay hidden" aria-label="Paused">
+        <div class="sheet">
+          <h2 id="pause-title">PAUSED</h2>
+          <p id="pause-objective" class="pause-objective"></p>
+          <div class="sheet-actions">
+            <button id="btn-resume" class="launch-btn" type="button">RESUME</button>
+            <button id="btn-restart" class="ghost-btn" type="button">RESTART MISSION</button>
+            <button id="btn-abort" class="ghost-btn" type="button">BACK TO RESCUE CALLS</button>
+          </div>
+          <div class="settings" aria-label="Settings">
             <div class="set-row">
-              <span class="set-name">VERTICAL</span>
+              <span class="set-name">CLIMB</span>
               <div class="seg" role="radiogroup" aria-label="Vertical stick direction">
-                <button type="button" role="radio" data-vert="standard" aria-checked="true" class="on">STANDARD</button>
-                <button type="button" role="radio" data-vert="inverted" aria-checked="false">INVERTED</button>
+                <button type="button" role="radio" data-vert="standard" aria-checked="true" class="on">STICK UP</button>
+                <button type="button" role="radio" data-vert="inverted" aria-checked="false">STICK DOWN</button>
               </div>
             </div>
-            <div id="vert-note" class="set-note">Stick up / ↑ climbs</div>
             <div class="set-row">
-              <span class="set-name">STEERING</span>
-              <div class="seg" role="radiogroup" aria-label="Which side of the screen steers">
-                <button type="button" role="radio" data-steer="left" aria-checked="true" class="on">LEFT</button>
-                <button type="button" role="radio" data-steer="right" aria-checked="false">RIGHT</button>
+              <span class="set-name">STEER WITH</span>
+              <div class="seg" role="radiogroup" aria-label="Which thumb steers">
+                <button type="button" role="radio" data-steer="left" aria-checked="true" class="on">LEFT THUMB</button>
+                <button type="button" role="radio" data-steer="right" aria-checked="false">RIGHT THUMB</button>
               </div>
             </div>
-            <div id="steer-note" class="set-note">Steer on the left · scope and throttle on the right</div>
+            <div class="set-row">
+              <span class="set-name">SOUND</span>
+              <div class="seg">
+                <button type="button" id="btn-sound" class="on">ON</button>
+                <button type="button" id="btn-voice" class="on">RADIO VOICE</button>
+              </div>
+            </div>
+            <p class="muted">Keyboard: arrows / WASD steer and climb · Shift / Ctrl speed (in a hover: reel in / let out) · Space hover &amp; hoist · Esc pause</p>
           </div>
         </div>
       </section>
 
-      <!-- ===== MISSION DEBRIEF ===== -->
-      <section id="debrief" class="screen overlay hidden">
-        <div class="card debrief-card">
-          <div class="db-head">
-            <div><p id="db-code" class="tag">OPERATION 01 · DEBRIEF</p><h2 id="db-headline">MISSION COMPLETE</h2><p id="db-aircraft" class="db-aircraft"></p></div>
-            <div id="db-grade" class="db-grade">A</div>
-          </div>
-          <div id="db-stages" class="db-stages"></div>
-          <div id="db-story" class="db-story"></div>
-          <div id="db-control" class="db-control"></div>
-          <div id="db-photos" class="db-photos"></div>
-          <div id="db-rewards" class="db-rewards"></div>
-          <details class="db-more"><summary>FULL REPORT</summary><dl id="db-rows-more" class="db-rows"></dl><div id="db-secondaries" class="db-secondaries"></div><div id="db-findings" class="db-findings"></div></details>
-          <div class="db-actions">
-            <button id="btn-fly-again" class="btn big">PLAN NEXT OPERATION</button>
-            <button id="btn-debrief-menu" class="btn ghost">MAIN MENU</button>
+      <!-- ===== DEBRIEF ===== -->
+      <section id="debrief" class="screen overlay hidden" aria-label="Debrief">
+        <div class="sheet debrief">
+          <div id="db-headline" class="db-headline">RESCUE COMPLETE</div>
+          <div id="db-mission" class="db-mission"></div>
+          <div id="db-stars" class="db-stars" aria-label="Stars"></div>
+          <ul id="db-lines" class="db-lines"></ul>
+          <div id="db-unlocks" class="db-unlocks"></div>
+          <div class="sheet-actions">
+            <button id="btn-db-next" class="launch-btn" type="button">NEXT RESCUE</button>
+            <button id="btn-db-again" class="ghost-btn" type="button">FLY IT AGAIN</button>
+            <button id="btn-db-menu" class="ghost-btn" type="button">RESCUE CALLS</button>
           </div>
         </div>
-      </section>
-
-      <!-- ===== INTELLIGENCE WORKSPACE ===== -->
-      <section id="intel" class="screen intel hidden">
-        <header>
-          <div id="intel-title">INTELLIGENCE MAP</div>
-          <div class="hdr-actions"><button id="btn-sound" class="mini">SOUND ON</button><button id="btn-newcase" class="mini">NEW CASE</button></div>
-        </header>
-        <div class="intel-body">
-          <div class="map-wrap"><canvas id="map"></canvas></div>
-          <aside class="side">
-            <nav id="tabs"></nav>
-            <div id="panel" class="panel"></div>
-          </aside>
-        </div>
-        <footer><button id="btn-resume" class="btn big">TAKE OFF</button></footer>
       </section>
     </div>
     <script type="module" src="/src/main.ts"></script>

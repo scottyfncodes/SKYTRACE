@@ -5,12 +5,12 @@ import { tintFarmland } from './countryside';
 import { ROADS, RUNWAY, WATER_LEVEL, WORLD_HALF, WORLD_SIZE, type Pt } from './worldData';
 
 export const PALETTE = {
-  skyTop: 0x6d8fbf,
-  skyHorizon: 0xe6d4b4,
-  fog: 0xd8c8ab,
-  sun: 0xffe2b8,
-  water: 0x3a6f7c,
-  earth: 0x5a4632,
+  skyTop: 0x3f8fdc,
+  skyHorizon: 0xd3ebf6,
+  fog: 0xcfe3ee,
+  sun: 0xfff0d8,
+  water: 0x2f9ed0,
+  earth: 0x6b5238,
 };
 
 export interface SceneBundle {
@@ -21,6 +21,8 @@ export interface SceneBundle {
   heightField: HeightField;
   clouds: THREE.Group;
   update(dt: number, t: number): void;
+  /** 1: a clear day; lower closes the haze in (low cloud on the mountain). */
+  setVisibility(v: number): void;
 }
 
 export function createScene(canvas: HTMLCanvasElement): SceneBundle {
@@ -31,7 +33,8 @@ export function createScene(canvas: HTMLCanvasElement): SceneBundle {
   renderer.toneMappingExposure = 1.05;
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(PALETTE.fog, 650, 2300);
+  const fog = new THREE.Fog(PALETTE.fog, 700, 2600);
+  scene.fog = fog;
 
   const camera = new THREE.PerspectiveCamera(62, 1, 1, 4200);
 
@@ -44,8 +47,8 @@ export function createScene(canvas: HTMLCanvasElement): SceneBundle {
     uniforms: {
       top: { value: new THREE.Color(PALETTE.skyTop) },
       horizon: { value: new THREE.Color(PALETTE.skyHorizon) },
-      sunDir: { value: new THREE.Vector3(-0.55, 0.32, -0.77).normalize() },
-      sunColor: { value: new THREE.Color(0xffd9a0) },
+      sunDir: { value: new THREE.Vector3(-0.5, 0.55, 0.67).normalize() },
+      sunColor: { value: new THREE.Color(0xfff2d0) },
     },
     vertexShader: `varying vec3 vDir; void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
     fragmentShader: `uniform vec3 top; uniform vec3 horizon; uniform vec3 sunDir; uniform vec3 sunColor; varying vec3 vDir;
@@ -57,10 +60,10 @@ export function createScene(canvas: HTMLCanvasElement): SceneBundle {
   scene.add(sky);
 
   // lighting: warm low sun + hemisphere fill, no shadows (mobile)
-  const hemi = new THREE.HemisphereLight(0xbcd0ea, 0x6b5a3e, 0.85);
+  const hemi = new THREE.HemisphereLight(0xd6e8ff, 0x8a8560, 1.15);
   scene.add(hemi);
   const sun = new THREE.DirectionalLight(PALETTE.sun, 1.65);
-  sun.position.set(-550, 330, -770);
+  sun.position.set(-500, 550, 670);
   scene.add(sun);
 
   const heightField = getHeightField();
@@ -80,8 +83,17 @@ export function createScene(canvas: HTMLCanvasElement): SceneBundle {
     }
     sky.position.copy(camera.position);
   };
+  const clearSky = new THREE.Color(PALETTE.skyHorizon);
+  const murk = new THREE.Color(0xb9c4cc);
+  const setVisibility = (v: number): void => {
+    const k = Math.max(0, Math.min(1, v));
+    fog.near = 90 + 610 * k;
+    fog.far = 520 + 2080 * k;
+    fog.color.copy(murk).lerp(new THREE.Color(PALETTE.fog), k);
+    skyMat.uniforms.horizon.value.copy(murk).lerp(clearSky, k);
+  };
 
-  return { renderer, scene, camera, terrain, heightField, clouds, update };
+  return { renderer, scene, camera, terrain, heightField, clouds, update, setVisibility };
 }
 
 function buildTerrain(hf: HeightField): THREE.Mesh {
@@ -91,13 +103,14 @@ function buildTerrain(hf: HeightField): THREE.Mesh {
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const colors = new Float32Array(pos.count * 3);
   const c = new THREE.Color();
-  const grassLow = new THREE.Color(0x67903f);
-  const meadow = new THREE.Color(0x93a94c);
-  const upland = new THREE.Color(0xb7a65c);
-  const rock = new THREE.Color(0x7e766a);
-  const crest = new THREE.Color(0x938b80);
-  const sand = new THREE.Color(0xc4b58c);
-  const forestFloor = new THREE.Color(0x40602e);
+  const grassLow = new THREE.Color(0x5fa83a);
+  const meadow = new THREE.Color(0x92c24c);
+  const upland = new THREE.Color(0xb5b56a);
+  const rock = new THREE.Color(0xa0968a);
+  const crest = new THREE.Color(0x9c958d);
+  const snow = new THREE.Color(0xf7fafd);
+  const sand = new THREE.Color(0xe0d39f);
+  const forestFloor = new THREE.Color(0x3c7a32);
   const scratch = new THREE.Color();
   const marsh = new THREE.Color(0x5b7a44);
   for (let i = 0; i < pos.count; i++) {
@@ -119,6 +132,8 @@ function buildTerrain(hf: HeightField): THREE.Mesh {
     // the patchwork of fields on the open lowland
     if (h >= 7) tintFarmland(x, z, h, slope, c, scratch);
     c.lerp(rock, clamp((slope - 0.12) * 3.2, 0, 1));
+    // snow on Mount Kell, thinning on the steepest crags
+    if (h > 320) c.lerp(snow, clamp((h - 320) / 45, 0, 1) * (1 - clamp((slope - 0.45) * 2, 0, 0.35)));
     c.lerp(forestFloor, f * 0.8);
     // gentle valley shading for a diorama feel
     c.multiplyScalar(0.92 + 0.12 * clamp(h / 120, 0, 1));
@@ -168,7 +183,7 @@ function buildSkirt(hf: HeightField): THREE.Mesh {
 function buildWater(): THREE.Mesh {
   const geo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE);
   geo.rotateX(-Math.PI / 2);
-  const mat = new THREE.MeshLambertMaterial({ color: PALETTE.water, transparent: true, opacity: 0.9, emissive: 0x1d3a44, emissiveIntensity: 0.5 });
+  const mat = new THREE.MeshLambertMaterial({ color: PALETTE.water, transparent: true, opacity: 0.92, emissive: 0x135a7a, emissiveIntensity: 0.45 });
   const m = new THREE.Mesh(geo, mat);
   m.position.y = WATER_LEVEL;
   return m;

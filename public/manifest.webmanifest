@@ -1,11 +1,11 @@
 {
-  "name": "SKYTRACE",
+  "name": "SKYTRACE · Search & Rescue",
   "short_name": "SKYTRACE",
-  "description": "An aerial reconnaissance mystery.",
+  "description": "Plan the rescue. Fly the mission. Lower the basket. Bring people home.",
   "start_url": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0b1410",
-  "theme_color": "#0b1410",
+  "background_color": "#3f8fdc",
+  "theme_color": "#1f6fc0",
   "icons": [{ "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml" }, { "src": "./icon-180.png", "sizes": "180x180", "type": "image/png" }]
 }

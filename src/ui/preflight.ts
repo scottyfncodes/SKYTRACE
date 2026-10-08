@@ -1,150 +1,102 @@
-import type { MissionDef } from '../mission/missionDef';
-import { AIRCRAFT, AIRCRAFT_BY_ID, CREW, EQUIPMENT, SEAT_LABEL, type AircraftDef, type EquipmentId, type SeatRole } from '../operation/catalog';
-import { isUnlocked, UNLOCKS, type Career } from '../operation/career';
-import { checkLoadout, type Loadout } from '../operation/loadout';
-import { phaseInfo, type Phase } from '../operation/phases';
+/**
+ * Pre-Flight: what happened, what you are dealing with, what you send.
+ * Readable in a few seconds: the situation and conditions on the left with a
+ * map, three rows of big cards on the right, one LAUNCH button.
+ */
+import { CREW, EQUIPMENT, VEHICLES, VEHICLE_BY_ID, EQUIPMENT_BY_ID, CREW_BY_ID, type CrewId, type EquipmentId, type VehicleId } from '../rescue/catalog';
+import { canLaunch, checkLoadout, type Loadout } from '../rescue/loadout';
+import { compassWord, MISSION_BY_ID, VISIBILITY_WORD, windWord, type MissionDef } from '../rescue/missions';
+import { isAvailable, isOpen, type Progress } from '../rescue/progress';
+import { drawBriefingMap } from './valleyMap';
 
-/** RECON → EXECUTE → ESCAPE, one verb each: the whole mission at a glance. */
-export function phaseStrip(verbs: Record<Phase, string>): string {
-  return `<ol class="phase-strip">${(['recon', 'execute', 'escape'] as Phase[])
-    .map((p) => {
-      const i = phaseInfo(p);
-      return `<li class="ph-${p}"><small>${i.n}</small><b>${i.label}</b><span>${verbs[p]}</span></li>`;
-    })
-    .join('')}</ol>`;
-}
-
-/** The same three verbs on one quiet line, for the title card: the rhythm teased, not explained. */
-export function phaseLine(verbs: Record<Phase, string>): string {
-  return `<p class="phase-line">${(['recon', 'execute', 'escape'] as Phase[]).map((p) => `<span class="ph-${p}">${verbs[p]}</span>`).join('<i>›</i>')}</p>`;
-}
+const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
 export interface PreflightHandlers {
-  onAircraft(id: string): void;
-  onCrew(seat: SeatRole, id: string | null): void;
+  onVehicle(id: VehicleId): void;
+  onCrew(id: CrewId): void;
   onEquip(id: EquipmentId): void;
   onLaunch(): void;
   onBack(): void;
+  onTap(): void;
 }
 
-const lockLabel = (id?: string) => {
-  const u = UNLOCKS.find((x) => x.id === id);
-  return u ? `LOCKED · ${u.xp} XP` : 'LOCKED';
-};
+export class PreflightView {
+  private def: MissionDef | null = null;
+  private q = (id: string) => this.root.querySelector<HTMLElement>(`#${id}`)!;
 
-/** 0..1 bars: glanceable differences instead of paragraphs. */
-export function aircraftBars(a: AircraftDef): { label: string; v: number }[] {
-  const c = (v: number) => Math.max(0.08, Math.min(1, v));
-  return [
-    { label: 'SPEED', v: c(a.perf.maxSpeed / 92) },
-    { label: 'RANGE', v: c(a.fuelSeconds / 720) },
-    { label: 'STEALTH', v: c((a.stealthCeiling - 150) / 300) },
-    { label: 'WEATHER', v: c(a.weatherTolerance) },
-  ];
-}
-
-/**
- * PREFLIGHT: one glance at the job, three picks, take off. The full
- * briefing is there for those who want it, folded away.
- */
-export class Preflight {
-  private el: Record<string, HTMLElement> = {};
-  private briefOpen = false;
-
-  constructor(private root: HTMLElement, h: PreflightHandlers) {
-    const q = (id: string) => {
-      const e = root.querySelector<HTMLElement>(`#${id}`);
-      if (!e) throw new Error(`missing #${id}`);
-      return e;
-    };
-    for (const id of ['pf-career', 'pf-brief', 'pf-aircraft', 'pf-crew', 'pf-equip', 'pf-slots', 'pf-check', 'btn-launch', 'btn-pf-back']) this.el[id] = q(id);
-    this.el['btn-launch'].addEventListener('click', () => h.onLaunch());
-    this.el['btn-pf-back'].addEventListener('click', () => h.onBack());
-    root.addEventListener('click', (e) => {
-      const t = (e.target as HTMLElement).closest<HTMLElement>('[data-pick]');
-      if (!t || t.classList.contains('locked')) return;
-      const [kind, a, b] = t.dataset.pick!.split(':');
-      if (kind === 'aircraft') h.onAircraft(a);
-      else if (kind === 'equip') h.onEquip(a as EquipmentId);
-      else if (kind === 'crew') h.onCrew(a as SeatRole, b === '-' ? null : b);
-    });
-    root.addEventListener('toggle', (e) => {
-      if ((e.target as HTMLElement).id === 'pf-more') this.briefOpen = (e.target as HTMLDetailsElement).open;
-    }, true);
+  constructor(
+    private root: HTMLElement,
+    h: PreflightHandlers,
+  ) {
+    this.q('btn-pf-back').addEventListener('click', () => h.onBack());
+    this.q('btn-launch').addEventListener('click', () => h.onLaunch());
+    const pick = (rowId: string, fn: (id: string) => void) =>
+      this.q(rowId).addEventListener('click', (e) => {
+        const b = (e.target as HTMLElement).closest<HTMLElement>('.opt');
+        if (!b || b.classList.contains('locked')) return;
+        h.onTap();
+        fn(b.dataset.id!);
+      });
+    pick('pf-vehicles', (id) => h.onVehicle(id as VehicleId));
+    pick('pf-crew', (id) => h.onCrew(id as CrewId));
+    pick('pf-equip', (id) => h.onEquip(id as EquipmentId));
   }
 
-  show(): void {
-    this.root.classList.remove('hidden');
-    this.root.querySelector('.pf-body')?.scrollTo(0, 0);
+  /** Show a mission's situation (once per mission). */
+  open(def: MissionDef): void {
+    this.def = def;
+    this.q('pf-icon').textContent = def.icon;
+    this.q('pf-title').textContent = def.title;
+    this.q('pf-situation').textContent = def.situation;
+    this.q('pf-place').textContent = `📍 ${def.place}`;
+    const windy = def.wind.speed >= 9 ? 'c-bad' : def.wind.speed >= 5 ? 'c-warn' : '';
+    const vis = def.visibility === 'poor' ? 'c-bad' : def.visibility === 'fair' ? 'c-warn' : '';
+    const conds = [
+      { i: def.type === 'forest' ? '🌲' : '⛰️', t: def.type === 'forest' ? def.terrain : `${def.terrain} · ${def.elevation} m`, c: def.elevation > 250 ? 'c-warn' : '' },
+      { i: '💨', t: `${windWord(def.wind.speed)}${def.wind.speed >= 2 ? ` · ${compassWord(def.wind.from)}` : ''}`, c: windy },
+      { i: '👥', t: def.survivors === 1 ? '1 person' : `${def.survivors} people`, c: def.survivors > 2 ? 'c-warn' : '' },
+      { i: def.visibility === 'poor' ? '☁️' : '👁️', t: VISIBILITY_WORD[def.visibility], c: vis },
+    ];
+    this.q('pf-conditions').innerHTML = conds.map((c) => `<div class="cond ${c.c}"><i>${c.i}</i>${esc(c.t)}</div>`).join('');
+    const r = def.recommended;
+    const kit = r.equipment.map((e) => `${EQUIPMENT_BY_ID[e].icon} ${EQUIPMENT_BY_ID[e].name}`).join(' · ');
+    this.q('pf-recommended').innerHTML = `<b>RECOMMENDED</b> ${VEHICLE_BY_ID[r.vehicle].icon} ${esc(VEHICLE_BY_ID[r.vehicle].name)} · ${esc(kit)} · ${CREW_BY_ID[r.crew].icon} ${esc(CREW_BY_ID[r.crew].role)}`;
+    this.root.querySelector('.pf-left')!.scrollTop = 0;
+    this.root.querySelector('.pf-right')!.scrollTop = 0;
   }
 
-  hide(): void {
-    this.root.classList.add('hidden');
-  }
-
-  render(def: MissionDef, career: Career, l: Loadout): void {
-    const B = def.briefing;
-    const unlocked = (id?: string) => isUnlocked(career, id);
-    this.el['pf-career'].textContent = career.operations ? `${career.credits} CR · ${career.xp} XP` : '';
-
-    // ---- the job, at a glance
-    this.el['pf-brief'].innerHTML = `
-      <p class="pf-code">${def.code}</p>
-      <h2>${B.headline}</h2>
-      ${phaseStrip(def.story.verbs)}
-      <div class="pf-clues"><small>THE TRUCK IS</small>${def.clues.map((c) => `<span>${c}</span>`).join('')}</div>
-      <details id="pf-more"${this.briefOpen ? ' open' : ''}><summary>FULL BRIEFING</summary>
-        <ul class="pf-risks">${def.risks.map((r) => `<li><i>${r.icon}</i>${r.text}</li>`).join('')}</ul>
-        <p><b>Intel.</b> ${def.intel.join(' ')}</p>
-        <p><b>Weather.</b> ${B.weather} ${B.conditions}</p>
-        <p><b>Constraints.</b> ${B.constraints.join('. ')}.</p>
-        <p><b>Threats.</b> ${B.threats.join('. ')}.</p>
-      </details>`;
-
-    // ---- aircraft: bars, not bullet points
-    this.el['pf-aircraft'].innerHTML = AIRCRAFT.map((a) => {
-      const lock = !unlocked(a.unlock);
-      const on = a.id === l.aircraft;
-      const seats = a.seats.length + 1;
-      return `<button type="button" class="pf-card ac${on ? ' on' : ''}${lock ? ' locked' : ''}" data-pick="aircraft:${a.id}" aria-pressed="${on}">
-        <b>${a.name}</b><span class="pf-sub">${seats === 1 ? 'SOLO' : `${seats} CREW`} · ${a.slots} BAYS</span>
-        ${lock ? `<em class="lock">${lockLabel(a.unlock)}</em>` : `<span class="bars">${aircraftBars(a).map((b) => `<span class="bar"><label>${b.label}</label><i style="--v:${b.v}"></i></span>`).join('')}</span>`}
-      </button>`;
+  /** Redraw the choices for the current plan. */
+  render(l: Loadout, p: Progress): void {
+    const def = this.def;
+    if (!def) return;
+    const r = def.recommended;
+    const lockLine = (by?: string) => (by ? `🔒 Complete ${esc(MISSION_BY_ID[by as keyof typeof MISSION_BY_ID].title)}` : '🔒 Coming soon');
+    this.q('pf-vehicles').innerHTML = VEHICLES.map((v) => {
+      const open = isAvailable(p, v);
+      const tags = v.capacity > 0 ? [`Seats ${v.capacity}`, ...v.strengths.slice(0, 2)] : v.strengths.slice(0, 3);
+      return `<button type="button" class="opt${l.vehicle === v.id ? ' on' : ''}${open ? '' : ' locked'}" data-id="${v.id}">${open && r.vehicle === v.id ? '<span class="o-rec">★ BEST FIT</span>' : ''}<span class="o-top"><span class="o-icon">${v.icon}</span><span class="o-name">${esc(v.name)}</span></span><span class="o-line">${open ? esc(v.tagline) : lockLine(v.ready ? v.unlockedBy : undefined)}</span>${open ? `<span class="o-tags">${tags.map((t) => `<span>${esc(t)}</span>`).join('')}</span>` : ''}</button>`;
     }).join('');
-
-    // ---- crew: a short tag per person
-    const ac = AIRCRAFT_BY_ID[l.aircraft];
-    this.el['pf-crew'].parentElement!.classList.toggle('hidden', ac.seats.length === 0);
-    this.el['pf-crew'].innerHTML = ac.seats
-      .map((seat) => {
-        const cur = l.crew[seat] ?? null;
-        const options = CREW.filter((c) => c.role === seat);
-        return `<div class="pf-seat"><label>${SEAT_LABEL[seat]}</label><div class="pf-seat-opts">
-          <button type="button" class="pf-chip${cur === null ? ' on' : ''}" data-pick="crew:${seat}:-">NONE</button>
-          ${options
-            .map((c) => {
-              const lock = !unlocked(c.unlock);
-              return `<button type="button" class="pf-chip crew${cur === c.id ? ' on' : ''}${lock ? ' locked' : ''}" data-pick="crew:${seat}:${c.id}"><b>${c.name}</b><small>${lock ? lockLabel(c.unlock) : c.tag}</small></button>`;
-            })
-            .join('')}
-        </div></div>`;
+    this.q('pf-crew').innerHTML = CREW.map((c) => {
+      const open = isOpen(p, c);
+      return `<button type="button" class="opt${l.crew === c.id ? ' on' : ''}${open ? '' : ' locked'}" data-id="${c.id}">${open && r.crew === c.id ? '<span class="o-rec">★ BEST FIT</span>' : ''}<span class="o-top"><span class="o-icon">${c.icon}</span><span class="o-name">${esc(c.role)}<br><small>${esc(c.name)}</small></span></span><span class="o-line">${open ? esc(c.perk) : lockLine(c.unlockedBy)}</span></button>`;
+    }).join('');
+    const slots = VEHICLE_BY_ID[l.vehicle].slots;
+    this.q('pf-slots').textContent = `· ${l.equipment.length} of ${slots} slots`;
+    const shown = EQUIPMENT.filter((e) => e.ready || e.id === 'swimmer' || e.id === 'bucket');
+    this.q('pf-equip').innerHTML = shown
+      .map((e) => {
+        const open = isAvailable(p, e);
+        return `<button type="button" class="opt${l.equipment.includes(e.id) ? ' on' : ''}${open ? '' : ' locked'}" data-id="${e.id}">${open && r.equipment.includes(e.id) ? '<span class="o-rec">★ BEST FIT</span>' : ''}<span class="o-top"><span class="o-icon">${e.icon}</span><span class="o-name">${esc(e.name)}</span></span><span class="o-line">${open ? esc(e.does) : lockLine(e.ready ? e.unlockedBy : undefined)}</span></button>`;
       })
       .join('');
+    const notes = checkLoadout(def, l);
+    const ok = canLaunch(def, l);
+    this.q('pf-notes').innerHTML = notes.length ? notes.map((n) => `<span class="n${n.blocking ? ' block' : ''}">${n.blocking ? '⛔' : '⚠️'} ${esc(n.text)}</span>`).join('') : '<span class="n ok">✅ Ready for the job</span>';
+    (this.q('btn-launch') as HTMLButtonElement).disabled = !ok;
+  }
 
-    // ---- equipment
-    this.el['pf-slots'].textContent = `${l.equipment.length}/${ac.slots}`;
-    this.el['pf-equip'].innerHTML = EQUIPMENT.map((e) => {
-      const lock = !unlocked(e.unlock);
-      const on = l.equipment.includes(e.id);
-      return `<button type="button" class="pf-chip eq${on ? ' on' : ''}${lock ? ' locked' : ''}" data-pick="equip:${e.id}" aria-pressed="${on}"><b>${e.name}</b><small>${lock ? lockLabel(e.unlock) : e.tag}</small></button>`;
-    }).join('');
-
-    // ---- one line: ready, or what is missing
-    const chk = checkLoadout(l, unlocked);
-    // ready, but with a blind spot: one look-alike can only be told apart by the optical camera
-    const advice = chk.ok && !l.equipment.includes('optical') ? `<p class="advice">⚠ NO OPTICAL · CAN'T CHECK ROADS</p>` : '';
-    this.el['pf-check'].innerHTML = chk.ok ? `<p class="ready">✓ READY</p>${advice}` : `<p class="why">${chk.reason}</p>`;
-    this.el['btn-launch'].toggleAttribute('disabled', !chk.ok);
-    this.el['btn-launch'].classList.toggle('disabled', !chk.ok);
+  /** Keep the map's search area breathing while Pre-Flight is up. */
+  tick(t: number): void {
+    if (this.def) drawBriefingMap(this.q('pf-map') as HTMLCanvasElement, this.def, t);
   }
 }

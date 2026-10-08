@@ -34,6 +34,13 @@ export interface FlightPerf {
   ceiling: number;
   floorAgl: number;
   bounds: number;
+  /**
+   * Rotorcraft: the stick's vertical axis sets a climb rate (m/s at full
+   * stick) instead of pointing the nose, travel stays level, and the throttle
+   * runs from a hover (0) to full forward speed (1). Same stick, same
+   * throttle, same terrain and boundary rules as the fixed-wing model.
+   */
+  climbRate?: number;
 }
 
 export const FLIGHT: FlightPerf = {
@@ -61,6 +68,7 @@ export function forwardVector(a: Pick<AircraftState, 'yaw' | 'pitch'>): [number,
 
 /** One simulation step. Pure, deterministic, frame-rate independent. */
 export function stepAircraft(a: AircraftState, inp: FlightInput, dt: number, terrainHeight: (x: number, z: number) => number, P: FlightPerf = FLIGHT): AircraftState {
+  if (P.climbRate) return stepRotor(a, inp, dt, terrainHeight, P, P.climbRate);
   const s: AircraftState = { ...a };
   dt = clamp(dt, 0, 0.05);
 
@@ -111,7 +119,52 @@ export function stepAircraft(a: AircraftState, inp: FlightInput, dt: number, ter
     }
   }
 
-  // boundary: steer back toward the centre
+  keepInBounds(s, dt, P);
+  return s;
+}
+
+/**
+ * The rotorcraft step: the same stick and throttle, flown as a helicopter.
+ * Bank still turns (and still turns at a standstill, so it pivots in a
+ * hover); the vertical stick is the collective; the throttle is how fast it
+ * goes forward, down to a hover.
+ */
+function stepRotor(a: AircraftState, inp: FlightInput, dt: number, terrainHeight: (x: number, z: number) => number, P: FlightPerf, climbRate: number): AircraftState {
+  const s: AircraftState = { ...a };
+  dt = clamp(dt, 0, 0.05);
+  s.throttle = clamp(s.throttle + inp.throttleDelta * 0.6 * dt, 0, 1);
+  s.roll = approach(s.roll, clamp(inp.roll, -1, 1) * P.maxRoll, P.rollRate * dt);
+  s.pitch = approach(s.pitch, clamp(inp.pitch, -1, 1) * P.maxPitch, P.pitchRate * dt);
+  s.yaw = wrapAngle(s.yaw - Math.sin(s.roll) * P.turnGain * dt);
+  s.speed = clamp(damp(s.speed, P.minSpeed + (P.maxSpeed - P.minSpeed) * s.throttle, P.accel, dt), 0, P.maxSpeed);
+  const fx = -Math.sin(s.yaw);
+  const fz = -Math.cos(s.yaw);
+  s.x += fx * s.speed * dt;
+  s.z += fz * s.speed * dt;
+  s.y += (s.pitch / P.maxPitch) * climbRate * dt;
+  if (s.y > P.ceiling) s.y = P.ceiling;
+  // terrain: forgiving, as for the aeroplane. Never crash; rising ground ahead lifts you
+  const ground = terrainHeight(s.x, s.z);
+  s.agl = s.y - ground;
+  s.terrainWarning = false;
+  if (s.agl < P.floorAgl) {
+    s.y = ground + P.floorAgl;
+    s.agl = P.floorAgl;
+    s.terrainWarning = s.speed > 4;
+  } else if (s.speed > 4) {
+    const look = 12 + s.speed * 1.6;
+    const ahead = terrainHeight(s.x + fx * look, s.z + fz * look);
+    if (ahead + P.floorAgl + 4 > s.y) {
+      s.terrainWarning = true;
+      s.y += climbRate * 0.9 * dt;
+    }
+  }
+  keepInBounds(s, dt, P);
+  return s;
+}
+
+/** Boundary: steer back toward the centre. */
+function keepInBounds(s: AircraftState, dt: number, P: FlightPerf): void {
   const r = Math.hypot(s.x, s.z);
   s.boundaryWarning = Math.max(Math.abs(s.x), Math.abs(s.z)) > P.bounds - 120;
   if (Math.max(Math.abs(s.x), Math.abs(s.z)) > P.bounds) {
@@ -122,5 +175,4 @@ export function stepAircraft(a: AircraftState, inp: FlightInput, dt: number, ter
     s.x *= k;
     s.z *= k;
   }
-  return s;
 }
