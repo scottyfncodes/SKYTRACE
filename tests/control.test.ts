@@ -5,7 +5,7 @@
  * meaningfully different exits.
  */
 import { describe, expect, it } from 'vitest';
-import { allCells, ASSETS, VEHICLE_LOOKS, belief, canUse, chooseCorridor, clockLeft, clueChecks, isKnown, mark, newBoard, ruledOut, scoreBoard, tickBoard, useAsset, WRONG_MARK_SECONDS, type AssetId, type BoardState, type CellTruth, type Target } from '../src/control/board';
+import { allCells, ASSETS, CELL_LOOKS, towerWrong, VEHICLE_LOOKS, belief, canUse, chooseCorridor, clockLeft, clueChecks, isKnown, mark, newBoard, ruledOut, scoreBoard, tickBoard, useAsset, WRONG_MARK_SECONDS, type AssetId, type BoardState, type CellTruth, type Target } from '../src/control/board';
 import { buildExit, DECK_BLIND, DECK_KNOWN, TIER } from '../src/control/exit';
 import { CONTROL_01 } from '../src/mission/mission01Control';
 import { DECOYS, DEFAULT_RETURNS, rollReturns, SECTOR_7, type ReturnDef, type ReturnId } from '../src/mission/mission01';
@@ -34,6 +34,7 @@ function seeded(seed: number) {
 
 const KIT: ('radar' | 'optical' | 'thermal' | 'sigint')[] = ['radar', 'optical'];
 const fresh = (seed = 1, cast: readonly ReturnDef[] = DEFAULT_RETURNS, kit = KIT) => newBoard(def, cast, kit, seeded(seed));
+const b0 = (seed: number) => fresh(seed);
 const use = (b: BoardState, a: AssetId, t: Target, cast: readonly ReturnDef[] = DEFAULT_RETURNS) => useAsset(b, cast, inSector, def.clues, a, t);
 const ret = (id: ReturnId): Target => ({ kind: 'return', id });
 const cell = (id: string): Target => ({ kind: 'cell', id });
@@ -42,13 +43,19 @@ const exitOf = (b: BoardState, cast: readonly ReturnDef[] = DEFAULT_RETURNS, fue
 /** The corridor with the fewest storms (by truth), for a player who has scouted well. */
 const safest = (b: BoardState) => [...def.corridors].sort((p, q) => p.cells.filter((c) => b.cells[c.id].truth === 'storm').length - q.cells.filter((c) => b.cells[c.id].truth === 'storm').length)[0];
 
+/** Settle a route spot the way a player would: ask the scouts about weather, then the drone about the ground if it is still open. */
+const settle = (b: BoardState, id: string) => {
+  if (canUse(b, DEFAULT_RETURNS, 'scouts', cell(id)).ok) use(b, 'scouts', cell(id));
+  if (!isKnown(b.cells[id]) && canUse(b, DEFAULT_RETURNS, 'drone', cell(id)).ok) use(b, 'drone', cell(id));
+};
+
 // ---------------------------------------------------------------- strategies
 /** Careful and clever: confirm the truck with a camera, scout the chosen route, follow the truck. */
 function sharp(b: BoardState) {
   use(b, 'optical', ret('C'));
   mark(b, DEFAULT_RETURNS, 'C');
   const route = safest(b);
-  for (const c of route.cells) use(b, 'drone', cell(c.id));
+  for (const c of route.cells) settle(b, c.id);
   use(b, 'shadow', ret('C'));
   chooseCorridor(b, def, route.id);
   return route;
@@ -151,23 +158,45 @@ describe('assets: each answers a different question, for a price', () => {
     expect(canUse(b, DEFAULT_RETURNS, 'optical', ret('C')).reason).toBe('NO TIME');
   });
 
-  it('a DRONE learns the whole truth about a spot; the SCOUTS only see weather', () => {
+  it('at a route spot the SCOUTS answer the weather and the DRONE the ground: never the same question', () => {
+    const weather = ['cloud', 'storm'];
+    const ground = ['cache', 'radar'];
+    expect([...CELL_LOOKS.scouts].sort()).toEqual(weather);
+    expect([...CELL_LOOKS.drone].sort()).toEqual(ground);
+    expect(CELL_LOOKS.scouts.some((t) => (CELL_LOOKS.drone as readonly string[]).includes(t))).toBe(false);
     for (let seed = 1; seed < 30; seed++) {
-      const b = fresh(seed);
-      const id = 'C1';
-      const truth = b.cells[id].truth;
-      const ev = use(b, 'scouts', cell(id));
-      if (truth === 'storm' || truth === 'cloud') {
-        expect(belief(b.cells[id])).toBe(truth);
-        expect(ev[0].type).toBe('reveal');
-      } else {
-        expect(isKnown(b.cells[id])).toBe(false); // clear, radar or cache: can't tell from the ground
-        expect(b.cells[id].possible).not.toContain('storm');
-        expect(b.cells[id].possible).toContain(truth);
+      for (const id of ['C1', 'N2', 'R1']) {
+        const truth = b0(seed).cells[id].truth;
+        // the scouts: a yes settles it, a no crosses the weather off
+        const s = fresh(seed);
+        const sev = use(s, 'scouts', cell(id));
+        if (weather.includes(truth)) {
+          expect(belief(s.cells[id])).toBe(truth);
+          expect(sev[0].type).toBe('reveal');
+        } else {
+          expect(isKnown(s.cells[id])).toBe(false);
+          expect([...s.cells[id].possible].sort()).toEqual(['cache', 'clear', 'radar']);
+        }
+        // the drone: a yes settles it, a no crosses the ground off
+        const d = fresh(seed);
+        use(d, 'drone', cell(id));
+        if (ground.includes(truth)) expect(belief(d.cells[id])).toBe(truth);
+        else expect([...d.cells[id].possible].sort()).toEqual(['clear', 'cloud', 'storm']);
+        // both together always settle it, and asking again is refused
+        settle(d, id);
+        expect(belief(d.cells[id])).toBe(truth);
+        expect(canUse(d, DEFAULT_RETURNS, 'scouts', cell(id)).ok).toBe(false);
       }
-      const b2 = fresh(seed);
-      use(b2, 'drone', cell(id));
-      expect(belief(b2.cells[id])).toBe(truth);
+    }
+  });
+
+  it('a question that is already answered is refused at a spot too', () => {
+    for (let seed = 1; seed < 20; seed++) {
+      const b = fresh(seed);
+      const spot = Object.entries(b.cells).find(([, c]) => c.truth === 'clear')![0];
+      use(b, 'scouts', cell(spot));
+      expect(canUse(b, DEFAULT_RETURNS, 'scouts', cell(spot)).reason).toBe('NOTHING NEW');
+      expect(canUse(b, DEFAULT_RETURNS, 'drone', cell(spot)).ok).toBe(true);
     }
   });
 
@@ -238,11 +267,29 @@ describe('assets: each answers a different question, for a price', () => {
       const b = fresh(seed);
       const liar = Object.entries(b.cells).find(([, c]) => c.truth === 'storm' && c.forecast === 'clear');
       if (!liar) continue;
-      const ev = use(b, 'drone', cell(liar[0]));
+      const ev = use(b, 'scouts', cell(liar[0]));
       expect(ev.map((e) => e.type)).toContain('contradiction');
       seen = true;
     }
     expect(seen).toBe(true);
+  });
+
+  it('a storm forecast on a dry stretch is caught the moment the scouts find no weather, and said once', () => {
+    let seen = 0;
+    for (let seed = 1; seed < 40; seed++) {
+      const b = fresh(seed);
+      const liar = Object.entries(b.cells).find(([, c]) => c.forecast === 'storm' && !['storm', 'cloud'].includes(c.truth));
+      if (!liar) continue;
+      expect(towerWrong(b.cells[liar[0]])).toBe(false);
+      const ev = use(b, 'scouts', cell(liar[0]));
+      expect(ev.filter((e) => e.type === 'contradiction')).toHaveLength(1);
+      expect(towerWrong(b.cells[liar[0]])).toBe(true);
+      // settling it later does not say it again
+      const ev2 = canUse(b, DEFAULT_RETURNS, 'drone', cell(liar[0])).ok ? use(b, 'drone', cell(liar[0])) : [];
+      expect(ev2.filter((e) => e.type === 'contradiction')).toHaveLength(0);
+      seen++;
+    }
+    expect(seen).toBeGreaterThan(5);
   });
 });
 
@@ -324,10 +371,10 @@ describe('score: different decisions, different results', () => {
     mark(b, DEFAULT_RETURNS, 'C');
     chooseCorridor(b, def, 'river');
     const blind = score(b).total;
-    use(b, 'drone', cell('R1'));
-    tickBoard(b, ASSETS.drone.cost);
-    use(b, 'drone', cell('R2'));
-    tickBoard(b, ASSETS.drone.cost);
+    settle(b, 'R1');
+    tickBoard(b, ASSETS.drone.cost + ASSETS.scouts.cost);
+    settle(b, 'R2');
+    tickBoard(b, ASSETS.drone.cost + ASSETS.scouts.cost);
     expect(score(b).total).toBeGreaterThan(blind);
   });
 
@@ -392,7 +439,7 @@ describe('score → Exit Profile: the flight out is the consequence', () => {
       const blindRings = blind.leg.gates.filter((g) => g.kind === 'ring');
       expect(blindRings.some((g) => g.kind === 'ring' && st.kind === 'storm' && stormDist(g, st) < st.r)).toBe(true);
       expect(blind.lines.find((l) => l.label === 'WEATHER')!.value).toMatch(/UNPLANNED/);
-      use(b, 'drone', cell(sc.id));
+      use(b, 'scouts', cell(sc.id));
       const seen = exitOf(b);
       const st2 = seen.leg.hazards.find((h) => h.id === `storm-${sc.id}`)!;
       for (const g of seen.leg.gates) if (g.kind === 'ring' && st2.kind === 'storm') expect(stormDist(g, st2)).toBeGreaterThan(st2.r + 30);
@@ -435,7 +482,7 @@ describe('score → Exit Profile: the flight out is the consequence', () => {
       const other = def.corridors.find((c) => c.id === cache.corridor)!.cells.find((c) => c.id !== cache.id)!;
       expect(exitOf(b).opportunities).toEqual([]);
       use(b, 'drone', cell(cache.id));
-      use(b, 'drone', cell(other.id));
+      settle(b, other.id);
       const ex = exitOf(b);
       if (ex.tier === 'optimal' || ex.tier === 'standard') {
         expect(ex.opportunities.map((o) => o.kind)).toEqual(['cache']);

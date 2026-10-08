@@ -26,6 +26,7 @@ import type { RingSpec } from '../operation/gates';
 export type CellTruth = 'clear' | 'storm' | 'cloud' | 'radar' | 'cache';
 export const CELL_TRUTHS: readonly CellTruth[] = ['clear', 'storm', 'cloud', 'radar', 'cache'];
 const WEATHER: readonly CellTruth[] = ['storm', 'cloud'];
+const GROUND: readonly CellTruth[] = ['radar', 'cache'];
 
 export const CELL_LABEL: Record<CellTruth, string> = { clear: 'CLEAR', storm: 'STORM CELL', cloud: 'LOW CLOUD', radar: 'RADAR SITE', cache: 'SUPPLY CACHE' };
 
@@ -74,8 +75,8 @@ export const ASSETS: Record<AssetId, AssetDef> = {
   thermal: { id: 'thermal', label: 'THERMAL', icon: '◍', cost: 6, target: 'return', needs: 'thermal', note: 'Size · count · engine heat' },
   sigint: { id: 'sigint', label: 'SIGINT', icon: '≋', cost: 5, target: 'none', needs: 'sigint', note: 'Every radio · every radar site' },
   listen: { id: 'listen', label: 'LISTEN', icon: '◌', cost: 4, target: 'return', note: 'One vehicle: is its radio on?' },
-  drone: { id: 'drone', label: 'DRONE', icon: '✈', cost: 7, target: 'cell', note: 'The whole truth about one spot on a route' },
-  scouts: { id: 'scouts', label: 'SCOUTS', icon: '⌂', cost: 5, target: 'cell', note: 'Ground report: weather only' },
+  drone: { id: 'drone', label: 'DRONE', icon: '✈', cost: 7, target: 'cell', note: 'A low pass: radar site or supply cache?' },
+  scouts: { id: 'scouts', label: 'SCOUTS', icon: '⌂', cost: 5, target: 'cell', note: 'A ground report: storm or low cloud?' },
   shadow: { id: 'shadow', label: 'SHADOW', icon: '➜', cost: 8, target: 'return', note: 'Follow the truck: where is it going?' },
 };
 
@@ -94,6 +95,16 @@ export const VEHICLE_LOOKS = { optical: ['size', 'road'], thermal: ['size', 'eng
 
 /** The button on a vehicle's card: what the look answers, not what it is. */
 export const LOOK_LABEL = { optical: 'LOOK · SIZE + ROAD', thermal: 'HEAT · SIZE + ENGINE', listen: 'LISTEN · RADIO' } as const;
+
+/**
+ * What each look at a route spot answers, and again no two answer the same
+ * thing: the scouts on the ground see the weather (a storm, low cloud), the
+ * drone's low pass sees what is on the ground (a radar site, a supply
+ * cache). A yes settles the spot; a no crosses those off. A clear stretch
+ * takes both to be sure.
+ */
+export const CELL_LOOKS = { scouts: WEATHER, drone: GROUND } as const satisfies Partial<Record<AssetId, readonly CellTruth[]>>;
+export const CELL_LOOK_LABEL = { scouts: 'SCOUTS · WEATHER', drone: 'DRONE · RADAR + CACHE' } as const;
 
 /** What one mission's board is made of. */
 export interface ControlDef {
@@ -303,7 +314,8 @@ export function canUse(b: BoardState, cast: readonly ReturnDef[], id: AssetId, t
     const c = b.cells[t.id];
     if (!c) return { ok: false, reason: '' };
     if (isKnown(c)) return { ok: false, reason: 'ALREADY KNOWN' };
-    if (id === 'scouts' && !c.possible.some((p) => WEATHER.includes(p))) return { ok: false, reason: 'NO WEATHER THERE' };
+    const asks = CELL_LOOKS[id as keyof typeof CELL_LOOKS] as readonly CellTruth[] | undefined;
+    if (!asks || !c.possible.some((p) => asks.includes(p))) return { ok: false, reason: 'NOTHING NEW' };
   }
   if (id === 'sigint' && !Object.values(b.returns).some((k) => k && !k.radio) && !Object.values(b.cells).some((c) => c.possible.length > 1 && c.possible.includes('radar'))) return { ok: false, reason: 'NOTHING NEW' };
   return { ok: true, reason: '' };
@@ -326,13 +338,21 @@ function narrow(c: CellState, keep: (t: CellTruth) => boolean): void {
   c.possible = c.possible.filter(keep);
 }
 
-function revealCell(b: BoardState, cellId: string, events: BoardEvent[], before: boolean): void {
+/** Is the tower's forecast for this spot provably wrong, from what is known so far? */
+export function towerWrong(c: Pick<CellState, 'possible' | 'forecast'>, possible: readonly CellTruth[] = c.possible): boolean {
+  // a storm or cloud forecast is wrong once that weather is ruled out; a clear one once only weather is left
+  return WEATHER.includes(c.forecast) ? !possible.includes(c.forecast) : possible.every((p) => WEATHER.includes(p));
+}
+
+function revealCell(b: BoardState, cellId: string, events: BoardEvent[], before: readonly CellTruth[]): void {
   const c = b.cells[cellId];
-  if (!isKnown(c) || before) return;
-  const t = c.possible[0];
   const target: Target = { kind: 'cell', id: cellId };
-  events.push({ type: t === 'cache' ? 'opportunity' : 'reveal', title: CELL_LABEL[t], text: t === 'cache' ? 'AN OPPORTUNITY ON THIS ROUTE' : t === 'clear' ? 'NOTHING IN THE WAY' : 'ON THIS ROUTE', target });
-  if (WEATHER.includes(c.forecast) !== WEATHER.includes(t) || (WEATHER.includes(t) && c.forecast !== t)) events.push({ type: 'contradiction', title: 'TOWER WAS WRONG', text: `FORECAST SAID ${CELL_LABEL[c.forecast]}`, target });
+  if (isKnown(c) && before.length > 1) {
+    const t = c.possible[0];
+    events.push({ type: t === 'cache' ? 'opportunity' : 'reveal', title: CELL_LABEL[t], text: t === 'cache' ? 'AN OPPORTUNITY ON THIS ROUTE' : t === 'clear' ? 'NOTHING IN THE WAY' : 'ON THIS ROUTE', target });
+  }
+  // the moment the tower's forecast can no longer be true, say so (once)
+  if (towerWrong(c) && !towerWrong(c, before)) events.push({ type: 'contradiction', title: 'TOWER WAS WRONG', text: `FORECAST SAID ${CELL_LABEL[c.forecast]}`, target });
 }
 
 /** Spend an asset on a target. Returns what was learned. */
@@ -359,14 +379,13 @@ export function useAsset(b: BoardState, cast: readonly ReturnDef[], sector: Sect
     }
   } else if (t.kind === 'cell') {
     const c = b.cells[t.id];
-    const before = isKnown(c);
-    if (id === 'drone') narrow(c, (p) => p === c.truth);
-    else if (id === 'scouts') {
-      if (WEATHER.includes(c.truth)) narrow(c, (p) => p === c.truth);
-      else {
-        narrow(c, (p) => !WEATHER.includes(p));
-        if (!isKnown(c)) events.push({ type: 'nothing', title: 'SCOUTS', text: 'NO WEATHER · CAN\'T SEE MORE FROM THE GROUND', target: t });
-      }
+    const before = [...c.possible];
+    const asks = CELL_LOOKS[id as keyof typeof CELL_LOOKS] as readonly CellTruth[];
+    if (asks.includes(c.truth)) narrow(c, (p) => p === c.truth);
+    else {
+      // a no: those are crossed off; what is left stays open for the other look
+      narrow(c, (p) => !asks.includes(p));
+      if (!isKnown(c)) events.push({ type: 'nothing', title: ASSETS[id].label, text: id === 'scouts' ? 'NO WEATHER HERE' : 'NOTHING ON THE GROUND', target: t });
     }
     revealCell(b, t.id, events, before);
   } else if (id === 'sigint') {
@@ -379,7 +398,7 @@ export function useAsset(b: BoardState, cast: readonly ReturnDef[], sector: Sect
     }
     let sites = 0;
     for (const [cid, c] of Object.entries(b.cells)) {
-      const before = isKnown(c);
+      const before = [...c.possible];
       if (c.truth === 'radar') {
         narrow(c, (p) => p === 'radar');
         sites++;
