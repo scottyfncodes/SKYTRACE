@@ -504,6 +504,37 @@ export class AudioSystem {
     this.tone(1760, 0.25, 0.12, 'square', 0.35);
   }
 
+  /**
+   * The fire: a low roar and the crackle of burning timber, louder the closer
+   * and bigger it is (0..1). Uses the storm bed's rumble and hiss.
+   */
+  private crackleIn = 0;
+  updateFire(dt: number, level: number): void {
+    if (!this.ctx || !this.rainGain || !this.rumbleGain) return;
+    const t = this.ctx.currentTime;
+    this.rumbleGain.gain.setTargetAtTime(level * 0.4, t, 0.5);
+    this.rainGain.gain.setTargetAtTime(level * 0.05, t, 0.5);
+    if (level > 0.05) {
+      this.crackleIn -= dt;
+      if (this.crackleIn <= 0) {
+        this.crackleIn = 0.04 + Math.random() * (0.5 - level * 0.4);
+        this.noise(0.03 + Math.random() * 0.05, 0.05 + level * 0.12, 1800 + Math.random() * 2500, 'bandpass');
+      }
+    }
+  }
+
+  /** Retardant leaving the tank: a long rushing pour. */
+  pour(): void {
+    this.noise(2.6, 0.32, 900, 'lowpass', 220);
+    this.noise(1.2, 0.16, 3200, 'bandpass', 900);
+  }
+
+  /** A bucket of water hits the fire: a hiss of steam. */
+  splash(): void {
+    this.noise(1.4, 0.35, 4200, 'highpass', 1500);
+    this.noise(0.5, 0.3, 300, 'lowpass', 90);
+  }
+
   warn(): void {
     this.tone(330, 0.2, 0.12, 'square');
   }

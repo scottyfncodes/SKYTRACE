@@ -66,7 +66,8 @@ describe('Pre-Flight', () => {
     expect(nextMission(p).id).toBe('mountain-rescue');
     expect(isAvailable(p, hiker)).toBe(false);
     expect(defaultLoadout(mountain, p)).toEqual({ vehicle: 'rescue-heli', crew: 'winch', equipment: ['basket'] });
-    expect(VEHICLES.filter((v) => isAvailable(p, v)).map((v) => v.id)).toEqual(['rescue-heli']);
+    // the rescue helicopter, and the fire fleet's helicopter and tanker
+    expect(VEHICLES.filter((v) => isAvailable(p, v)).map((v) => v.id)).toEqual(['rescue-heli', 'fire-heli', 'tanker']);
   });
 
   it('forgetting the basket blocks the launch and says why', () => {

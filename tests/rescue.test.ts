@@ -340,7 +340,8 @@ describe('every playable rescue site', () => {
   it('stands people on open, level, dry ground the helicopter can hover over', async () => {
     const { MISSIONS } = await import('../src/rescue/missions');
     const { forestAt } = await import('../src/world/terrain');
-    for (const m of MISSIONS.filter((x) => x.ready)) {
+    // (a fire with nobody trapped has no rescue site)
+    for (const m of MISSIONS.filter((x) => x.ready && x.survivors > 0)) {
       const h = ground(m.site.x, m.site.z);
       expect(h, m.id).toBeGreaterThan(5);
       for (const [dx, dz] of [[-4, 0], [4, 0], [0, -4], [0, 4]]) expect(Math.abs(ground(m.site.x + dx, m.site.z + dz) - h), m.id).toBeLessThan(2);

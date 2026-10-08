@@ -5,7 +5,7 @@
 import { applyVerticalMode, type VerticalMode } from './settings';
 
 /** Pause, and the one context button (HOVER & HOIST, FLY). */
-export type Action = 'pause' | 'action';
+export type Action = 'pause' | 'action' | 'drop';
 
 export interface InputState {
   roll: number;
@@ -145,7 +145,7 @@ export class Input {
   private onKey(e: KeyboardEvent, down: boolean): void {
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
     if (down && !e.repeat) {
-      const map: Record<string, Action> = { Escape: 'pause', p: 'pause', Enter: 'action', ' ': 'action', h: 'action' };
+      const map: Record<string, Action> = { Escape: 'pause', p: 'pause', Enter: 'action', ' ': 'action', h: 'action', f: 'drop', x: 'drop' };
       const a = map[k];
       if (a) {
         this.trigger(a);

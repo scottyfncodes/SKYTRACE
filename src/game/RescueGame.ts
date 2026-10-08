@@ -7,22 +7,28 @@ import { loadPrefs, savePrefs, type Prefs, type SteerSide, type VerticalMode } f
 import { initialAircraft, stepAircraft, type AircraftState } from '../flight/aircraft';
 import { ChaseCamera } from '../flight/camera';
 import { HelicopterMesh } from '../flight/helicopterMesh';
+import { PlaneMesh } from '../flight/planeMesh';
+import { CALL_LEN, canFireAction, canFill, fireAction, LINE_LEN, RELOAD, THREAT_WORDS, nearestThreat, waterUnder, type FireEvent } from '../fire/fireRun';
+import { inArea, stepFire } from '../fire/fireSim';
+import { FireView } from '../world/fireScene';
+import { paintFire } from '../ui/fireMap';
+import { MAP_PX, valleyImage } from '../ui/valleyMap';
 import { debrief, type Debrief } from '../rescue/debrief';
 import { newBasket, RING_PAD, stepHoist, type Basket, type HoistEvent } from '../rescue/hoist';
 import { headingAxes, hoverTilt, stepHover, type HoverVel } from '../rescue/hover';
 import { canLaunch, defaultLoadout, planOf, toggleEquipment, withCrew, withVehicle, type Loadout, type Plan } from '../rescue/loadout';
 import { MISSION_BY_ID, type MissionDef, type MissionId } from '../rescue/missions';
 import { loadProgress, nextMission, recordRescue, saveProgress, type Progress } from '../rescue/progress';
-import { aboard, cabinFull, canHoist, canLand, delivered, distToSite, landAtPad, newRun, objective, tickRun, waiting, type RunEvent, type RunState } from '../rescue/run';
+import { aboard, cabinFull, canHoist, canLand, delivered, distToSite, fireHead, landAtPad, newRun, objective, tickRun, waiting, type RunEvent, type RunState } from '../rescue/run';
 import { HOVER_DRIFT, windAt, type Wind } from '../rescue/wind';
-import { Hud, type ActionState, type MapFrame } from '../ui/hud';
+import { Hud, type ActionState, type DropState, type MapFrame } from '../ui/hud';
 import { PreflightView } from '../ui/preflight';
 import { renderTitle } from '../ui/title';
 import { buildCountryside } from '../world/countryside';
 import { buildProps, buildTrees, updateProps, type WorldProps } from '../world/props';
 import { BasketMesh, buildCamp, buildRescueProps, Burst, Marker, reachRing, searchArea, Signals, SurvivorMesh, type RescueProps } from '../world/rescueScene';
 import { createScene, type SceneBundle } from '../world/scene';
-import { PADS } from '../world/worldData';
+import { PADS, RUNWAY, WORLD_HALF } from '../world/worldData';
 import { pauseTransition, type Mode } from './modes';
 
 /** The hover holds this high over the people (m). */
@@ -52,6 +58,12 @@ export class RescueGame {
   private props: WorldProps;
   private rescueProps: RescueProps;
   private heli = new HelicopterMesh('rescue');
+  /** The fixed-wing fire fleet (shown instead of the helicopter when one is flown). */
+  private plane = new PlaneMesh('tanker');
+  private trees: THREE.InstancedMesh;
+  private fireView: FireView;
+  /** The mission is over and the camera circles the fire (or the place it reached). */
+  private overview: { x: number; y: number; z: number; r: number; t: number; a0: number } | null = null;
   private basketMesh = new BasketMesh();
   private marker = new Marker();
   private tube = searchArea();
@@ -112,15 +124,18 @@ export class RescueGame {
       if (!e) throw new Error(`missing #${id}`);
       return e;
     };
-    for (const id of ['gl', 'loading', 'title', 'preflight', 'hud', 'pause', 'debrief', 'card', 'card-kicker', 'card-title', 'card-line', 'flash', 'stick-zone', 'stick-knob', 'throttle', 'btn-action', 'btn-pause', 'btn-resume', 'btn-restart', 'btn-abort', 'btn-sound', 'btn-voice', 'pause-objective', 'btn-db-next', 'btn-db-again', 'btn-db-menu', 'db-headline', 'db-mission', 'db-stars', 'db-lines', 'db-unlocks', 'btn-title-settings']) this.el[id] = q(id);
+    for (const id of ['gl', 'loading', 'title', 'preflight', 'hud', 'pause', 'debrief', 'card', 'card-kicker', 'card-title', 'card-line', 'flash', 'stick-zone', 'stick-knob', 'throttle', 'btn-action', 'btn-drop', 'db-compare', 'btn-pause', 'btn-resume', 'btn-restart', 'btn-abort', 'btn-sound', 'btn-voice', 'pause-objective', 'btn-db-next', 'btn-db-again', 'btn-db-menu', 'db-headline', 'db-mission', 'db-stars', 'db-lines', 'db-unlocks', 'btn-title-settings']) this.el[id] = q(id);
 
     this.bundle = createScene(this.el['gl'] as HTMLCanvasElement);
     const hf = this.bundle.heightField;
     const scene = this.bundle.scene;
     this.props = buildProps(hf);
-    scene.add(this.props.group, buildTrees(hf), buildCountryside(hf).group);
+    this.trees = buildTrees(hf);
+    scene.add(this.props.group, this.trees, buildCountryside(hf).group);
+    this.fireView = new FireView(scene, hf);
     this.rescueProps = buildRescueProps(hf);
-    scene.add(this.rescueProps.group, this.heli.group, this.basketMesh.group, this.basketMesh.cable, this.basketMesh.shadow, this.marker.group, this.tube, this.ring, this.signals.group, this.burst.group);
+    this.plane.group.visible = false;
+    scene.add(this.rescueProps.group, this.heli.group, this.plane.group, this.basketMesh.group, this.basketMesh.cable, this.basketMesh.shadow, this.marker.group, this.tube, this.ring, this.signals.group, this.burst.group);
 
     this.input = new Input(this.el['stick-zone'], this.el['stick-knob'], this.el['throttle']);
     this.prefs = loadPrefs(localStorage);
@@ -149,8 +164,10 @@ export class RescueGame {
 
     this.input.bindButton(this.el['btn-pause'], 'pause', 'click');
     this.input.bindButton(this.el['btn-action'], 'action');
+    this.input.bindButton(this.el['btn-drop'], 'drop');
     this.input.onAction('pause', () => this.togglePause());
     this.input.onAction('action', () => this.contextAction());
+    this.input.onAction('drop', () => this.fireDrop());
     this.el['btn-resume'].addEventListener('click', () => this.togglePause());
     this.el['btn-restart'].addEventListener('click', () => this.launch());
     this.el['btn-abort'].addEventListener('click', () => this.showTitle());
@@ -164,7 +181,7 @@ export class RescueGame {
       this.renderPrefs();
     });
     this.el['btn-title-settings'].addEventListener('click', () => this.openSettingsFromTitle());
-    this.el['btn-db-next'].addEventListener('click', () => this.openPreflight(nextMission(this.progress).id));
+    this.el['btn-db-next'].addEventListener('click', () => this.openPreflight(nextMission(this.progress, this.def).id));
     this.el['btn-db-again'].addEventListener('click', () => (this.run.stage === 'failed' ? this.launch() : this.openPreflight(this.def.id)));
     this.el['btn-db-menu'].addEventListener('click', () => this.showTitle());
     for (const b of root.querySelectorAll<HTMLElement>('[data-vert]')) b.addEventListener('click', () => this.setVertical(b.dataset.vert as VerticalMode));
@@ -214,6 +231,9 @@ export class RescueGame {
     });
     // the helicopter idles over the base while you choose
     this.heli.setStyle('rescue');
+    this.heli.setBucket(false);
+    this.heli.group.visible = true;
+    this.plane.group.visible = false;
     this.a = this.onPad('base');
     this.a.y += 26;
     this.bundle.setVisibility(1);
@@ -316,7 +336,22 @@ export class RescueGame {
     return a;
   }
 
+  /** Fixed-wing missions start just off the end of the airfield's runway, climbing out toward the job. */
+  private onRunway(): AircraftState {
+    const x = RUNWAY.x2 + 60;
+    const z = RUNWAY.z;
+    const to = this.def.fire ? { x: this.def.fire.area.x, z: this.def.fire.area.z } : this.def.search;
+    const a = initialAircraft(x, this.bundle.heightField.sample(x, z) + 45, z, Math.atan2(-(to.x - x), -(to.z - z)));
+    a.speed = this.plan.perf.minSpeed + 12;
+    a.throttle = 0.45;
+    a.agl = 45;
+    return a;
+  }
+
   private clearMissionScene(): void {
+    this.fireView.clear();
+    this.overview = null;
+    this.audio.updateFire(0, 0);
     for (const p of this.people) this.bundle.scene.remove(p.group);
     this.people = [];
     if (this.camp) this.bundle.scene.remove(this.camp);
@@ -345,8 +380,13 @@ export class RescueGame {
     const hf = this.bundle.heightField;
     this.plan = planOf(def, this.loadout);
     this.run = newRun(def, this.plan);
-    this.heli.setStyle(this.plan.style);
-    this.a = this.onPad(def.startPad);
+    const plane = this.plan.kind === 'plane';
+    this.heli.group.visible = !plane;
+    this.plane.group.visible = plane;
+    if (plane) this.plane.setStyle(this.plan.style === 'spotter' ? 'spotter' : 'tanker');
+    else this.heli.setStyle(this.plan.style === 'heavy' ? 'heavy' : this.plan.style === 'fire' ? 'fire' : 'rescue');
+    this.heli.setBucket(this.plan.bucket && !!this.run.ops, true);
+    this.a = plane ? this.onRunway() : this.onPad(def.startPad);
     this.hv = { vx: 0, vz: 0 };
     this.hoisting = false;
     this.reeling = false;
@@ -364,9 +404,14 @@ export class RescueGame {
     this.hintT = 0;
     this.shake = 0;
     this.heli.sync(this.a, this.t, 0, 0, 0);
+    if (plane) {
+      this.power = 1;
+      this.plane.sync(this.a, this.t, 0);
+    }
     this.heli.winchWorld(this.winchPos);
     this.winchPrev.copy(this.winchPos);
     this.basket = newBasket({ x: this.winchPos.x, y: this.winchPos.y, z: this.winchPos.z, vx: 0, vz: 0 });
+    if (this.run.ops) this.fireView.setup(this.run.ops, this.trees);
     // the people, their camp, the search area
     this.run.survivors.forEach((s, i) => {
       const m = new SurvivorMesh(def.look, i);
@@ -374,23 +419,28 @@ export class RescueGame {
       this.people.push(m);
       this.bundle.scene.add(m.group);
     });
-    this.camp = buildCamp(hf, def.site.x, def.site.z, def.look);
-    this.bundle.scene.add(this.camp);
+    const rescue = def.survivors > 0;
+    if (rescue) {
+      this.camp = buildCamp(hf, def.site.x, def.site.z, def.look);
+      this.bundle.scene.add(this.camp);
+    }
     const gy = hf.sample(def.search.x, def.search.z);
     this.tube.position.set(def.search.x, gy + 120, def.search.z);
     this.tube.scale.set(def.search.r, 420, def.search.r);
-    this.tube.visible = true;
+    this.tube.visible = rescue && !def.fire;
     const sy = hf.sample(def.site.x, def.site.z);
     this.ring.position.set(def.site.x, sy + 0.35, def.site.z);
     this.ring.scale.setScalar(this.plan.hoist.reach + RING_PAD);
     this.ring.visible = false;
-    this.basketMesh.group.visible = true;
+    this.basketMesh.group.visible = rescue;
+    this.el['hud'].classList.toggle('has-fire', !!this.run.ops);
     this.bundle.setVisibility(VISIBILITY[def.visibility]);
     this.chase.reset();
     this.hud.clearBanners();
     this.radio.clear();
     this.radio.say('DISPATCH', def.radio.launch);
-    this.showCard('RESCUE ONE', 'LIFTING OFF', `${def.icon} ${def.title}`, '', 2.4);
+    const callsign = plane ? (this.plan.attack === 'lead' ? 'LEAD ONE' : 'TANKER ONE') : def.fire && !rescue ? 'FIRE ONE' : 'RESCUE ONE';
+    this.showCard(callsign, plane ? 'AIRBORNE' : 'LIFTING OFF', `${def.icon} ${def.title}`, '', 2.4);
     this.show('flight');
   }
 
@@ -406,9 +456,13 @@ export class RescueGame {
     this.show(next);
   }
 
-  /** The one context button: HOVER & HOIST over the people, FLY to leave the hover. */
+  /** The one context button: HOVER & HOIST over the people, FLY to leave the hover; on a fire with nobody trapped, the drop. */
   private contextAction(): void {
     if (this.mode !== 'flight') return;
+    if (this.run.ops && this.def.survivors === 0) {
+      this.fireDrop();
+      return;
+    }
     if (this.hoisting) {
       this.leaveHover();
       return;
@@ -416,6 +470,21 @@ export class RescueGame {
     const where = { x: this.a.x, z: this.a.z, agl: this.a.agl, speed: this.a.speed };
     if (!canHoist(this.run, where).ok) return;
     this.enterHover();
+  }
+
+  /** Where the aircraft is and how it is moving over the ground. */
+  private where(): { x: number; z: number; agl: number; speed: number; vx: number; vz: number } {
+    if (this.hoisting) return { x: this.a.x, z: this.a.z, agl: this.a.agl, speed: this.a.speed, vx: this.hv.vx, vz: this.hv.vz };
+    const ax = headingAxes(this.a.yaw);
+    return { x: this.a.x, z: this.a.z, agl: this.a.agl, speed: this.a.speed, vx: ax.fx * this.a.speed, vz: ax.fz * this.a.speed };
+  }
+
+  /** The fire button: drop retardant, let the bucket go, or start marking a line for Tanker 42. */
+  private fireDrop(): void {
+    const ops = this.run.ops;
+    if (this.mode !== 'flight' || !ops || this.run.stage === 'takeoff') return;
+    const ev = fireAction(ops, this.where(), this.run.t, this.hoisting);
+    if (ev.length) this.fireEvents(ev);
   }
 
   private enterHover(): void {
@@ -469,6 +538,12 @@ export class RescueGame {
     requestAnimationFrame((n) => this.frame(n));
     const dt = clamp((now - this.last) / 1000, 0, 0.05);
     this.last = now;
+    this.tick(dt);
+    if (this.mode !== 'preflight') this.bundle.renderer.render(this.bundle.scene, this.bundle.camera);
+  }
+
+  /** Everything but drawing, one step. */
+  private tick(dt: number): void {
     this.t += dt;
     this.bundle.update(dt, this.t);
     updateProps(this.props, this.t);
@@ -478,8 +553,11 @@ export class RescueGame {
     else if (this.mode === 'landing') this.updateLanding(dt);
     else if (this.mode === 'title') this.updateTitle(dt);
     else if (this.mode === 'preflight') this.preflight.tick(this.t);
-    if (this.mode === 'preflight' || this.mode === 'debrief' || this.mode === 'paused') this.audio.updateHeli(0, 0, 0, 0);
-    if (this.mode !== 'preflight') this.bundle.renderer.render(this.bundle.scene, this.bundle.camera);
+    if (this.mode === 'preflight' || this.mode === 'debrief' || this.mode === 'paused') {
+      this.audio.updateHeli(0, 0, 0, 0);
+      this.audio.updateFire(dt, 0);
+      if (this.mode !== 'paused') this.audio.updateFlight(0, 0, false, false);
+    }
   }
 
   private updateTitle(dt: number): void {
@@ -511,7 +589,8 @@ export class RescueGame {
     const drift = { x: this.wind.x * HOVER_DRIFT * plan.windFactor, z: this.wind.z * HOVER_DRIFT * plan.windFactor };
 
     // ---- fly
-    if (run.stage === 'takeoff') {
+    const plane = plan.kind === 'plane';
+    if (run.stage === 'takeoff' && !plane) {
       // spin up on the pad, then lift straight up to a safe height
       this.takeoffT += dt;
       this.power = Math.min(1, this.takeoffT / 1.6);
@@ -544,33 +623,39 @@ export class RescueGame {
       }
       this.a = stepAircraft(this.a, inp, dt, ground, plan.perf);
       // the wind leans on a slow helicopter
-      const k = 1 - Math.min(1, this.a.speed / 30) * 0.6;
+      const k = plane ? 0 : 1 - Math.min(1, this.a.speed / 30) * 0.6;
       this.a.x += drift.x * k * dt;
       this.a.z += drift.z * k * dt;
       this.input.syncThrottle(this.a.throttle);
       this.winchCmd = 0;
     }
 
-    // ---- the helicopter, its winch, the basket
+    // ---- the aircraft; the helicopter's winch and basket
     const targetTilt = this.hoisting ? hoverTilt(this.a.yaw, this.hv, HOVER_SPEED) : (this.a.speed / plan.perf.maxSpeed) * 0.2;
     this.tilt = damp(this.tilt, targetTilt, 3, dt);
+    if (plane) this.plane.sync(this.a, this.t, dt);
     this.heli.sync(this.a, this.t, dt, this.tilt, this.power);
-    this.heli.winchWorld(this.winchPos);
-    if (dt > 0) {
-      this.winchVel = { x: (this.winchPos.x - this.winchPrev.x) / dt, z: (this.winchPos.z - this.winchPrev.z) / dt };
+    if (run.ops && plan.bucket) this.heli.setBucket(true, run.ops.load > 0 || run.ops.fill > 0.5);
+    if (def.survivors > 0) {
+      this.heli.winchWorld(this.winchPos);
+      if (dt > 0) {
+        this.winchVel = { x: (this.winchPos.x - this.winchPrev.x) / dt, z: (this.winchPos.z - this.winchPrev.z) / dt };
+      }
+      this.winchPrev.copy(this.winchPos);
+      const prevLen = this.basket.len;
+      const hev = stepHoist(this.basket, run.survivors, { x: this.winchPos.x, y: this.winchPos.y + 1.6, z: this.winchPos.z, vx: this.winchVel.x, vz: this.winchVel.z }, this.wind, ground, this.winchCmd, plan.hoist, dt, cabinFull(run));
+      const winchDir = Math.abs(this.basket.len - prevLen) < 1e-4 ? 0 : this.basket.len > prevLen ? 1 : -1;
+      this.audio.winch(winchDir);
+      this.hoistEvents(hev);
     }
-    this.winchPrev.copy(this.winchPos);
-    const prevLen = this.basket.len;
-    const hev = stepHoist(this.basket, run.survivors, { x: this.winchPos.x, y: this.winchPos.y + 1.6, z: this.winchPos.z, vx: this.winchVel.x, vz: this.winchVel.z }, this.wind, ground, this.winchCmd, plan.hoist, dt, cabinFull(run));
-    const winchDir = Math.abs(this.basket.len - prevLen) < 1e-4 ? 0 : this.basket.len > prevLen ? 1 : -1;
-    this.audio.winch(winchDir);
-    this.hoistEvents(hev);
 
-    // ---- the rescue
-    const where = { x: this.a.x, z: this.a.z, agl: this.a.agl, speed: this.a.speed };
+    // ---- the rescue, the fire
+    const where = this.where();
     const ev = tickRun(run, where, dt, plan, this.hoisting);
     this.runEvents(ev);
+    if (run.ops) this.fireEvents(ev.filter((e): e is FireEvent => FIRE_EVENTS.has(e)));
     if (this.mode !== 'flight') return;
+    if (run.ops) this.fireEffects(dt);
     if (this.autoExit > 0) {
       this.autoExit -= dt;
       if (this.autoExit <= 0 && this.hoisting) this.leaveHover();
@@ -602,7 +687,8 @@ export class RescueGame {
     this.updateHud(dt);
     this.updateCamera(dt);
     const load = this.hoisting ? 0.35 + Math.min(1, this.a.speed / HOVER_SPEED) * 0.2 : 0.3 + (this.a.speed / plan.perf.maxSpeed) * 0.5 + Math.max(0, this.a.pitch) * 0.6;
-    this.audio.updateHeli(this.power, load, this.a.speed, this.wind.gust);
+    if (plane) this.audio.updateFlight(this.a.throttle, this.a.speed, true, false);
+    else this.audio.updateHeli(this.power, load, this.a.speed, this.wind.gust);
   }
 
   private hoistEvents(ev: HoistEvent[]): void {
@@ -668,6 +754,133 @@ export class RescueGame {
     }
   }
 
+  // ------------------------------------------------------------------ the fire
+  /** Where the last bucket will land (for the steam when it hits). */
+  private waterAt: { x: number; z: number } | null = null;
+
+  private fireEvents(ev: FireEvent[]): void {
+    const ops = this.run.ops;
+    if (!ops) return;
+    const def = this.def;
+    const solo = def.survivors === 0;
+    for (const e of ev) {
+      if (e === 'over-fire') {
+        if (solo) this.say('CREW', def.radio.spotted);
+        this.hud.banner('OVER THE FIRE', ops.attack === 'water' ? 'Put water on the hottest part' : ops.attack === 'retardant' ? 'Line up ahead of it · the red strip shows your drop' : ops.attack === 'lead' ? 'Fly a line ahead of it · press MARK' : 'Watch it', 'spot', 2.8);
+      } else if (e === 'drop') {
+        this.shake = 0.12;
+        if (ops.attack === 'retardant') {
+          this.audio.pour();
+          this.crew('Retardant away!');
+        } else if (ops.attack === 'water') {
+          this.audio.drop();
+          const at = this.heli.bucketWorld(new THREE.Vector3());
+          const w = this.where();
+          this.fireView.dumpWater(at, { x: w.vx, z: w.vz });
+          this.waterAt = { x: this.a.x + w.vx * 0.9, z: this.a.z + w.vz * 0.9 };
+          this.crew('Bucket away!');
+        }
+      } else if (e === 'line-laid') {
+        this.audio.secured();
+        if (ops.attack === 'lead') this.hud.banner('LINE DOWN!', 'Tanker 42 dropped your line', 'good', 2.4);
+        else this.hud.banner('LINE LAID!', ops.load > 0 ? `${ops.load} more ${ops.load === 1 ? 'drop' : 'drops'} in the tank` : 'Tanks empty · reload at the airfield', 'good', 2.6);
+      } else if (e === 'water-hit') {
+        this.audio.splash();
+        if (this.waterAt) this.fireView.steam(this.waterAt.x, this.waterAt.z, 22);
+        this.hud.banner('DIRECT HIT!', 'Knocked it down', 'good', 2);
+      } else if (e === 'water-missed') {
+        this.audio.splash();
+        this.crew('Missed the flames. Get right over them.');
+      } else if (e === 'empty') {
+        if (ops.attack === 'water') this.crew(pick(["Bucket's empty. Back to the water.", 'Empty. Go fill up and come straight back.']));
+        else if (ops.attack === 'retardant') this.crew('Tanks are dry. Back to the airfield to reload.');
+      } else if (e === 'filling') {
+        this.audio.click();
+      } else if (e === 'full') {
+        this.audio.payload();
+        this.hud.banner('BUCKET FULL', 'Back to the fire', 'good', 1.8);
+      } else if (e === 'reloaded') {
+        this.audio.payload();
+        this.hud.banner('RELOADED', `${ops.loadMax} lines ready`, 'good', 2);
+        this.say('GROUND', 'Tanker One, loaded. Go get it.');
+      } else if (e === 'mark-start') {
+        this.audio.mark();
+        this.crew('Smoke on. Fly the line you want dropped.');
+      } else if (e === 'marked') {
+        this.audio.link();
+        this.hud.banner('LINE MARKED', 'Tanker 42 inbound · 14 s', 'spot', 2.4);
+        this.say('TANKER 42', 'Got your line, Lead. Inbound, fourteen seconds.');
+      } else if (e === 'tanker-drop') {
+        this.audio.pour();
+        this.say('TANKER 42', 'On your smoke. Drop, drop, drop!');
+      } else if (e === 'spot-fire') {
+        this.audio.warn();
+        this.hud.banner('SPOT FIRE!', 'Embers jumped ahead of the front', 'bad', 2.4);
+        this.crew(pick(['Spot fire! Embers have jumped ahead.', 'New fire ahead of the front!']), true);
+      } else if (e === 'line-holding') {
+        this.audio.spotted();
+        this.hud.banner('THE LINE IS HOLDING!', 'The fire has stopped at it', 'good', 2.8);
+        if (solo) this.say('CREW', def.radio.allAboard);
+      } else if (e === 'threat-up') {
+        this.audio.warn();
+        const th = nearestThreat(ops);
+        this.hud.banner(`${th.name.toUpperCase()}: ${THREAT_WORDS[ops.threatLevel]}`, 'The fire is closing in', 'bad', 2.4);
+        this.say('GROUND', ops.threatLevel >= 3 ? `It's almost at ${th.name}!` : `Fire is getting close to ${th.name}.`);
+      } else if (e === 'contained' || e === 'held') {
+        if (solo) this.fireSuccess();
+      } else if (e === 'breached') {
+        const th = ops.lost!;
+        this.overview = { x: th.x, y: this.bundle.heightField.sample(th.x, th.z) + 10, z: th.z, r: 120, t: 0, a0: this.a.yaw + Math.PI };
+        this.fail(`FIRE REACHED ${th.name.toUpperCase()}`, this.run.failReason ?? '');
+      }
+    }
+  }
+
+  /** The fire is beaten: a slow look over what you did, then the debrief. */
+  private fireSuccess(): void {
+    const ops = this.run.ops!;
+    const f = ops.fire;
+    const c = { x: f.x0 + (f.n * f.cell) / 2, z: f.z0 + (f.n * f.cell) / 2 };
+    this.radio.clear();
+    this.audio.fanfare();
+    this.say('FIRE CREWS', this.def.radio.landed);
+    const names = ops.spec.threats.map((t) => t.name).join(' · ');
+    this.showCard(names.toUpperCase() + (ops.spec.threats.length > 1 ? ' ARE SAFE' : ' IS SAFE'), ops.outcome === 'contained' ? 'FIRE CONTAINED' : 'FIRE HELD', ops.outcome === 'contained' ? 'It has nowhere left to go' : 'Ground crews have it now', 'good', 5);
+    this.el['hud'].classList.add('cinematic');
+    this.hud.objective('✅', ops.outcome === 'contained' ? 'FIRE CONTAINED' : 'FIRE HELD', names);
+    this.overview = { x: c.x, y: this.bundle.heightField.sample(c.x, c.z) + 20, z: c.z, r: f.n * f.cell * 0.75, t: 0, a0: this.a.yaw + Math.PI };
+    this.ending = { t: 6.5, result: debrief(this.run) };
+    this.mode = 'landing';
+    this.landing = null;
+    this.hud.drop({ kind: 'hidden' });
+  }
+
+  /** The fire's visuals each frame: the burn map and flames, the drops in the air, filling up, the preview. */
+  private fireEffects(dt: number): void {
+    const ops = this.run.ops!;
+    const fv = this.fireView;
+    fv.runTime = this.run.t;
+    const w = this.where();
+    if (ops.dropping && this.plan.kind === 'plane') fv.pourRetardant(this.plane.bellyWorld(new THREE.Vector3()), { x: w.vx, z: w.vz }, dt);
+    if (ops.marking && Math.random() < dt * 30) fv.markSmoke(this.plane.bellyWorld(new THREE.Vector3()));
+    if (ops.fill > 0 && ops.attack === 'water' && Math.random() < dt * 30) {
+      const b = this.heli.bucketWorld(new THREE.Vector3());
+      b.y = Math.max(b.y - 1.4, 0);
+      fv.scoopSpray(b);
+    }
+    // where the drop will land, before you press it
+    const act = canFireAction(ops, w, this.hoisting);
+    const near = inArea(ops.fire, w.x, w.z, 260) && ops.load > 0 && !ops.dropping && !ops.marking;
+    const tooHigh = act.why === 'TOO HIGH';
+    if (near && (act.ok || tooHigh) && ops.attack) {
+      const sp = Math.max(1, Math.hypot(w.vx, w.vz));
+      const dx = this.hoisting ? -Math.sin(this.a.yaw) : w.vx / sp;
+      const dz = this.hoisting ? -Math.cos(this.a.yaw) : w.vz / sp;
+      if (ops.attack === 'water') fv.showPreview('water', w.x + w.vx * 0.9, w.z + w.vz * 0.9, dx, dz, act.ok);
+      else fv.showPreview(ops.attack === 'lead' ? 'call' : 'line', w.x, w.z, dx, dz, act.ok);
+    } else fv.showPreview(null, 0, 0, 0, 1, false);
+  }
+
   private fail(title: string, line: string): void {
     this.radio.clear();
     this.audio.failed();
@@ -704,10 +917,25 @@ export class RescueGame {
   private updateLanding(dt: number): void {
     this.hud.tick(dt);
     if (this.ending) {
-      // a failure (or the end of the rescue): hold, then the debrief
-      this.power = Math.max(0.25, this.power - dt * 0.4);
-      this.heli.sync(this.a, this.t, dt, this.tilt * 0.9, this.power);
-      this.audio.updateHeli(this.power, 0.2, 0, 0);
+      // a failure (or the end of the rescue, or the fire beaten): hold, then the debrief
+      if (this.plan.kind === 'plane') {
+        // a plane cannot stop: it flies on, climbing gently away
+        const ax = headingAxes(this.a.yaw);
+        this.a.x += ax.fx * this.a.speed * dt;
+        this.a.z += ax.fz * this.a.speed * dt;
+        this.a.y += 4 * dt;
+        this.a.roll = damp(this.a.roll, 0, 2, dt);
+        this.plane.sync(this.a, this.t, dt);
+        this.audio.updateFlight(this.a.throttle, this.a.speed, true, false);
+      } else {
+        this.power = Math.max(0.25, this.power - dt * 0.4);
+        this.heli.sync(this.a, this.t, dt, this.tilt * 0.9, this.power);
+        this.audio.updateHeli(this.power, 0.2, 0, 0);
+      }
+      if (this.overview) this.overview.t += dt;
+      // the fire carries on burning (against the line, or into the town) while you watch
+      const ops = this.run.ops;
+      if (ops) stepFire(ops.fire, windAt(this.def.wind, this.run.t + this.t), dt);
       if (!this.landing) this.updateCamera(dt);
       this.updateWorld(dt);
       this.ending.t -= dt;
@@ -788,14 +1016,62 @@ export class RescueGame {
     this.el['db-mission'].textContent = `${this.def.icon} ${this.def.title.toUpperCase()} · ${this.def.place.toUpperCase()}`;
     this.el['db-stars'].innerHTML = [0, 1, 2].map((i) => `<i class="${i < d.stars ? 'on' : ''}" style="animation-delay:${0.25 + i * 0.25}s">★</i>`).join('');
     this.el['db-lines'].innerHTML = d.lines.map((l, i) => `<li style="animation-delay:${0.1 + i * 0.15}s"><i>${l.icon}</i>${l.text}</li>`).join('');
+    this.drawCompare();
     this.el['db-unlocks'].innerHTML = this.unlocked.length ? `<div class="u-head">UNLOCKED</div>${this.unlocked.map((u, i) => `<div class="u" style="animation-delay:${0.8 + i * 0.15}s">${u}</div>`).join('')}` : '';
-    const next = nextMission(this.progress);
+    const next = nextMission(this.progress, this.def);
     const nextBtn = this.el['btn-db-next'];
     nextBtn.classList.toggle('hidden', !d.success || next.id === this.def.id);
     nextBtn.textContent = `NEXT: ${next.title.toUpperCase()}`;
     this.el['btn-db-again'].textContent = d.success ? 'FLY IT AGAIN' : 'TRY AGAIN';
     if (d.success && this.unlocked.length) setTimeout(() => this.audio.unlockSound(), 900);
     this.show('debrief');
+  }
+
+  /** The fire's before and after: what it would have done without you, and what it did. */
+  private drawCompare(): void {
+    const box = this.el['db-compare'];
+    const ops = this.run.ops;
+    box.innerHTML = '';
+    if (!ops || this.def.survivors > 0) return;
+    const f = ops.fire;
+    const size = f.n * f.cell;
+    const draw = (title: string, cls: string, state: typeof f) => {
+      const fig = document.createElement('figure');
+      fig.className = cls;
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = 192;
+      const ctx = cv.getContext('2d')!;
+      // the valley under it
+      const img = valleyImage();
+      const k = MAP_PX / (WORLD_HALF * 2);
+      ctx.drawImage(img, (f.x0 + WORLD_HALF) * k, (f.z0 + WORLD_HALF) * k, size * k, size * k, 0, 0, 192, 192);
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.fillRect(0, 0, 192, 192);
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(paintFire(document.createElement('canvas'), state), 0, 0, 192, 192);
+      for (const th of ops.spec.threats) {
+        const x = ((th.x - f.x0) / size) * 192;
+        const y = ((th.z - f.z0) / size) * 192;
+        const lost = state.state.some((st, i) => st !== 0 && Math.hypot(f.x0 + ((i % f.n) + 0.5) * f.cell - th.x, f.z0 + (Math.floor(i / f.n) + 0.5) * f.cell - th.z) < th.r);
+        ctx.fillStyle = lost ? 'rgba(226,61,40,0.55)' : 'rgba(34,179,94,0.55)';
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(9, (th.r / size) * 192), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.font = '20px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(th.icon, x, y + 1);
+      }
+      const cap = document.createElement('figcaption');
+      cap.textContent = title;
+      fig.append(cv, cap);
+      box.append(fig);
+    };
+    draw('WITHOUT YOU', 'without', ops.shadow);
+    draw('WITH YOU', 'you', f);
   }
 
   // ------------------------------------------------------------------ world, HUD, camera
@@ -818,11 +1094,21 @@ export class RescueGame {
     });
     // the basket and its cable
     const g = hf.sample(this.basket.x, this.basket.z);
-    this.basketMesh.group.visible = true;
-    this.basketMesh.update(this.basket.x, this.basket.y, this.basket.z, this.a.yaw, this.winchPos, g, this.basket.len);
+    const rescue = def.survivors > 0;
+    this.basketMesh.group.visible = rescue;
+    if (rescue) this.basketMesh.update(this.basket.x, this.basket.y, this.basket.z, this.a.yaw, this.winchPos, g, this.basket.len);
+    else this.basketMesh.cable.visible = this.basketMesh.shadow.visible = false;
+    // the fire
+    if (run.ops) {
+      const w = windAt(def.wind, run.t);
+      this.fireView.update(dt, this.t, run.ops, w, cam, this.el['gl'].clientHeight * this.bundle.renderer.getPixelRatio(), this.plan.forecast, this.bundle.scene.fog as THREE.Fog);
+      const c = this.fireView.center;
+      const near = Math.max(0, 1 - Math.hypot(this.a.x - c.x, this.a.z - c.z, this.a.y - c.y) / 700);
+      this.audio.updateFire(dt, this.mode === 'paused' ? 0 : Math.min(1, this.fireView.burning / 160) * near);
+    }
     // markers: the search area, then the people, then the hospital
     const onMountain = waiting(run) > 0;
-    this.tube.visible = !run.spotted;
+    this.tube.visible = !run.spotted && rescue && !def.fire;
     const dSite = distToSite(run, this.a);
     this.ring.visible = run.spotted && onMountain && dSite < 160;
     const pulse = 0.65 + 0.35 * Math.sin(this.t * 5);
@@ -842,6 +1128,12 @@ export class RescueGame {
       this.marker.set('person');
       this.marker.group.visible = !(this.hoisting && dSite < 50);
       this.marker.update(def.site.x, hf.sample(def.site.x, def.site.z), def.site.z, cam, this.t, 16);
+    } else if (!rescue) {
+      // on a fire: a pin over the airfield when it is time to reload
+      const reload = run.ops?.attack === 'retardant' && run.ops.load === 0;
+      this.marker.set('h');
+      this.marker.group.visible = reload;
+      if (reload) this.marker.update(RELOAD.x, hf.sample(RELOAD.x, RELOAD.z), RELOAD.z, cam, this.t, 40);
     } else if (!run.spotted) {
       this.marker.set('search');
       this.marker.group.visible = run.stage !== 'takeoff' && Math.hypot(this.a.x - def.search.x, this.a.z - def.search.z) > def.search.r * 0.9;
@@ -860,7 +1152,7 @@ export class RescueGame {
     const plan = this.plan;
     const hud = this.hud;
     hud.tick(dt);
-    const o = objective(run, this.hoisting, plan.beacon && dist2(this.a, def.site) < 1100);
+    const o = objective(run, this.hoisting, plan.beacon && dist2(this.a, def.site) < 1100, this.a);
     hud.objective(o.icon, o.title, o.detail);
     if (o.target && !(this.hoisting && o.target.kind === 'site')) {
       const dx = o.target.x - this.a.x;
@@ -873,12 +1165,30 @@ export class RescueGame {
     } else hud.nav(null, 0, '', '');
     hud.people(run.survivors.map((s) => s.state));
     hud.fuel(run.fuel / run.fuelMax);
+    const ops = run.ops;
+    if (ops) {
+      const th = nearestThreat(ops);
+      hud.fire({
+        name: `${th.icon} ${th.name.toUpperCase()}`,
+        threat: ops.threat,
+        word: THREAT_WORDS[ops.threatLevel],
+        load: ops.load,
+        loadMax: ops.loadMax,
+        icon: ops.attack === 'water' ? '💧' : ops.attack === 'lead' ? '📍' : '🟥',
+        fill: ops.fill,
+        hold: ops.spec.hold > 0 ? `CREWS ${clockOf(ops.holdLeft)}` : '',
+      });
+      hud.drop(this.dropState());
+    } else {
+      hud.fire(null);
+      hud.drop({ kind: 'hidden' });
+    }
     const touch = this.input.isTouch;
     // the context button
     const where = { x: this.a.x, z: this.a.z, agl: this.a.agl, speed: this.a.speed };
     let action: ActionState = { kind: 'hidden' };
     if (this.hoisting) action = this.reeling ? { kind: 'wait', label: 'REELING IN…' } : { kind: 'fly', label: 'FLY ▶' };
-    else {
+    else if (def.survivors > 0) {
       const ch = canHoist(run, where);
       if (ch.ok) action = { kind: 'hover' };
       else if (ch.why === 'SLOW DOWN') action = { kind: 'wait', label: 'SLOW DOWN TO HOVER' };
@@ -892,7 +1202,7 @@ export class RescueGame {
       hud.winch(this.winchCmd / max, this.basket.len / max, label);
       hud.stickLabel('MOVE');
     } else {
-      hud.lever(this.a.throttle);
+      hud.lever(this.a.throttle, plan.kind === 'plane');
       hud.stickLabel(this.prefs.verticalMode === 'standard' ? 'STEER · UP CLIMBS' : 'STEER · DOWN CLIMBS');
     }
     hud.readout(this.hoisting ? `WIND ${Math.round(this.wind.speed * 3.6)} km/h` : `${Math.round(this.a.agl)} m · ${Math.round(this.a.speed * 3.6)} km/h`);
@@ -916,6 +1226,25 @@ export class RescueGame {
         { x: PADS.hospital.x, z: PADS.hospital.z, hospital: true },
       ],
     };
+    if (ops) {
+      const f = ops.fire;
+      const w = this.wind;
+      const ax = headingAxes(this.a.yaw);
+      const act = canFireAction(ops, where, this.hoisting);
+      const lineKind = ops.attack === 'retardant' || ops.attack === 'lead';
+      frame.search = null;
+      frame.fire = {
+        canvas: this.fireView.canvas,
+        forecast: this.fireView.hasForecast ? this.fireView.forecastCanvas : null,
+        x0: f.x0,
+        z0: f.z0,
+        size: f.n * f.cell,
+        threats: ops.spec.threats,
+        water: ops.attack === 'water' ? ops.spec.water : [],
+        wind: { x: w.x, z: w.z },
+        line: lineKind && (act.ok || act.why === 'TOO HIGH') ? { x: this.a.x + ax.fx * 12, z: this.a.z + ax.fz * 12, dx: ax.fx, dz: ax.fz, len: ops.attack === 'lead' ? CALL_LEN : LINE_LEN, color: act.ok ? (ops.attack === 'lead' ? '#ffd23f' : '#e23d28') : '#9aa3ab' } : null,
+      };
+    }
     if (this.hoisting)
       frame.hoist = {
         reach: plan.hoist.reach,
@@ -944,6 +1273,11 @@ export class RescueGame {
       return 'Keep the basket over the ring';
     }
     if (this.hintT < 6 && run.t < 14) return touch ? `Lever UP to fly · drag on the ${steer} to steer` : 'Shift / Q: speed · arrows: steer and climb';
+    // on a fire; with people trapped, the rescue's hints win once you are near them
+    if (run.ops && (this.def.survivors === 0 || (!this.hoisting && run.stage !== 'return' && distToSite(run, where) > 160))) {
+      const h = this.fireHint(touch, where);
+      if (h !== null) return h;
+    }
     if (run.stage === 'search') return run.signalled ? `Look for the ${this.def.signal === 'smoke' ? 'smoke' : 'red flare'}` : 'Head for the blue search area';
     if (run.stage === 'rescue') {
       const d = distToSite(run, where);
@@ -960,13 +1294,54 @@ export class RescueGame {
     return '';
   }
 
+  /** What the fire button does right now. */
+  private dropState(): DropState {
+    const ops = this.run.ops!;
+    if (!ops.attack || this.run.stage === 'takeoff') return { kind: 'hidden' };
+    if (ops.dropping) return { kind: 'wait', label: '🟥 DROPPING… HOLD STEADY' };
+    if (ops.marking) return { kind: 'wait', label: '📍 MARKING… FLY THE LINE' };
+    if (ops.fill > 0) return { kind: 'wait', label: ops.attack === 'water' ? `💧 FILLING ${Math.round(ops.fill * 100)}%` : `⛽ RELOADING ${Math.round(ops.fill * 100)}%` };
+    const w = this.where();
+    const act = canFireAction(ops, w, this.hoisting);
+    if (act.ok) return { kind: 'ready', label: ops.attack === 'water' ? '💧 DROP WATER' : ops.attack === 'lead' ? '📍 MARK LINE' : '🟥 DROP RETARDANT' };
+    const near = inArea(ops.fire, w.x, w.z, 120);
+    if (act.why === 'TOO HIGH') return { kind: 'wait', label: 'TOO HIGH · DESCEND' };
+    if (act.why && near) return { kind: 'wait', label: act.why };
+    return { kind: 'hidden' };
+  }
+
+  /** The hint on a fire: one short line on what to do next (null: nothing fire-specific to say). */
+  private fireHint(touch: boolean, w: { x: number; z: number; agl: number; speed: number }): string | null {
+    const ops = this.run.ops!;
+    const drop = touch ? 'DROP' : 'DROP (Space / F)';
+    if (ops.dropping) return 'Fly straight: the line goes down where you fly';
+    if (ops.marking) return 'Fly straight along the line you want';
+    if (ops.attack === 'water' && ops.load === 0) {
+      const water = waterUnder(ops, w);
+      if (!water) return 'Fly to the blue ring and hover low over the water';
+      if (w.agl > 18) return 'Lower: get the bucket into the water';
+      if (w.speed > 14) return 'Slow right down to fill the bucket';
+      return canFill(ops, w) ? 'Filling… hold it there' : '';
+    }
+    if (ops.attack === 'retardant' && ops.load === 0) return Math.hypot(w.x - RELOAD.x, w.z - RELOAD.z) < RELOAD.r ? (w.agl > RELOAD.agl ? 'Lower over the runway to reload' : 'Reloading… hold it low') : 'Head back to the airfield to reload';
+    if (!ops.attack) return null;
+    if (ops.attack === 'lead' && ops.load === 0) return ops.calls.some((c) => c.painted < c.len) ? 'Tanker 42 is on its way: watch the line go down' : 'All calls made · watch your lines hold';
+    if (!inArea(ops.fire, w.x, w.z, 40)) return this.def.survivors > 0 ? null : 'Follow the arrow to the fire';
+    if (w.agl > (ops.attack === 'water' ? 80 : ops.attack === 'retardant' ? 160 : 320)) return 'Too high to drop: descend';
+    if (ops.attack === 'water') return `Over the flames? ${drop}`;
+    if (ops.attack === 'retardant') return `Get ahead of the fire, line up, ${drop}`;
+    return `Fly ahead of the fire and press MARK`;
+  }
+
   private updateCamera(dt: number): void {
     const hf = this.bundle.heightField;
     // the hoist view frames the people and the basket coming down to them
     const gy = hf.sample(this.def.site.x, this.def.site.z);
     const sep = Math.hypot(this.basket.x - this.def.site.x, this.basket.z - this.def.site.z);
     const look = this.hoisting ? new THREE.Vector3(this.basket.x * 0.5 + this.def.site.x * 0.5, gy + 4 + Math.min(10, Math.max(0, this.basket.y - gy) * 0.25), this.basket.z * 0.5 + this.def.site.z * 0.5) : undefined;
-    this.chase.update(this.bundle.camera, this.a, dt, (x, z) => hf.sample(x, z), { hoist: this.hoisting ? 1 : 0, look, pull: Math.min(40, sep * 0.8) });
+    const dist = this.plan.style === 'tanker' ? 2.1 : this.plan.style === 'spotter' ? 1.35 : 1;
+    const lift = this.run.ops && this.def.survivors === 0 ? 5 : 0;
+    this.chase.update(this.bundle.camera, this.a, dt, (x, z) => hf.sample(x, z), { hoist: this.hoisting ? 1 : 0, look, pull: Math.min(40, sep * 0.8), dist, lift, orbit: this.overview ?? undefined });
     if (this.shake > 0) {
       const amp = this.shake * this.shake * 1.6;
       const c = this.bundle.camera.position;
@@ -1029,6 +1404,41 @@ export class RescueGame {
         if (headingDeg !== undefined) this.a.yaw = wrapAngle((-headingDeg * Math.PI) / 180);
         this.chase.reset();
       },
+      getOps: () => this.run.ops,
+      getBriefing: () => this.preflight.fire,
+      /** Run the game this many seconds without drawing (slow software renderers in automated play-tests). */
+      advance: (sec: number) => {
+        for (let i = 0; i < sec / 0.05; i++) this.tick(0.05);
+      },
+      /** Press the fire button (as the DROP button does). */
+      fireDrop: () => this.fireDrop(),
+      /** Screenshot helper: put the aircraft over the fire's head, `back` metres short of it, heading for the place it threatens. */
+      skipToFire: (back = 120, agl = 70) => {
+        const ops = this.run.ops;
+        if (!ops) return;
+        const head = fireHead(ops) ?? { x: ops.spec.area.x, z: ops.spec.area.z };
+        const th = nearestThreat(ops);
+        const yaw = Math.atan2(-(th.x - head.x), -(th.z - head.z));
+        const ax = headingAxes(yaw);
+        this.a.x = head.x - ax.fx * back;
+        this.a.z = head.z - ax.fz * back;
+        this.a.y = this.bundle.heightField.sample(this.a.x, this.a.z) + agl;
+        this.a.yaw = yaw;
+        if (this.plan.kind !== 'plane') {
+          this.a.speed = 0;
+          this.a.throttle = 0;
+        }
+        this.chase.reset();
+      },
+      /** Run the fire forward this many seconds (screenshots of a fire well under way). */
+      ageFire: (sec: number) => {
+        const ops = this.run.ops;
+        if (!ops) return;
+        for (let i = 0; i < sec; i++) {
+          stepFire(ops.fire, windAt(this.def.wind, this.run.t + i), 1);
+          stepFire(ops.shadow, windAt(this.def.wind, this.run.t + i), 1);
+        }
+      },
       /** Failure test helper: leave this many seconds in the tank. */
       setFuel: (sec: number) => {
         this.run.fuel = sec;
@@ -1052,3 +1462,5 @@ export class RescueGame {
 }
 
 const dist2 = (a: { x: number; z: number }, b: { x: number; z: number }) => Math.hypot(a.x - b.x, a.z - b.z);
+const clockOf = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const FIRE_EVENTS = new Set<RunEvent>(['over-fire', 'drop', 'line-laid', 'water-hit', 'water-missed', 'empty', 'filling', 'full', 'reloaded', 'mark-start', 'marked', 'tanker-drop', 'spot-fire', 'line-holding', 'threat-up', 'contained', 'held', 'breached']);

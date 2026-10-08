@@ -56,10 +56,11 @@ export function recordRescue(p: Progress, id: MissionId, r: { stars: number; tim
   return [...o.missions.map((m) => `${m.icon} ${m.title}`), ...o.vehicles.map((v) => `${v.icon} ${v.name}`), ...o.equipment.map((e) => `${e.icon} ${e.name}`), ...o.crew.map((c) => `${c.icon} ${c.role}`)];
 }
 
-/** The next rescue to fly: the first open one not yet done, else the first. */
-export function nextMission(p: Progress): MissionDef {
+/** The next call to fly: the first open one not yet done, else the first. `after`: prefer the same kind of call (fire after fire). */
+export function nextMission(p: Progress, after?: MissionDef): MissionDef {
   const open = MISSIONS.filter((m) => isAvailable(p, m));
-  return open.find((m) => !p.done[m.id]) ?? open[0];
+  const same = after ? open.find((m) => !p.done[m.id] && !!m.fire === !!after.fire) : undefined;
+  return same ?? open.find((m) => !p.done[m.id]) ?? open[0];
 }
 
 interface Store {

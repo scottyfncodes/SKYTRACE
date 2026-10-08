@@ -4,7 +4,7 @@
  * should know before they launch it.
  */
 import type { FlightPerf } from '../flight/aircraft';
-import { CREW, CREW_BY_ID, EQUIPMENT, EQUIPMENT_BY_ID, VEHICLES, VEHICLE_BY_ID, type Capability, type CrewId, type EquipmentId, type VehicleId } from './catalog';
+import { CREW, CREW_BY_ID, EQUIPMENT, EQUIPMENT_BY_ID, VEHICLES, VEHICLE_BY_ID, type Attack, type Capability, type CrewId, type EquipmentId, type VehicleDef, type VehicleId } from './catalog';
 import { HOIST, type HoistParams } from './hoist';
 import type { MissionDef } from './missions';
 import { isAvailable, isOpen, type Progress } from './progress';
@@ -19,6 +19,8 @@ export interface Note {
   text: string;
   /** Launching is not possible until this is fixed. */
   blocking: boolean;
+  /** Not a warning: how this plan will fight the fire. */
+  info?: boolean;
 }
 
 const CAP_NEED: Record<Capability, string> = {
@@ -27,7 +29,7 @@ const CAP_NEED: Record<Capability, string> = {
   beacon: 'A beacon receiver is needed to find them.',
   thermal: 'A thermal camera is needed.',
   water: 'This rescue needs a boat or a swimmer.',
-  fire: 'This rescue needs a water bucket.',
+  fire: 'This fire needs a firefighting aircraft or a water bucket.',
   search: 'This rescue needs a search aircraft.',
 };
 
@@ -37,16 +39,30 @@ export function capsOf(l: Loadout): Set<Capability> {
   return caps;
 }
 
+/** How a plan fights fire: the vehicle's own way, else a bucket it carries. */
+export function attackOf(l: Loadout): Attack | null {
+  const v = VEHICLE_BY_ID[l.vehicle];
+  if (v.attack) return v.attack;
+  for (const e of l.equipment) if (EQUIPMENT_BY_ID[e].attack) return EQUIPMENT_BY_ID[e].attack!;
+  return null;
+}
+
 export function defaultLoadout(def: MissionDef, p: Progress): Loadout {
   const last = p.last[def.id];
   if (last && isValid(last, p)) return { ...last, equipment: [...last.equipment] };
   const r = def.recommended;
-  const vehicle = isAvailable(p, VEHICLE_BY_ID[r.vehicle]) ? r.vehicle : VEHICLES.find((v) => isAvailable(p, v))!.id;
   const crew = isOpen(p, CREW_BY_ID[r.crew]) ? r.crew : CREW.find((c) => isOpen(p, c))!.id;
-  const slots = VEHICLE_BY_ID[vehicle].slots;
-  const equipment = r.equipment.filter((e) => isAvailable(p, EQUIPMENT_BY_ID[e])).slice(0, slots);
-  if (!equipment.includes('basket') && def.requires.includes('hoist')) equipment.unshift('basket');
-  return { vehicle, crew, equipment: equipment.slice(0, slots) };
+  const plan = (v: VehicleDef): Loadout => {
+    const equipment = r.equipment.filter((e) => isAvailable(p, EQUIPMENT_BY_ID[e]));
+    if (!equipment.includes('basket') && def.requires.includes('hoist')) equipment.unshift('basket');
+    // a helicopter on a fire call with no way to fight it takes the bucket
+    if (def.requires.includes('fire') && !v.caps.includes('fire') && !equipment.includes('bucket') && isAvailable(p, EQUIPMENT_BY_ID.bucket)) equipment.push('bucket');
+    return { vehicle: v.id, crew, equipment: equipment.slice(0, v.slots) };
+  };
+  if (isAvailable(p, VEHICLE_BY_ID[r.vehicle])) return plan(VEHICLE_BY_ID[r.vehicle]);
+  // the recommended aircraft is not in the hangar yet: the first one that can do the job
+  const open = VEHICLES.filter((v) => isAvailable(p, v));
+  return open.map(plan).find((l) => canLaunch(def, l)) ?? plan(open[0]);
 }
 
 function isValid(l: Loadout, p: Progress): boolean {
@@ -79,11 +95,25 @@ export function checkLoadout(def: MissionDef, l: Loadout): Note[] {
   for (const need of def.requires) if (!caps.has(need)) notes.push({ text: CAP_NEED[need], blocking: true });
   const v = VEHICLE_BY_ID[l.vehicle];
   if (v.capacity > 0 && v.capacity < def.survivors) notes.push({ text: `Room for ${v.capacity}: ${def.survivors} people means ${Math.ceil(def.survivors / v.capacity)} trips.`, blocking: false });
+  if (def.fire) {
+    const a = attackOf(l);
+    const tip = def.fire.advice[a ?? 'none'];
+    if (tip) notes.push({ text: tip, blocking: false });
+    if (a && !notes.some((n) => n.blocking)) notes.push({ text: ATTACK_PLAN[a], blocking: false, info: true });
+    return notes;
+  }
   if (def.wind.speed >= 9 && v.windFactor > 0.7) notes.push({ text: 'Strong gusts: a light helicopter will be pushed around.', blocking: false });
   if (def.signal === 'smoke' && !caps.has('beacon') && l.crew !== 'spotter') notes.push({ text: 'Big search area: a beacon receiver or a spotter will help.', blocking: false });
   if (def.visibility === 'poor' && !caps.has('thermal')) notes.push({ text: 'Low cloud: they will be hard to see without thermal.', blocking: false });
   return notes;
 }
+
+/** On a fire call: how this plan will fight it, in one line. */
+export const ATTACK_PLAN: Record<Attack, string> = {
+  retardant: 'Plan: 2 long retardant lines ahead of the fire. Reload at the airfield.',
+  water: 'Plan: scoop water, drop it on the hottest spots. Refill and repeat.',
+  lead: 'Plan: mark 3 lines; Tanker 42 drops on each 14 s later.',
+};
 
 export const canLaunch = (def: MissionDef, l: Loadout): boolean => !checkLoadout(def, l).some((n) => n.blocking);
 
@@ -97,7 +127,16 @@ export interface Plan {
   beacon: boolean;
   thermal: boolean;
   fuelMult: number;
-  style: 'rescue' | 'heavy';
+  style: 'rescue' | 'heavy' | 'fire' | 'tanker' | 'spotter';
+  kind: 'helicopter' | 'plane';
+  /** How it fights fire (none: it does not). */
+  attack: Attack | null;
+  /** A bucket hangs under it. */
+  bucket: boolean;
+  /** Shows where the fire will be. */
+  forecast: boolean;
+  /** Bucket fill time multiplier. */
+  fillMult: number;
 }
 
 export function planOf(def: MissionDef, l: Loadout): Plan {
@@ -114,6 +153,11 @@ export function planOf(def: MissionDef, l: Loadout): Plan {
     thermal: caps.has('thermal'),
     fuelMult: v.fuel,
     style: v.style ?? 'rescue',
+    kind: v.kind === 'plane' ? 'plane' : 'helicopter',
+    attack: attackOf(l),
+    bucket: attackOf(l) === 'water',
+    forecast: !!c.forecast || v.attack === 'lead',
+    fillMult: c.fill ?? 1,
   };
 }
 
