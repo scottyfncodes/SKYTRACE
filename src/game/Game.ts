@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { AudioSystem } from '../core/audio';
 import { Input } from '../core/input';
 import { clamp } from '../core/math';
-import { loadPrefs, savePrefs, type Prefs, type VerticalMode } from '../core/settings';
+import { loadPrefs, otherSide, savePrefs, type Prefs, type SteerSide, type VerticalMode } from '../core/settings';
 import { FLIGHT, initialAircraft, stepAircraft, type AircraftState } from '../flight/aircraft';
 import { AircraftMesh, type AircraftStyle } from '../flight/aircraftMesh';
 import { ChaseCamera } from '../flight/camera';
@@ -329,6 +329,9 @@ export class Game {
     for (const b of root.querySelectorAll<HTMLElement>('[data-vert]')) {
       b.addEventListener('click', () => this.setVerticalMode(b.dataset.vert as VerticalMode));
     }
+    for (const b of root.querySelectorAll<HTMLElement>('[data-steer]')) {
+      b.addEventListener('click', () => this.setSteer(b.dataset.steer as SteerSide));
+    }
     this.renderPrefs();
 
     window.addEventListener('resize', () => this.resize());
@@ -375,6 +378,7 @@ export class Game {
       getMode: () => this.mode,
       getTime: () => this.sortieTime,
       getPrefs: () => ({ ...this.prefs }),
+      setSteer: (s: SteerSide) => this.setSteer(s),
       getTruck: () => ({ x: this.truck.x, z: this.truck.z, hidden: this.truck.hidden, moving: this.truck.moving }),
       getPlay: () => this.play,
       getMission: () => this.mission,
@@ -533,7 +537,31 @@ export class Game {
     this.renderPrefs();
   }
 
+  /** Which thumb steers: the stick takes that half of the screen, the throttle and the scope the other. */
+  private setSteer(side: SteerSide): void {
+    if (side !== 'left' && side !== 'right') return;
+    this.prefs.steer = side;
+    savePrefs(this.prefs, localStorage);
+    this.audio.click();
+    this.renderPrefs();
+  }
+
+  /** "DRAG LEFT SIDE TO STEER · THROTTLE ON THE RIGHT", for whichever side steers. */
+  private steerHint(throttleVerb = ''): string {
+    const s = this.prefs.steer;
+    return `DRAG ${s.toUpperCase()} SIDE TO STEER · ${throttleVerb}THROTTLE ON THE ${otherSide(s).toUpperCase()}`;
+  }
+
   private renderPrefs(): void {
+    const steer = this.prefs.steer;
+    this.el['app'].dataset.steer = steer;
+    for (const b of this.el['pause'].querySelectorAll<HTMLElement>('[data-steer]')) {
+      const on = b.dataset.steer === steer;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    }
+    const sn = this.el['pause'].querySelector<HTMLElement>('#steer-note');
+    if (sn) sn.textContent = `Steer on the ${steer} · scope and throttle on the ${otherSide(steer)}`;
     const mode = this.prefs.verticalMode;
     for (const b of this.el['pause'].querySelectorAll<HTMLElement>('[data-vert]')) {
       const on = b.dataset.vert === mode;
@@ -1870,7 +1898,7 @@ export class Game {
     const touch = this.input.isTouch;
     const who = this.cap.flightControl.mode === 'crew' ? 'YOUR COPILOT' : 'THE AUTOPILOT';
     let hint = '';
-    if (this.sortieTime < 7) hint = touch ? 'DRAG LEFT SIDE TO STEER · THROTTLE ON THE RIGHT' : 'ARROWS / WASD STEER · SHIFT / CTRL THROTTLE';
+    if (this.sortieTime < 7) hint = touch ? this.steerHint() : 'ARROWS / WASD STEER · SHIFT / CTRL THROTTLE';
     else if (warning.startsWith('IN CLOUD')) hint = touch ? 'PUSH THE STICK DOWN' : 'ARROW DOWN / S TO DESCEND';
     else if (warning.startsWith('TURBULENCE')) hint = 'TURN AWAY FROM THE RED CIRCLE';
     else if (this.op.stage === 'execute' && gate) hint = this.plan && !this.plan.halts ? 'IT IS MOVING · LEAD THE RING' : 'FLY THROUGH THE RING';
@@ -2160,7 +2188,7 @@ export class Game {
       this.hintTimer -= dt;
       if (this.hintTimer <= 0) {
         const hints = this.input.isTouch
-          ? ['DRAG LEFT SIDE TO STEER · SLIDE THE THROTTLE ON THE RIGHT', 'TAP SCAN OVER TERRAIN · LOW AND SLOW SEES MORE', 'TAP MARK WHEN A CONTACT CARD APPEARS', 'DROP A SENSOR WHERE THE NIGHT MATTERS · FLY OVER BASE LOW TO LAND']
+          ? [this.steerHint('SLIDE THE '), 'TAP SCAN OVER TERRAIN · LOW AND SLOW SEES MORE', 'TAP MARK WHEN A CONTACT CARD APPEARS', 'DROP A SENSOR WHERE THE NIGHT MATTERS · FLY OVER BASE LOW TO LAND']
           : ['ARROWS / WASD STEER · SHIFT / CTRL THROTTLE', 'SPACE TOGGLES THE GROUND RADAR · LOW AND SLOW SEES MORE', 'M MARKS A CONTACT · E DROPS A SENSOR', 'TAB OPENS THE INTEL MAP · FLY OVER BASE LOW TO LAND'];
         this.el['hint'].textContent = this.hintIdx < hints.length ? hints[this.hintIdx] : '';
         this.hintIdx++;

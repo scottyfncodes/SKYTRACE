@@ -1114,3 +1114,32 @@ img.thermal { filter: grayscale(1) invert(1) brightness(0.55) contrast(2.2); }
   #hud.mission .buttons { right: auto; left: 50%; transform: translateX(-50%); }
   #hud.mission .station-tag { bottom: calc(var(--sab) + 186px); left: 50%; transform: translateX(-50%); }
 }
+
+/* ============================================================
+   STEERING: RIGHT (pause menu · flight controls). The stick takes the
+   right half; the throttle moves to the left edge. In a mission the
+   scope follows the throttle to the left, its buttons beside it, the
+   station tag under the steering thumb. The open case mirrors as a
+   whole. Steering left is the layout above, unchanged.
+   ============================================================ */
+#app[data-steer="right"] .stick-zone { left: auto; right: 0; }
+#app[data-steer="right"] .stick-zone::after { left: auto; right: calc(var(--sar) + 170px); }
+#app[data-steer="right"] .throttle { right: auto; left: calc(var(--sal) + 12px); }
+/* the open case: scope and buttons swap corners */
+#app[data-steer="right"] #hud:not(.mission) .scope-wrap { left: auto; right: calc(var(--sar) + 12px); }
+#app[data-steer="right"] #hud:not(.mission) .buttons { right: auto; left: calc(var(--sal) + 12px); }
+/* a mission: the scope on the left, opposite the steering thumb */
+#app[data-steer="right"] #hud.mission .scope-wrap { right: auto; left: calc(var(--sal) + 12px); }
+#app[data-steer="right"] #hud.mission .buttons { right: auto; left: calc(var(--sal) + 22px + var(--scope)); }
+#app[data-steer="right"] #hud.mission .station-tag { left: auto; right: calc(var(--sar) + 12px); }
+@media (max-width: 760px) {
+  #app[data-steer="right"] .stick-zone::after { right: calc(var(--sar) + 150px); }
+}
+@media (orientation: portrait) and (max-width: 600px) {
+  /* tall and narrow: the buttons and the tag stay centred, as they are when steering left */
+  #app[data-steer="right"] #hud:not(.mission) .buttons, #app[data-steer="right"] #hud.mission .buttons { left: 50%; right: auto; transform: translateX(-50%); }
+  #app[data-steer="right"] #hud.mission .station-tag { left: 50%; right: auto; transform: translateX(-50%); }
+}
+
+/* the pause menu is above everything a flight puts on screen (banners, the hand-off, a phase card) */
+#pause { z-index: 40; }

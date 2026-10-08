@@ -5,12 +5,18 @@
 export const PREFS_KEY = 'skytrace.prefs.v1';
 
 export type VerticalMode = 'standard' | 'inverted';
+/** Which thumb steers. The throttle and the radar scope sit on the other side. */
+export type SteerSide = 'left' | 'right';
 
 export interface Prefs {
   verticalMode: VerticalMode;
+  steer: SteerSide;
 }
 
-export const DEFAULT_PREFS: Readonly<Prefs> = { verticalMode: 'standard' };
+export const DEFAULT_PREFS: Readonly<Prefs> = { verticalMode: 'standard', steer: 'left' };
+
+/** The other side of the screen: where the throttle and the scope go. */
+export const otherSide = (s: SteerSide): SteerSide => (s === 'left' ? 'right' : 'left');
 
 interface PrefStorage {
   getItem(k: string): string | null;
@@ -22,7 +28,7 @@ export function loadPrefs(storage: PrefStorage): Prefs {
     const raw = storage.getItem(PREFS_KEY);
     if (!raw) return { ...DEFAULT_PREFS };
     const p = JSON.parse(raw) as Partial<Prefs>;
-    return { verticalMode: p.verticalMode === 'inverted' ? 'inverted' : 'standard' };
+    return { verticalMode: p.verticalMode === 'inverted' ? 'inverted' : 'standard', steer: p.steer === 'right' ? 'right' : 'left' };
   } catch {
     return { ...DEFAULT_PREFS };
   }
