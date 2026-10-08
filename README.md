@@ -71,7 +71,7 @@ Progression (credits, XP, unlocks, best grade, last loadout) is saved in the bro
 | --- | --- | --- |
 | Step 1: look at a vehicle | tap it on the map | click |
 | Ask it a question, or mark it | LOOK / LISTEN / HEAT / MARK on its card; SIGINT on the step bar | same |
-| Step 2: choose the way home | tap a route line or NORTH / CENTRE / RIVER | same |
+| Step 2: choose the way home | tap a route line on the map (the panel reads back the one you picked) | same |
 | Scout a spot on it | tap the ?, then SCOUTS · WEATHER or DRONE · RADAR + CACHE | same |
 | Shadow the marked truck | SHADOW on the step bar | same |
 | Lock the plan | LOCK THE PLAN | Enter |
@@ -135,7 +135,7 @@ Plain TypeScript + Vite + Three.js, no backend.
 | `src/sensors/equipment.ts`, `packageMesh.ts` | Sensor packages: registration, preliminary downloads, night reports |
 | `src/intel/scenario.ts` | The case: contacts, texts, links, leads, hypotheses, unlocks |
 | `src/intel/state.ts` | Persistent investigation state, events, leads, assessment, coverage |
-| `src/ui/hud.ts` | Flight instruments and the phosphor radar scope |
+| `src/ui/hud.ts` | Flight instruments and the phosphor radar scope (bottom-right in a mission, clear of the steering thumb) |
 | `src/ui/intelMap.ts` | Paper intelligence map and dossier panel |
 | `src/mission/mission01.ts` | Mission 01 content: sector, vehicle returns, destination, briefing text |
 | `src/operation/catalog.ts` | Aircraft, crew and equipment definitions |
