@@ -52,7 +52,7 @@ export interface CorridorDef {
 
 // ------------------------------------------------------------------ assets
 
-export type AssetId = 'optical' | 'thermal' | 'sigint' | 'drone' | 'scouts' | 'shadow';
+export type AssetId = 'optical' | 'thermal' | 'listen' | 'sigint' | 'drone' | 'scouts' | 'shadow';
 export type TargetKind = 'return' | 'cell' | 'none';
 
 export interface AssetDef {
@@ -73,7 +73,8 @@ export const ASSETS: Record<AssetId, AssetDef> = {
   optical: { id: 'optical', label: 'OPTICAL', icon: '◉', cost: 6, target: 'return', needs: 'optical', note: 'Size · count · road' },
   thermal: { id: 'thermal', label: 'THERMAL', icon: '◍', cost: 6, target: 'return', needs: 'thermal', note: 'Size · count · engine heat' },
   sigint: { id: 'sigint', label: 'SIGINT', icon: '≋', cost: 5, target: 'none', needs: 'sigint', note: 'Every radio · every radar site' },
-  drone: { id: 'drone', label: 'DRONE', icon: '✈', cost: 7, target: 'cell', note: 'The whole truth about one spot' },
+  listen: { id: 'listen', label: 'LISTEN', icon: '◌', cost: 4, target: 'return', note: 'One vehicle: is its radio on?' },
+  drone: { id: 'drone', label: 'DRONE', icon: '✈', cost: 7, target: 'cell', note: 'The whole truth about one spot on a route' },
   scouts: { id: 'scouts', label: 'SCOUTS', icon: '⌂', cost: 5, target: 'cell', note: 'Ground report: weather only' },
   shadow: { id: 'shadow', label: 'SHADOW', icon: '➜', cost: 8, target: 'return', note: 'Follow the truck: where is it going?' },
 };
@@ -81,7 +82,18 @@ export const ASSETS: Record<AssetId, AssetDef> = {
 /** A wrong mark costs this many seconds. */
 export const WRONG_MARK_SECONDS = 8;
 /** Tray order. */
-export const ASSET_ORDER: readonly AssetId[] = ['optical', 'thermal', 'sigint', 'drone', 'scouts', 'shadow'];
+export const ASSET_ORDER: readonly AssetId[] = ['optical', 'thermal', 'listen', 'sigint', 'drone', 'scouts', 'shadow'];
+
+/**
+ * What each look at a vehicle answers. No two answer the same set of
+ * questions: the camera sees the shape and the road, the thermal imager the
+ * shape and the engine, and LISTEN only the radio. The drone is for route
+ * spots, never vehicles.
+ */
+export const VEHICLE_LOOKS = { optical: ['size', 'road'], thermal: ['size', 'engine'], listen: ['radio'] } as const satisfies Partial<Record<AssetId, readonly (keyof Omit<ReturnKnowledge, 'look'>)[]>>;
+
+/** The button on a vehicle's card: what the look answers, not what it is. */
+export const LOOK_LABEL = { optical: 'LOOK · SIZE + ROAD', thermal: 'HEAT · SIZE + ENGINE', listen: 'LISTEN · RADIO' } as const;
 
 /** What one mission's board is made of. */
 export interface ControlDef {
@@ -108,7 +120,7 @@ export interface ReturnKnowledge {
   radio: boolean;
   engine: boolean;
   /** Best look at it (sets the quality of the evidence photo). */
-  look: 'optical' | 'thermal' | 'drone' | null;
+  look: 'optical' | 'thermal' | null;
 }
 
 export interface CellState {
@@ -264,7 +276,7 @@ export function belief(c: CellState): CellTruth | null {
 export function assetFitted(b: BoardState, id: AssetId): boolean {
   const a = ASSETS[id];
   if (a.needs) return b.sensors.includes(a.needs);
-  return id === 'shadow' || id in b.uses;
+  return id === 'shadow' || id === 'listen' || id in b.uses;
 }
 
 /** Can this asset be used on this target now? `reason` explains a refusal in a few words. */
@@ -274,7 +286,7 @@ export function canUse(b: BoardState, cast: readonly ReturnDef[], id: AssetId, t
   if (!assetFitted(b, id)) return { ok: false, reason: 'NOT FITTED' };
   if (id in b.uses && (b.uses[id] ?? 0) <= 0) return { ok: false, reason: 'NONE LEFT' };
   if (a.cost > b.seconds) return { ok: false, reason: 'NO TIME' };
-  if (a.target !== t.kind && !(id === 'drone' && t.kind === 'return')) return { ok: false, reason: a.target === 'cell' ? 'PICK A ROUTE SPOT' : a.target === 'return' ? 'PICK A VEHICLE' : '' };
+  if (a.target !== t.kind) return { ok: false, reason: a.target === 'cell' ? 'PICK A ROUTE SPOT' : a.target === 'return' ? 'PICK A VEHICLE' : '' };
   if (t.kind === 'return') {
     const k = b.returns[t.id];
     const def = cast.find((r) => r.id === t.id);
@@ -284,8 +296,8 @@ export function canUse(b: BoardState, cast: readonly ReturnDef[], id: AssetId, t
       if (b.marked !== t.id) return { ok: false, reason: 'MARK THE TRUCK FIRST' };
       return { ok: true, reason: '' };
     }
-    const learns = id === 'optical' ? !k.size || !k.road : id === 'thermal' ? !k.size || !k.engine : !k.size || !k.road || !k.radio || !k.engine;
-    if (!learns) return { ok: false, reason: 'NOTHING NEW' };
+    const looks = VEHICLE_LOOKS[id as keyof typeof VEHICLE_LOOKS] as readonly (keyof Omit<ReturnKnowledge, 'look'>)[] | undefined;
+    if (!looks || looks.every((q) => k[q])) return { ok: false, reason: 'NOTHING NEW' };
   }
   if (t.kind === 'cell') {
     const c = b.cells[t.id];
@@ -335,13 +347,13 @@ export function useAsset(b: BoardState, cast: readonly ReturnDef[], sector: Sect
       b.shadowed = true;
       events.push({ type: 'barge', title: 'A BARGE!', text: 'THE TRUCK IS HEADING FOR THE RIVER LANDING', target: t });
     } else {
-      if (id === 'optical' || id === 'drone') k.road = true;
-      if (id === 'thermal' || id === 'drone') k.engine = true;
-      if (id === 'drone') k.radio = true;
-      k.size = true;
-      const rank = { drone: 2, thermal: 1, optical: 3 } as const;
-      if (!k.look || rank[id as keyof typeof rank] > rank[k.look]) k.look = id as ReturnKnowledge['look'];
-      events.push({ type: 'reveal', title: `RETURN ${t.id}`, text: traits(def, k, sector(def)).slice(0, 3).join(' · '), target: t });
+      for (const q of VEHICLE_LOOKS[id as keyof typeof VEHICLE_LOOKS]) k[q] = true;
+      if (id === 'optical' || id === 'thermal') {
+        const rank = { thermal: 1, optical: 2 } as const;
+        if (!k.look || rank[id] > rank[k.look]) k.look = id;
+      }
+      const said = id === 'listen' ? (def.radio ? 'RADIO ON · TRANSMITTING' : 'RADIO DEAD · SILENT') : traits(def, k, sector(def)).slice(0, 3).join(' · ');
+      events.push({ type: 'reveal', title: `RETURN ${t.id}`, text: said, target: t });
       const out = ruledOut(clueChecks(def, k, sector(def), clues));
       if (out && !wasOut) events.push({ type: 'ruled-out', title: `NOT ${t.id}`, text: 'IT BREAKS THE BRIEF', target: t });
     }
