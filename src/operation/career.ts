@@ -87,6 +87,16 @@ export function recordOperation(c: Career, missionId: string, r: Report): Unlock
   return earned;
 }
 
+/**
+ * The squadron's record for the title card, or null for a new squadron:
+ * a first-run card shows the world and the hook, never a row of zeros.
+ */
+export function squadronLine(c: Career, missionId: string): string | null {
+  if (!c.operations) return null;
+  const best = c.best[missionId];
+  return `${c.operations} OPERATION${c.operations === 1 ? '' : 'S'} FLOWN${best ? ` · BEST GRADE ${best}` : ''}`;
+}
+
 export function nextUnlock(c: Career): UnlockDef | null {
   return UNLOCKS.find((u) => !c.unlocked.includes(u.id)) ?? null;
 }
