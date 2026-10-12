@@ -1,6 +1,8 @@
-# SKYTRACE · Rescue & Firefighting
+# SKYTRACE · Aerial Rescue & Firefighting
 
 Someone needs help. Figure out what they need, choose the right aircraft, fly there, do the job yourself, and see whether your decision changed what happened.
+
+Every rescue is an operation in three beats: **RECON → EXECUTE → ESCAPE**. Find them, lift them out, and fly everyone home through the escape route.
 
 Two families of emergency calls share one valley, one Mission Control and one set of flight controls: **search & rescue** (the hoist) and **wildfire** (a living fire you fight from the air).
 
@@ -10,8 +12,18 @@ The flying is the heart. The rescue hoist is the hook. Pre-Flight gives the flyi
 
 | | |
 | --- | --- |
-| ![Title](docs/screenshots/title.png) | ![Pre-Flight](docs/screenshots/preflight.png) |
-| ![The hoist](docs/screenshots/hoist.png) | ![Debrief](docs/screenshots/debrief.png) |
+| ![Title](docs/screenshots/title.png) | ![Recon in Harrow Gorge](docs/screenshots/canyon-recon.png) |
+| ![The hoist on the gorge floor](docs/screenshots/canyon-hoist.png) | ![The escape gates](docs/screenshots/canyon-escape.png) |
+| ![Debrief: score and medal](docs/screenshots/debrief.png) | ![Pre-Flight](docs/screenshots/preflight.png) |
+
+## The flagship: Canyon Crash
+
+A truck has gone off the Gorge Road in Harrow Gorge, a sandstone canyon cut into the eastern plateau, and a storm is coming down it.
+
+1. **RECON.** Three vehicles stand on the road. Point the nose at each **?** and the crew identifies it in about a second: a logging truck (CLEAR), a van with a flat (CLEAR), the wreck on its side (FOUND THEM!).
+2. **EXECUTE.** Two crewmen by the wreck, on a narrow canyon floor between the walls. Hover, lower the basket into the ring, reel them in, twice.
+3. **ESCAPE.** Everyone aboard: seven gates lead out down the winding gorge, low between the walls, out ahead of the storm. Stray off the route and the rough air catches you.
+4. **Debrief.** A score breakdown (recon, hoist, escape, flying, time) and a medal.
 
 ## The loop
 
@@ -34,9 +46,10 @@ Run out of fuel and the mission fails (TRY AGAIN relaunches it with the same pla
 
 | Call | Situation | What makes it hard | Opens |
 | --- | --- | --- | --- |
+| 🚚 **Canyon Crash** | A truck off the Gorge Road; two aboard | Recon (which truck?), a narrow canyon floor, an escape down the gorge | |
 | 🏔️ **Mountain Rescue** | Two climbers stranded on the north ridge of Mount Kell | A narrow ledge, a moderate north-westerly | Lost Hiker · Beacon Receiver · Spotter |
 | 🌲 **Lost Hiker** | A hiker missing in Keld Forest; one phone ping | A big search area, haze, a clearing ringed by trees | Storm on the Summit · Heavy Rescue Helicopter · Thermal Camera |
-| ⛈️ **Storm on the Summit** | Three climbers caught near the summit | Strong gusts, low cloud, three people (two trips in the light helicopter) | |
+| ⛈️ **Storm on the Summit** | Three climbers caught near the summit | Strong gusts, low cloud; the third climber has slipped to a lower shelf (a new approach for the third lift) | |
 
 Capsized Boat, Flood Rescue, Injured Skier and Distress Beacon are defined as data and wait for their vehicles and kit (the Rescue Boat, the Search Aircraft, the rescue swimmer).
 
@@ -93,6 +106,16 @@ Tools, not stat sheets: each one has an obvious job.
 
 **Equipment:** the Rescue Basket (the hoist: required for every rescue so far), the Beacon Receiver (the arrow points at the survivor's phone while you search), the Thermal Camera (spots people from twice as far, even in cloud).
 
+## Flying
+
+- **Hover assist** (on by default, in the pause menu): the helicopter learns the wind over a second or two and leans into it, so a hands-off hover stays put; gusts still shove you for a moment. In the hoist hover, letting go of the stick holds the spot where you let go. Turn it off and the full push of the wind is yours to fight.
+- **The helicopter carries momentum**: it flares to a hover quickly with the lever down, carves through turns with a little slide, and the heavy helicopter takes longer to stop.
+- **The aeroplanes** ease into and out of a bank (no snap), level their wings when you let go, bleed a little speed in a hard turn, and lift their nose before rising ground.
+- **The touch stick** is gentle near the centre for fine corrections and full at the edge.
+- **Never lost**: the arrow, the minimap and a ribbon of chevrons in the sky always point at the next thing (a contact, the people, the next gate, the hospital), including the moment you leave a hover. A shadow under the aircraft shows how high you are.
+- **Every rescue has an escape route** once everyone is aboard: a short run of gates out of whatever you are escaping (the storm, the gusts on the ridge, the haze, the smoke). Missing a gate costs points, never the rescue.
+- **Score**: rescue, recon, hoist, escape, flying and time, each with a maximum. Time is never more than a sixth of the score: a careful rescue beats a fast, rough one. Gold, silver or bronze; a rescue's stars are its medal.
+
 ## Controls
 
 | | Touch (iPhone) | Keyboard |
@@ -105,7 +128,7 @@ Tools, not stat sheets: each one has an obvious job.
 | In a hover: the winch | The lever is the basket: slide it down to lower, up to reel in | Ctrl / Z lower, Shift / Q reel in |
 | Pause | II | Esc / P |
 
-In the pause menu: **Climb** (stick up or stick down climbs), **Steer with** (left or right thumb; the lever, minimap and buttons move to the other side), sound, and the radio voice (the device's speech voice reads the radio; subtitles are always on). Preferences and progress are saved in the browser.
+In the pause menu: **Hover assist** (on / off), **Climb** (stick up or stick down climbs), **Steer with** (left or right thumb; the lever, minimap and buttons move to the other side), sound, and the radio voice (the device's speech voice reads the radio; subtitles are always on). Preferences and progress are saved in the browser.
 
 ## Development
 
@@ -134,7 +157,13 @@ Plain TypeScript + Vite + Three.js, no backend. The rules are pure, data-driven 
 | `src/rescue/loadout.ts` | The Pre-Flight plan: choices, checks (blocking and warnings), and the `Plan` it gives the flight (pure, tested) |
 | `src/rescue/run.ts` | One mission as a state machine: takeoff → search → rescue → return → complete or failed; on a fire, takeoff → attack → complete (the fire runs alongside the rescue when people are trapped); objectives; when you can hoist and land (pure, tested) |
 | `src/rescue/hoist.ts` | The basket on its cable (a pendulum under the winch, pushed by the wind, dragged when taut) and the survivors walking to it and climbing in (pure, tested) |
-| `src/rescue/hover.ts` | Station-keeping in the hover: stick moves, altitude holds, the wind pushes (pure, tested) |
+| `src/rescue/hover.ts` | Station-keeping in the hover: stick moves, altitude holds, the wind pushes, let go and it holds the spot (pure, tested) |
+| `src/flight/assist.ts` | Hover assist: a running estimate of the wind's push, cancelled (pure, tested) |
+| `src/rescue/recon.ts` | Recon contacts: identify each one with the nose (cleared / found) (pure, tested) |
+| `src/rescue/route.ts` | The escape route: gates flown or missed, the corridor, escape time (pure, tested) |
+| `src/rescue/score.ts` | The score breakdown and the medal (pure, tested) |
+| `src/world/routeScene.ts` | Gates, the chevron ribbon, the ground shadow, the recon contacts' pins |
+| `src/world/vehicles.ts` | The Gorge Road's vehicles: logging truck, van, wreck |
 | `src/rescue/wind.ts` | Wind with gusts, deterministic in time (pure, tested) |
 | `src/fire/fireSim.ts` | The wildfire: a grid of cells over the terrain with fuel (forest, meadow, none), wind and slope driven spread, burn-out, embers, retardant and water, and the containment question "can it still reach this place?" as a flood fill (pure, deterministic, tested) |
 | `src/fire/fireRun.ts` | Fighting it as part of a run: loads, drops, the tanker's line along your path, the bucket, scooping and reloading, the spotter's marks and Tanker 42, the threat level, held / contained / breached, and the fire nobody fought for the debrief (pure, tested) |
