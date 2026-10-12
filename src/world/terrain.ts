@@ -1,5 +1,5 @@
 import { clamp, fbm, lerp, polylineDist, smoothstep } from '../core/math';
-import { CLEARINGS, FLATS, FORESTS, LAKE, PEAK, RIDGE, RIVER, WORLD_HALF, WORLD_SIZE } from './worldData';
+import { CANYON, CLEARINGS, FLATS, FORESTS, LAKE, PEAK, RIDGE, RIVER, WORLD_HALF, WORLD_SIZE } from './worldData';
 
 /** Raw (unflattened) terrain height. */
 function rawHeight(x: number, z: number): number {
@@ -20,8 +20,49 @@ function rawHeight(x: number, z: number): number {
   return h;
 }
 
+/** Distance from the canyon's centre line (m) and how far along it, 0 at the south mouth to 1 at the north end. */
+export function canyonDist(x: number, z: number): { d: number; along: number } {
+  const pts = CANYON.pts;
+  let best = Infinity;
+  let along = 0;
+  let run = 0;
+  let total = 0;
+  for (let i = 0; i < pts.length - 1; i++) total += Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [ax, az] = pts[i];
+    const dx = pts[i + 1][0] - ax;
+    const dz = pts[i + 1][1] - az;
+    const l = Math.hypot(dx, dz);
+    const t = clamp(((x - ax) * dx + (z - az) * dz) / (l * l), 0, 1);
+    const d = Math.hypot(x - (ax + dx * t), z - (az + dz * t));
+    if (d < best) {
+      best = d;
+      along = (run + t * l) / total;
+    }
+    run += l;
+  }
+  return { d: best, along };
+}
+
+/** Cut Harrow Gorge into the plateau: a flat floor, steep walls, a raised rim. */
+function carveCanyon(h: number, x: number, z: number): number {
+  // cheap reject: the gorge lives in a box on the east side
+  if (x < 560 || x > 940 || z < -480 || z > 420) return h;
+  const { d, along } = canyonDist(x, z);
+  if (d > CANYON.rim * 2.2) return h;
+  // the floor climbs out of the gorge at the south mouth, up into the quarry
+  const floor = Math.max(lerp(CANYON.floorSouth, CANYON.floorNorth, along), lerp(CANYON.mouth, CANYON.floorSouth, smoothstep(0.02, 0.2, along)));
+  // the rim: a lip standing above the plateau, ragged
+  const rim = CANYON.rimLift * Math.exp(-((d - CANYON.rim * 1.1) ** 2) / (34 * 34)) * (0.8 + 0.4 * fbm(x / 70 + 3.3, z / 70 - 1.7, 2));
+  const walls = h + rim;
+  // walls: steep, with a little rubble at the foot
+  const k = smoothstep(CANYON.rim, CANYON.floor, d);
+  const fade = smoothstep(1.06, 0.97, along);
+  return lerp(h, lerp(walls, floor + 2 * fbm(x / 25, z / 25, 2), Math.pow(k, 0.8)), fade);
+}
+
 export function heightAt(x: number, z: number): number {
-  let h = rawHeight(x, z);
+  let h = carveCanyon(rawHeight(x, z), x, z);
   // lake
   const dl = Math.hypot(x - LAKE.x, z - LAKE.z);
   h = lerp(h, -6, smoothstep(LAKE.r + 60, LAKE.r - 30, dl));
@@ -68,6 +109,7 @@ export function forestAt(x: number, z: number): number {
   }
   const dRiver = polylineDist(x, z, RIVER);
   m *= smoothstep(25, 60, dRiver);
+  if (x > 560 && x < 940 && z > -480 && z < 420) m *= smoothstep(40, 90, canyonDist(x, z).d);
   const dl = Math.hypot(x - LAKE.x, z - LAKE.z);
   m *= smoothstep(LAKE.r + 10, LAKE.r + 50, dl);
   if (m <= 0.001) return 0;

@@ -61,9 +61,11 @@ describe('the catalogue', () => {
 });
 
 describe('Pre-Flight', () => {
-  it('a new player starts with the basic helicopter, the basket and the first rescue', () => {
+  it('a new player starts with the basic helicopter, the basket and the flagship rescue', () => {
     const p = newProgress();
-    expect(nextMission(p).id).toBe('mountain-rescue');
+    // the flagship (recon, hoist, escape) leads; the mountain rescue is open alongside it
+    expect(nextMission(p).id).toBe('canyon-crash');
+    expect(isAvailable(p, mountain)).toBe(true);
     expect(isAvailable(p, hiker)).toBe(false);
     expect(defaultLoadout(mountain, p)).toEqual({ vehicle: 'rescue-heli', crew: 'winch', equipment: ['basket'] });
     // the rescue helicopter, and the fire fleet's helicopter and tanker
@@ -123,13 +125,15 @@ describe('progression', () => {
     expect(opened.join(' ')).toMatch(/Spotter/);
     expect(isAvailable(p, hiker)).toBe(true);
     expect(isOpen(p, CREW.find((c) => c.id === 'spotter')!)).toBe(true);
+    expect(nextMission(p, mountain).id).toBe('canyon-crash');
+    recordRescue(p, 'canyon-crash', { stars: 2, time: 200, rescued: 2 }, defaultLoadout(MISSION_BY_ID['canyon-crash'], p));
     expect(nextMission(p).id).toBe('lost-hiker');
     expect(isAvailable(p, storm)).toBe(false);
     const opened2 = recordRescue(p, 'lost-hiker', { stars: 1, time: 300, rescued: 1 }, defaultLoadout(hiker, p));
     expect(opened2.join(' ')).toMatch(/Storm on the Summit/);
     expect(opened2.join(' ')).toMatch(/Heavy Rescue Helicopter/);
     expect(defaultLoadout(storm, p).vehicle).toBe('heavy-heli');
-    expect(p.saved).toBe(3);
+    expect(p.saved).toBe(5);
   });
 
   it('a replay opens nothing new, keeps the best stars and time, and remembers the plan', () => {
