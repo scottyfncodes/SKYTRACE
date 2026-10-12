@@ -79,7 +79,7 @@ export class Hud {
   private dropKey = '';
 
   constructor(root: HTMLElement) {
-    for (const id of ['objective', 'obj-icon', 'obj-title', 'obj-detail', 'nav', 'nav-arrow', 'nav-dist', 'nav-label', 'people', 'fuel-fill', 'radio', 'radio-who', 'radio-text', 'banner', 'banner-text', 'banner-sub', 'warn', 'hint', 'readout', 'throttle', 'thr-fill', 'thr-handle', 'thr-basket', 'thr-label', 'thr-hint', 'btn-action', 'stick-label', 'firestat', 'fs-name', 'fs-word', 'fs-fill', 'fs-load', 'fs-hold', 'btn-drop']) {
+    for (const id of ['objective', 'obj-icon', 'obj-title', 'obj-detail', 'nav', 'nav-arrow', 'nav-dist', 'nav-label', 'people', 'fuel-fill', 'radio', 'radio-who', 'radio-text', 'banner', 'banner-text', 'banner-sub', 'warn', 'hint', 'readout', 'throttle', 'thr-fill', 'thr-handle', 'thr-basket', 'thr-label', 'thr-hint', 'btn-action', 'stick-label', 'firestat', 'fs-name', 'fs-word', 'fs-fill', 'fs-load', 'fs-hold', 'btn-drop', 'phases', 'toast', 'scan', 'scan-label', 'scan-fill']) {
       const e = root.querySelector<HTMLElement>(`#${id}`);
       if (!e) throw new Error(`missing #${id}`);
       this.el[id] = e;
@@ -105,6 +105,41 @@ export class Hud {
     this.text('obj-icon', icon);
     this.text('obj-title', title);
     this.text('obj-detail', detail);
+  }
+
+  /** Which part of the operation this is (null: not shown, e.g. on a fire). */
+  phase(p: 'recon' | 'execute' | 'escape' | null): void {
+    const key = p ?? '';
+    if (this.last['phase'] === key) return;
+    this.last['phase'] = key;
+    const row = this.el['phases'];
+    row.classList.toggle('hidden', !p);
+    const order = ['recon', 'execute', 'escape'];
+    const at = p ? order.indexOf(p) : -1;
+    for (const i of row.querySelectorAll<HTMLElement>('i')) {
+      const k = order.indexOf(i.dataset.p ?? '');
+      i.className = k === at ? 'on' : k < at ? 'done' : '';
+    }
+  }
+
+  private toastT = 0;
+  /** A small, quick confirmation in the middle of the screen (a gate flown). */
+  toast(text: string, cls = ''): void {
+    const t = this.el['toast'];
+    t.textContent = text;
+    t.className = 'toast';
+    void t.offsetWidth;
+    t.className = `toast on ${cls}`;
+    this.toastT = 1.1;
+  }
+
+  /** Recon: how far through identifying the contact in view (null: nothing in view). */
+  scan(progress: number | null, label = ''): void {
+    const on = progress !== null;
+    this.el['scan'].classList.toggle('hidden', !on);
+    if (!on) return;
+    this.text('scan-label', `IDENTIFYING ${label}`);
+    this.el['scan-fill'].style.width = `${Math.round(progress * 100)}%`;
   }
 
   /** Bearing to the target relative to the nose (radians, + right), distance in metres. */
@@ -206,6 +241,10 @@ export class Hud {
   }
 
   tick(dt: number): void {
+    if (this.toastT > 0) {
+      this.toastT -= dt;
+      if (this.toastT <= 0) this.el['toast'].className = 'toast';
+    }
     if (!this.shown) return;
     this.shown.t -= dt;
     if (this.shown.t <= 0) this.nextBanner();

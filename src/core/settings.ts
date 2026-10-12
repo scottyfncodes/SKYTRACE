@@ -11,9 +11,11 @@ export type SteerSide = 'left' | 'right';
 export interface Prefs {
   verticalMode: VerticalMode;
   steer: SteerSide;
+  /** Hover assist: the helicopter leans into the wind for you (on unless turned off). */
+  assist: boolean;
 }
 
-export const DEFAULT_PREFS: Readonly<Prefs> = { verticalMode: 'standard', steer: 'left' };
+export const DEFAULT_PREFS: Readonly<Prefs> = { verticalMode: 'standard', steer: 'left', assist: true };
 
 /** The other side of the screen: where the throttle and the scope go. */
 export const otherSide = (s: SteerSide): SteerSide => (s === 'left' ? 'right' : 'left');
@@ -28,7 +30,7 @@ export function loadPrefs(storage: PrefStorage): Prefs {
     const raw = storage.getItem(PREFS_KEY);
     if (!raw) return { ...DEFAULT_PREFS };
     const p = JSON.parse(raw) as Partial<Prefs>;
-    return { verticalMode: p.verticalMode === 'inverted' ? 'inverted' : 'standard', steer: p.steer === 'right' ? 'right' : 'left' };
+    return { verticalMode: p.verticalMode === 'inverted' ? 'inverted' : 'standard', steer: p.steer === 'right' ? 'right' : 'left', assist: p.assist !== false };
   } catch {
     return { ...DEFAULT_PREFS };
   }

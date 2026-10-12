@@ -9,7 +9,7 @@ import { stepHover, type HoverVel } from '../src/rescue/hover';
 import { defaultLoadout, planOf } from '../src/rescue/loadout';
 import { MISSION_BY_ID } from '../src/rescue/missions';
 import { newProgress } from '../src/rescue/progress';
-import { aboard, canHoist, canLand, delivered, HOIST_ZONE, landAtPad, newRun, objective, tickRun, type RunEvent } from '../src/rescue/run';
+import { aboard, canHoist, canLand, delivered, HOIST_ZONE, hoistSpot, landAtPad, newRun, objective, tickRun, type RunEvent } from '../src/rescue/run';
 import { debrief } from '../src/rescue/debrief';
 import { windAt } from '../src/rescue/wind';
 import { getHeightField } from '../src/world/terrain';
@@ -271,6 +271,16 @@ describe('a mountain rescue, start to finish', () => {
     tick(a.x, a.z, a.agl, 10);
     expect(ev).toContain('all-aboard');
     expect(r.stage).toBe('return');
+    // the way home starts with the escape route: the arrow points at the first gate
+    expect(objective(r, false).target?.kind).toBe('gate');
+    const esc = r.escape!;
+    for (const g of esc.gates) {
+      // fly straight through each gate along its direction
+      tickRun(r, { x: g.x - g.nx * 20, z: g.z - g.nz * 20, y: g.y, agl: 30, speed: 40 }, DT, plan, false);
+      ev.push(...tickRun(r, { x: g.x + g.nx * 5, z: g.z + g.nz * 5, y: g.y + 1, agl: 30, speed: 40 }, DT, plan, false));
+    }
+    expect(ev.filter((e) => e === 'gate')).toHaveLength(esc.gates.length);
+    expect(ev).toContain('escape-done');
     expect(objective(r, false).target?.kind).toBe('pad');
 
     const H = PADS.hospital;
@@ -304,7 +314,11 @@ describe('a mountain rescue, start to finish', () => {
     expect(r.trips).toBe(1);
     expect(tickRun(r, { x: PADS.hospital.x, z: PADS.hospital.z, agl: 25, speed: 2 }, 0.1, plan, false)).toContain('airborne');
     expect(r.stage).toBe('rescue');
-    expect(canHoist(r, { x: storm.site.x, z: storm.site.z, agl: 30, speed: 0 }).ok).toBe(true);
+    // the third climber is on the shelf below: the next lift is a new approach, over there
+    const low = storm.spots![2];
+    expect(canHoist(r, { x: storm.site.x, z: storm.site.z, agl: 30, speed: 0 }).ok).toBe(false);
+    expect(canHoist(r, { x: low.x, z: low.z + 10, agl: 30, speed: 0 }).ok).toBe(true);
+    expect(hoistSpot(r, { x: storm.site.x, z: storm.site.z })).toEqual({ x: low.x, z: low.z });
   });
 
   it('running out of fuel fails the mission, and the debrief says so', () => {
@@ -342,13 +356,20 @@ describe('every playable rescue site', () => {
     const { forestAt } = await import('../src/world/terrain');
     // (a fire with nobody trapped has no rescue site)
     for (const m of MISSIONS.filter((x) => x.ready && x.survivors > 0)) {
-      const h = ground(m.site.x, m.site.z);
-      expect(h, m.id).toBeGreaterThan(5);
-      for (const [dx, dz] of [[-4, 0], [4, 0], [0, -4], [0, 4]]) expect(Math.abs(ground(m.site.x + dx, m.site.z + dz) - h), m.id).toBeLessThan(2);
-      expect(forestAt(m.site.x, m.site.z), m.id).toBeLessThan(0.1);
+      for (const p of [m.site, ...(m.spots ?? [])]) {
+        const h = ground(p.x, p.z);
+        expect(h, m.id).toBeGreaterThan(5);
+        for (const [dx, dz] of [[-4, 0], [4, 0], [0, -4], [0, 4]]) expect(Math.abs(ground(p.x + dx, p.z + dz) - h), m.id).toBeLessThan(2);
+        expect(forestAt(p.x, p.z), m.id).toBeLessThan(0.1);
+      }
       // the call's search area contains them
       expect(Math.hypot(m.search.x - m.site.x, m.search.z - m.site.z), m.id).toBeLessThan(m.search.r);
-      expect(m.signalRange).toBeGreaterThan(m.spotRange);
+      if (m.contacts) {
+        // recon: exactly one contact is them, right by them
+        const t = m.contacts.filter((c) => c.target);
+        expect(t, m.id).toHaveLength(1);
+        expect(Math.hypot(t[0].x - m.site.x, t[0].z - m.site.z), m.id).toBeLessThan(30);
+      } else expect(m.signalRange).toBeGreaterThan(m.spotRange);
     }
   });
 });

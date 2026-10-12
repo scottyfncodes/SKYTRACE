@@ -13,7 +13,7 @@ import type { SurvivorState } from '../rescue/hoist';
  */
 
 // ---------------------------------------------------------------- textures
-function canvasTex(w: number, h: number, draw: (c: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
+export function canvasTex(w: number, h: number, draw: (c: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
   const cv = document.createElement('canvas');
   cv.width = w;
   cv.height = h;
@@ -43,7 +43,7 @@ function padTexture(color: string): THREE.CanvasTexture {
   });
 }
 
-function pinTexture(fill: string, glyph: 'person' | 'h' | 'search'): THREE.CanvasTexture {
+export function pinTexture(fill: string, glyph: 'person' | 'h' | 'search' | 'query' | 'check'): THREE.CanvasTexture {
   return canvasTex(128, 160, (c) => {
     c.fillStyle = fill;
     c.strokeStyle = '#ffffff';
@@ -65,6 +65,11 @@ function pinTexture(fill: string, glyph: 'person' | 'h' | 'search'): THREE.Canva
       c.quadraticCurveTo(84, 58, 86, 90);
       c.closePath();
       c.fill();
+    } else if (glyph === 'query' || glyph === 'check') {
+      c.font = 'bold 66px system-ui, sans-serif';
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      c.fillText(glyph === 'query' ? '?' : '✓', 64, 64);
     } else if (glyph === 'h') {
       c.font = 'bold 64px system-ui, sans-serif';
       c.textAlign = 'center';
@@ -236,8 +241,8 @@ export function buildCamp(hf: HeightField, x: number, z: number, look: SurvivorL
 }
 
 // ---------------------------------------------------------------- people
-const JACKETS: Record<SurvivorLook, number[]> = { climber: [0xff7a1a, 0x1fb5a8, 0xffd23f, 0xe23d6b], hiker: [0x8a5cff], skier: [0x2e7dd1, 0xff4d6d] };
-const HATS: Record<SurvivorLook, number[]> = { climber: [0xffd23f, 0xe23d28, 0x2e7dd1, 0xffffff], hiker: [0x3a8f3a], skier: [0xffffff, 0x222222] };
+const JACKETS: Record<SurvivorLook, number[]> = { climber: [0xff7a1a, 0x1fb5a8, 0xffd23f, 0xe23d6b], hiker: [0x8a5cff], skier: [0x2e7dd1, 0xff4d6d], driver: [0xd8ff2a, 0xff8a1f] };
+const HATS: Record<SurvivorLook, number[]> = { climber: [0xffd23f, 0xe23d28, 0x2e7dd1, 0xffffff], hiker: [0x3a8f3a], skier: [0xffffff, 0x222222], driver: [0xffffff, 0xffd23f] };
 
 /**
  * A stranded person, built big and bright (a third over life size) so they

@@ -26,6 +26,7 @@ export const FLATS: ReadonlyArray<{ x: number; z: number; r: number; blend: numb
   { x: -600, z: 150, r: 50, blend: 40 }, // standing stones
   { x: 205, z: -640, r: 13, blend: 12 }, // Mount Kell: the north ridge ledge
   { x: 300, z: -735, r: 12, blend: 12 }, // Mount Kell: the summit shelf
+  { x: 345, z: -690, r: 11, blend: 12 }, // Mount Kell: the lower shelf, under the summit
 ];
 
 export const RIDGE: readonly Pt[] = [
@@ -53,6 +54,33 @@ export const RIVER: readonly Pt[] = [
 
 export const LAKE = { x: -850, z: 250, r: 130 } as const;
 
+/**
+ * Harrow Gorge: a winding canyon cut into the eastern plateau, the Gorge Road
+ * along its floor from the quarry up to the old mine. Narrow enough that a
+ * helicopter has to fly it, deep enough to hide in.
+ */
+export const CANYON = {
+  pts: [
+    [735, 300],
+    [768, 190],
+    [742, 80],
+    [788, -40],
+    [748, -160],
+    [702, -255],
+    [688, -360],
+  ] as readonly Pt[],
+  /** Half-width of the flat floor, and where the walls top out (m from the centre line). */
+  floor: 20,
+  rim: 66,
+  /** Floor height (m) at the south mouth and at the north end. */
+  floorSouth: 14,
+  floorNorth: 20,
+  /** The floor ramps up to this at the south mouth, level with the quarry. */
+  mouth: 74,
+  /** The rims stand this much above the plateau. */
+  rimLift: 34,
+} as const;
+
 /** Mount Kell: the snow peak on the north ridge, where the mountain rescues happen. */
 export const PEAK = { x: 260, z: -800, h: 330, r: 230 } as const;
 
@@ -67,6 +95,7 @@ export type PadId = keyof typeof PADS;
 export const LEDGES = {
   northRidge: { x: 205, z: -640, r: 13 },
   summit: { x: 300, z: -735, r: 12 },
+  lowerShelf: { x: 345, z: -690, r: 11 },
 } as const;
 
 /** Forest blobs (centre, radius, strength). */
@@ -115,15 +144,20 @@ export const ROADS: readonly RoadDef[] = [
     ],
   },
   {
+    // the Gorge Road: along the canyon floor, quarry to mine
     id: 'mine',
     kind: 'road',
     width: 7,
     pts: [
-      [720, 360],
-      [770, 160],
-      [760, -60],
-      [720, -230],
-      [690, -400],
+      [722, 360],
+      [735, 300],
+      [768, 190],
+      [742, 80],
+      [788, -40],
+      [748, -160],
+      [702, -255],
+      [688, -360],
+      [684, -405],
     ],
   },
   {

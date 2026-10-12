@@ -309,10 +309,10 @@ describe('progression across the two families', () => {
   it('after a fire, NEXT offers another fire; rescue progression is unchanged', async () => {
     const { nextMission } = await import('../src/rescue/progress');
     const p = newProgress();
-    expect(nextMission(p).id).toBe('mountain-rescue');
+    expect(nextMission(p).id).toBe('canyon-crash');
     recordRescue(p, 'spot-fire', { stars: 2, time: 120, rescued: 0 }, L('fire-heli'));
     expect(nextMission(p, MISSION_BY_ID['spot-fire']).id).toBe('wind-fire');
-    expect(nextMission(p, MISSION_BY_ID['mountain-rescue']).id).toBe('mountain-rescue');
+    expect(nextMission(p, MISSION_BY_ID['mountain-rescue']).id).toBe('canyon-crash');
     // finishing a fire opens the fire + rescue call
     expect(isAvailable(p, MISSION_BY_ID['forest-fire'])).toBe(true);
     expect(p.saved).toBe(0);

@@ -1,6 +1,7 @@
 /** The debrief: who came home, how long it took, how it went. Three lines, not a spreadsheet. */
 import { fireStats } from '../fire/fireSim';
 import { delivered, type RunState } from './run';
+import { MEDAL_STARS, scoreRun, type Score } from './score';
 
 export interface Debrief {
   success: boolean;
@@ -11,6 +12,8 @@ export interface Debrief {
   stars: number;
   extraction: string;
   lines: { icon: string; text: string }[];
+  /** The breakdown and the medal. */
+  score: Score;
 }
 
 export const clock = (s: number): string => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -38,7 +41,7 @@ export function fireDebrief(r: RunState): Debrief {
     { icon: ops.attack === 'water' ? '💧' : ops.attack === 'lead' ? '📍' : '🟥', text: `${ops.drops} ${what} · ${clock(time)}` },
   ];
   const extraction = !success ? 'Fire not stopped' : ops.outcome === 'contained' ? 'Fire contained' : 'Fire held for the crews';
-  return { success, headline: success ? (ops.outcome === 'contained' ? 'FIRE CONTAINED' : 'FIRE HELD') : 'MISSION FAILED', rescued: 0, total: 0, time, stars, extraction, lines };
+  return { success, headline: success ? (ops.outcome === 'contained' ? 'FIRE CONTAINED' : 'FIRE HELD') : 'MISSION FAILED', rescued: 0, total: 0, time, stars, extraction, lines, score: scoreRun(r) };
 }
 
 export function debrief(r: RunState): Debrief {
@@ -49,7 +52,9 @@ export function debrief(r: RunState): Debrief {
   const success = r.stage === 'complete';
   const fast = time <= r.def.par;
   const smooth = r.bumps === 0;
-  const stars = success ? 1 + (fast ? 1 : 0) + (smooth ? 1 : 0) : 0;
+  // a rescue's stars are its medal: gold three, silver two, bronze one
+  const score = scoreRun(r);
+  const stars = score.medal ? MEDAL_STARS[score.medal] : 0;
   const extraction = !success ? 'Rescue incomplete' : smooth && fast ? 'Excellent extraction' : smooth ? 'Smooth extraction' : r.bumps === 1 ? 'A bump on the way up' : 'A bumpy ride up';
   const people = (n: number) => (n === 1 ? '1 survivor' : `${n} survivors`);
   const lines = [
@@ -57,5 +62,5 @@ export function debrief(r: RunState): Debrief {
     { icon: '⏱', text: `${clock(time)} mission time${success ? (fast ? ' · fast!' : ` · par ${clock(r.def.par)}`) : ''}` },
     { icon: smooth ? '🛟' : '〰️', text: success ? extraction : r.failReason ?? 'Mission failed' },
   ];
-  return { success, headline: success ? 'RESCUE COMPLETE' : 'MISSION FAILED', rescued, total, time, stars, extraction, lines };
+  return { success, headline: success ? 'RESCUE COMPLETE' : 'MISSION FAILED', rescued, total, time, stars, extraction, lines, score };
 }

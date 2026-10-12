@@ -1,4 +1,14 @@
-import { approach, clamp, damp, wrapAngle } from '../core/math';
+import { clamp, damp, wrapAngle } from '../core/math';
+
+/**
+ * Ease toward a target: fast when far, gentle as it arrives (no snap at
+ * either end), and never faster than `maxRate` per second.
+ */
+export function easeTo(cur: number, target: number, k: number, maxRate: number, dt: number): number {
+  const d = (target - cur) * (1 - Math.exp(-k * dt));
+  const m = maxRate * dt;
+  return cur + (d > m ? m : d < -m ? -m : d);
+}
 
 export interface AircraftState {
   x: number;
@@ -13,6 +23,16 @@ export interface AircraftState {
   agl: number;
   terrainWarning: boolean;
   boundaryWarning: boolean;
+  /** Ground velocity (m/s). The helicopter carries momentum in it; the aeroplane's follows its nose. */
+  vx?: number;
+  vz?: number;
+  /** This step the aircraft was pushed off the ground it was flying into (a scrape). */
+  contact?: boolean;
+}
+
+/** What the world does to the aircraft this step (the wind's push, already eased by the hover assist). */
+export interface FlightEnv {
+  drift?: { x: number; z: number };
 }
 
 export interface FlightInput {
@@ -67,26 +87,28 @@ export function forwardVector(a: Pick<AircraftState, 'yaw' | 'pitch'>): [number,
 }
 
 /** One simulation step. Pure, deterministic, frame-rate independent. */
-export function stepAircraft(a: AircraftState, inp: FlightInput, dt: number, terrainHeight: (x: number, z: number) => number, P: FlightPerf = FLIGHT): AircraftState {
-  if (P.climbRate) return stepRotor(a, inp, dt, terrainHeight, P, P.climbRate);
+export function stepAircraft(a: AircraftState, inp: FlightInput, dt: number, terrainHeight: (x: number, z: number) => number, P: FlightPerf = FLIGHT, env: FlightEnv = {}): AircraftState {
+  if (P.climbRate) return stepRotor(a, inp, dt, terrainHeight, P, P.climbRate, env);
   const s: AircraftState = { ...a };
   dt = clamp(dt, 0, 0.05);
 
   // throttle
   s.throttle = clamp(s.throttle + inp.throttleDelta * 0.6 * dt, 0, 1);
 
-  // attitude: bank follows stick, nose follows stick, both self-centre
+  // attitude: bank and nose ease toward the stick and self-centre, quick to answer and soft to settle
   const targetRoll = clamp(inp.roll, -1, 1) * P.maxRoll;
-  s.roll = approach(s.roll, targetRoll, P.rollRate * dt);
+  s.roll = easeTo(s.roll, targetRoll, 5.5, P.rollRate, dt);
   const targetPitch = clamp(inp.pitch, -1, 1) * P.maxPitch;
-  s.pitch = approach(s.pitch, targetPitch, P.pitchRate * dt);
+  s.pitch = easeTo(s.pitch, targetPitch, 5, P.pitchRate, dt);
 
-  // banking turns the aircraft (positive roll = right bank = clockwise from above = yaw decreases)
-  s.yaw = wrapAngle(s.yaw - Math.sin(s.roll) * P.turnGain * dt);
+  // banking turns the aircraft (positive roll = right bank = clockwise from above = yaw decreases);
+  // a slower aeroplane turns a little tighter for the same bank
+  const slow = 1 - clamp((s.speed - P.minSpeed) / Math.max(1, P.maxSpeed - P.minSpeed), 0, 1);
+  s.yaw = wrapAngle(s.yaw - Math.sin(s.roll) * P.turnGain * (1 + 0.18 * slow) * dt);
 
-  // speed: throttle sets the target, pitch trades energy
+  // speed: throttle sets the target, pitch trades energy, a hard turn bleeds a little
   const targetSpeed = P.minSpeed + (P.maxSpeed - P.minSpeed) * s.throttle;
-  s.speed = damp(s.speed, targetSpeed, P.accel, dt) - Math.sin(s.pitch) * 9.8 * 0.35 * dt;
+  s.speed = damp(s.speed, targetSpeed, P.accel, dt) - Math.sin(s.pitch) * 9.8 * 0.35 * dt - Math.abs(Math.sin(s.roll)) * 1.6 * dt;
   s.speed = clamp(s.speed, P.minSpeed * 0.8, P.maxSpeed * 1.15);
 
   // integrate
@@ -94,6 +116,8 @@ export function stepAircraft(a: AircraftState, inp: FlightInput, dt: number, ter
   s.x += f[0] * s.speed * dt;
   s.y += f[1] * s.speed * dt;
   s.z += f[2] * s.speed * dt;
+  s.vx = f[0] * s.speed;
+  s.vz = f[2] * s.speed;
 
   // ceiling
   if (s.y > P.ceiling) {
@@ -105,17 +129,20 @@ export function stepAircraft(a: AircraftState, inp: FlightInput, dt: number, ter
   const ground = terrainHeight(s.x, s.z);
   s.agl = s.y - ground;
   s.terrainWarning = false;
+  s.contact = false;
   if (s.agl < P.floorAgl) {
+    // flown into the ground (not just skimming along the floor)
+    s.contact = f[1] * s.speed < -3;
     s.y = ground + P.floorAgl;
     s.agl = P.floorAgl;
-    if (s.pitch < 0.12) s.pitch = 0.12;
+    s.pitch = easeTo(s.pitch, Math.max(s.pitch, 0.16), 8, P.pitchRate * 2, dt);
     s.terrainWarning = true;
-  } else if (s.agl < 45) {
-    // look ahead: rising ground forces a gentle climb
+  } else if (s.agl < 60) {
+    // look ahead: rising ground eases the nose up before it gets close
     const aheadGround = terrainHeight(s.x + f[0] * 90, s.z + f[2] * 90);
     if (aheadGround + P.floorAgl > s.y) {
       s.terrainWarning = true;
-      if (s.pitch < 0.2) s.pitch = approach(s.pitch, 0.2, P.pitchRate * 1.5 * dt);
+      if (s.pitch < 0.2) s.pitch = easeTo(s.pitch, 0.2, 4, P.pitchRate * 1.5, dt);
     }
   }
 
@@ -126,34 +153,73 @@ export function stepAircraft(a: AircraftState, inp: FlightInput, dt: number, ter
 /**
  * The rotorcraft step: the same stick and throttle, flown as a helicopter.
  * Bank still turns (and still turns at a standstill, so it pivots in a
- * hover); the vertical stick is the collective; the throttle is how fast it
+ * hover); the vertical stick is the collective; the lever is how fast it
  * goes forward, down to a hover.
+ *
+ * The helicopter carries momentum: its ground velocity eases toward where
+ * the nose and the lever want it (so a fast turn carves and slides a
+ * little), brakes harder than it accelerates (a flare), and the wind leans
+ * on it more the slower it goes.
  */
-function stepRotor(a: AircraftState, inp: FlightInput, dt: number, terrainHeight: (x: number, z: number) => number, P: FlightPerf, climbRate: number): AircraftState {
+function stepRotor(a: AircraftState, inp: FlightInput, dt: number, terrainHeight: (x: number, z: number) => number, P: FlightPerf, climbRate: number, env: FlightEnv): AircraftState {
   const s: AircraftState = { ...a };
   dt = clamp(dt, 0, 0.05);
   s.throttle = clamp(s.throttle + inp.throttleDelta * 0.6 * dt, 0, 1);
-  s.roll = approach(s.roll, clamp(inp.roll, -1, 1) * P.maxRoll, P.rollRate * dt);
-  s.pitch = approach(s.pitch, clamp(inp.pitch, -1, 1) * P.maxPitch, P.pitchRate * dt);
+  s.roll = easeTo(s.roll, clamp(inp.roll, -1, 1) * P.maxRoll, 6, P.rollRate, dt);
+  s.pitch = easeTo(s.pitch, clamp(inp.pitch, -1, 1) * P.maxPitch, 7, P.pitchRate, dt);
   s.yaw = wrapAngle(s.yaw - Math.sin(s.roll) * P.turnGain * dt);
-  s.speed = clamp(damp(s.speed, P.minSpeed + (P.maxSpeed - P.minSpeed) * s.throttle, P.accel, dt), 0, P.maxSpeed);
   const fx = -Math.sin(s.yaw);
   const fz = -Math.cos(s.yaw);
-  s.x += fx * s.speed * dt;
-  s.z += fz * s.speed * dt;
+  // velocity: old saves of the state carry only a speed along the nose
+  let vx = s.vx ?? 0;
+  let vz = s.vz ?? 0;
+  if (vx === 0 && vz === 0 && s.speed > 0) {
+    vx = fx * s.speed;
+    vz = fz * s.speed;
+  }
+  const target = P.minSpeed + (P.maxSpeed - P.minSpeed) * s.throttle;
+  const cur = Math.hypot(vx, vz);
+  const lean = 1 - Math.min(1, cur / 30) * 0.6;
+  const wantX = fx * target + (env.drift?.x ?? 0) * lean;
+  const wantZ = fz * target + (env.drift?.z ?? 0) * lean;
+  // along the nose: accelerate, or flare harder than you accelerate
+  const ex = wantX - vx;
+  const ez = wantZ - vz;
+  const along = ex * fx + ez * fz;
+  const side = ex * -fz + ez * fx;
+  const braking = target < cur - 0.5;
+  const kA = braking ? P.accel * 2.6 : P.accel * 1.35;
+  const aA = braking ? 7 + 8 * P.accel : 4 + 6 * P.accel;
+  // across the nose: the rotor grips, so a turn carves with only a little slide
+  const kS = 2.2 + P.accel * 2;
+  const aS = 14 + 16 * P.accel;
+  const lim = (v: number, m: number) => (v > m ? m : v < -m ? -m : v);
+  const dA = lim(along * (1 - Math.exp(-kA * dt)), aA * dt);
+  const dS = lim(side * (1 - Math.exp(-kS * dt)), aS * dt);
+  const dx = fx * dA - fz * dS;
+  const dz = fz * dA + fx * dS;
+  vx += dx;
+  vz += dz;
+  s.vx = vx;
+  s.vz = vz;
+  s.speed = Math.min(Math.hypot(vx, vz), P.maxSpeed);
+  s.x += vx * dt;
+  s.z += vz * dt;
   s.y += (s.pitch / P.maxPitch) * climbRate * dt;
   if (s.y > P.ceiling) s.y = P.ceiling;
   // terrain: forgiving, as for the aeroplane. Never crash; rising ground ahead lifts you
   const ground = terrainHeight(s.x, s.z);
   s.agl = s.y - ground;
   s.terrainWarning = false;
+  s.contact = false;
   if (s.agl < P.floorAgl) {
+    s.contact = s.speed > 15 && s.pitch < -0.1;
     s.y = ground + P.floorAgl;
     s.agl = P.floorAgl;
     s.terrainWarning = s.speed > 4;
   } else if (s.speed > 4) {
     const look = 12 + s.speed * 1.6;
-    const ahead = terrainHeight(s.x + fx * look, s.z + fz * look);
+    const ahead = terrainHeight(s.x + (vx / Math.max(1, s.speed)) * look, s.z + (vz / Math.max(1, s.speed)) * look);
     if (ahead + P.floorAgl + 4 > s.y) {
       s.terrainWarning = true;
       s.y += climbRate * 0.9 * dt;
@@ -174,5 +240,11 @@ function keepInBounds(s: AircraftState, dt: number, P: FlightPerf): void {
     const k = P.bounds / Math.max(Math.abs(s.x), Math.abs(s.z));
     s.x *= k;
     s.z *= k;
+    // the helicopter's momentum turns with it
+    if (s.vx !== undefined && s.vz !== undefined && P.climbRate) {
+      const sp = Math.hypot(s.vx, s.vz);
+      s.vx = -Math.sin(s.yaw) * sp;
+      s.vz = -Math.cos(s.yaw) * sp;
+    }
   }
 }

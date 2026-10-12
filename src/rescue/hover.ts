@@ -10,6 +10,9 @@ import type { AircraftState } from '../flight/aircraft';
 export interface HoverVel {
   vx: number;
   vz: number;
+  /** Where the hover is holding (set when the stick is let go). */
+  ax?: number;
+  az?: number;
 }
 
 export interface HoverParams {
@@ -23,6 +26,11 @@ export interface HoverParams {
   holdY: number;
   /** Never closer to the ground under it than this (m). */
   clearance: number;
+  /**
+   * Position hold (1/s): with the stick let go, the hover eases back to the
+   * spot where it was released. 0: no hold, it only stops.
+   */
+  hold?: number;
 }
 
 /** Forward and right on the ground for a heading. */
@@ -40,8 +48,19 @@ export function stepHover(a: AircraftState, v: HoverVel, stick: { x: number; y: 
   const ax = headingAxes(s.yaw);
   const sx = clamp(stick.x, -1, 1);
   const sy = clamp(stick.y, -1, 1);
-  const wantX = (ax.fx * sy + ax.rx * sx) * P.maxSpeed + P.drift.x;
-  const wantZ = (ax.fz * sy + ax.rz * sx) * P.maxSpeed + P.drift.z;
+  let wantX = (ax.fx * sy + ax.rx * sx) * P.maxSpeed + P.drift.x;
+  let wantZ = (ax.fz * sy + ax.rz * sx) * P.maxSpeed + P.drift.z;
+  const idle = Math.abs(sx) < 0.05 && Math.abs(sy) < 0.05;
+  if (!idle || v.ax === undefined || v.az === undefined || !P.hold) {
+    v.ax = s.x;
+    v.az = s.z;
+  } else {
+    // stick let go: come back to where it was let go, gently
+    const cx = clamp((v.ax - s.x) * P.hold, -2.5, 2.5);
+    const cz = clamp((v.az - s.z) * P.hold, -2.5, 2.5);
+    wantX += cx;
+    wantZ += cz;
+  }
   const k = 1 - Math.exp(-P.response * dt);
   v.vx += (wantX - v.vx) * k;
   v.vz += (wantZ - v.vz) * k;
@@ -54,6 +73,8 @@ export function stepHover(a: AircraftState, v: HoverVel, stick: { x: number; y: 
   if (s.y < floor - 3) s.y = floor - 3;
   s.agl = s.y - ground(s.x, s.z);
   s.speed = Math.hypot(v.vx, v.vz);
+  s.vx = v.vx;
+  s.vz = v.vz;
   // the rotor disc tips the way it is going (drawn by the mesh)
   const side = (v.vx * ax.rx + v.vz * ax.rz) / P.maxSpeed;
   s.roll = damp(s.roll, clamp(side, -1, 1) * 0.22, 4, dt);

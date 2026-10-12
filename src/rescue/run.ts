@@ -7,6 +7,8 @@
  *      ↑________________ more people still out there _____|
  */
 import { placeSurvivors, type Survivor } from './hoist';
+import { escapeDone, newEscape, tickEscape, type EscapeState } from './route';
+import { newScan, nextContact, tickScan, type ScanState } from './recon';
 import type { Plan } from './loadout';
 import type { MissionDef } from './missions';
 import { PADS, type PadId } from '../world/worldData';
@@ -44,9 +46,23 @@ export interface RunState {
   endTime: number;
   /** The fire, on a wildfire call. */
   ops: FireOps | null;
+  /** The escape route home, flown once everyone is aboard (null: none on this call). */
+  escape: EscapeState | null;
+  /** Times the aircraft was flown into the ground. */
+  scrapes: number;
+  /** Mission time when they were found (null: not yet). */
+  foundAt: number | null;
+  /** People lifted into the basket and reeled in. */
+  lifts: number;
+  /** Times someone had to step back from a basket that moved away. */
+  stepBacks: number;
+  /** Recon: which contacts have been identified (null: this call has none). */
+  scan: ScanState | null;
+  /** The contact identified most recently (for the radio). */
+  lastIdentified: number;
 }
 
-export type RunEvent = 'airborne' | 'signal' | 'spotted' | 'cabin-full' | 'all-aboard' | 'low-fuel' | 'out-of-fuel' | 'delivered' | 'complete' | FireEvent;
+export type RunEvent = 'cleared' | 'gate' | 'gate-missed' | 'escape-done' | 'off-route' | 'on-route' | 'airborne' | 'signal' | 'spotted' | 'cabin-full' | 'all-aboard' | 'low-fuel' | 'out-of-fuel' | 'delivered' | 'complete' | FireEvent;
 
 /** Within this of the site, slow enough, you can come into a hover and hoist (m, m/s). */
 export const HOIST_ZONE = 60;
@@ -75,7 +91,7 @@ export function newRun(def: MissionDef, plan: Plan, terrain: TerrainSampler = va
     fuelMax: fuel,
     signalled: false,
     spotted: false,
-    survivors: placeSurvivors(def.site, def.survivors),
+    survivors: placeSurvivors(def.site, def.survivors, def.spots),
     capacity: plan.capacity,
     bumps: 0,
     trips: 0,
@@ -83,6 +99,13 @@ export function newRun(def: MissionDef, plan: Plan, terrain: TerrainSampler = va
     failReason: null,
     endTime: 0,
     ops: def.fire ? newFireOps(def.fire, def.wind, terrain, plan.attack, plan.fillMult) : null,
+    escape: def.escape ? newEscape(def.escape, terrain.height) : null,
+    scrapes: 0,
+    foundAt: null,
+    lifts: 0,
+    stepBacks: 0,
+    scan: def.contacts ? newScan(def.contacts) : null,
+    lastIdentified: -1,
   };
 }
 
@@ -98,6 +121,10 @@ export interface Where {
   z: number;
   agl: number;
   speed: number;
+  /** Altitude (m, world): the escape gates need it. */
+  y?: number;
+  /** Heading (rad): recon looks along the nose. */
+  yaw?: number;
   /** Ground velocity (m/s), for where dropped water lands. */
   vx?: number;
   vz?: number;
@@ -106,6 +133,30 @@ export interface Where {
 export function distToSite(r: RunState, p: { x: number; z: number }): number {
   return Math.hypot(p.x - r.def.site.x, p.z - r.def.site.z);
 }
+
+/**
+ * Where the next lift happens: the spot of the waiting person nearest to
+ * `p` (usually everyone stands together; on some calls one is elsewhere).
+ * Falls back to the site.
+ */
+export function hoistSpot(r: RunState, p: { x: number; z: number }): { x: number; z: number } {
+  let best: { x: number; z: number } = r.def.site;
+  let bd = Infinity;
+  for (const s of r.survivors) {
+    if (s.state !== 'waiting' && s.state !== 'walking' && s.state !== 'boarding') continue;
+    const d = Math.hypot(p.x - s.homeX, p.z - s.homeZ);
+    if (d < bd) {
+      bd = d;
+      best = { x: s.homeX, z: s.homeZ };
+    }
+  }
+  return best;
+}
+
+export const distToSpot = (r: RunState, p: { x: number; z: number }): number => {
+  const s = hoistSpot(r, p);
+  return Math.hypot(p.x - s.x, p.z - s.z);
+};
 
 /** Advance the rescue. `hoisting`: the helicopter is in a hover over the site. */
 export function tickRun(r: RunState, p: Where, dt: number, plan: Pick<Plan, 'spotMult'>, hoisting: boolean): RunEvent[] {
@@ -132,19 +183,42 @@ export function tickRun(r: RunState, p: Where, dt: number, plan: Pick<Plan, 'spo
     }
   }
   const d = distToSite(r, p);
-  if (!r.signalled && r.def.signal !== 'none' && d < r.def.signalRange) {
+  if (r.scan && r.def.contacts) {
+    // recon: they are found by identifying the right contact, not by flying near
+    if (!r.signalled && r.stage !== 'takeoff' && r.def.contacts.some((c) => Math.hypot(c.x - p.x, c.z - p.z) < 420)) {
+      r.signalled = true;
+      ev.push('signal');
+    }
+    if (!r.spotted && p.yaw !== undefined && r.stage !== 'takeoff') {
+      for (const e of tickScan(r.def.contacts, r.scan, { x: p.x, z: p.z, yaw: p.yaw, agl: p.agl }, dt, plan.spotMult)) {
+        r.lastIdentified = e.index;
+        if (e.type === 'cleared') ev.push('cleared');
+        else {
+          r.spotted = true;
+          r.signalled = true;
+          r.foundAt = r.t;
+          if (r.stage === 'search') r.stage = 'rescue';
+          ev.push('spotted');
+        }
+      }
+    }
+  } else if (!r.signalled && r.def.signal !== 'none' && d < r.def.signalRange) {
     r.signalled = true;
     ev.push('signal');
   }
-  if (!r.spotted && d < r.def.spotRange * plan.spotMult) {
+  if (!r.scan && !r.spotted && d < r.def.spotRange * plan.spotMult) {
     r.spotted = true;
     r.signalled = true;
+    r.foundAt = r.t;
     if (r.stage === 'search') r.stage = 'rescue';
     ev.push('spotted');
   }
   if (r.stage === 'rescue' && !hoisting && aboard(r) > 0 && (cabinFull(r) || waiting(r) === 0)) {
     r.stage = 'return';
     ev.push(waiting(r) === 0 ? 'all-aboard' : 'cabin-full');
+  }
+  if (escaping(r) && p.y !== undefined) {
+    for (const e of tickEscape(r.escape!, { x: p.x, y: p.y, z: p.z }, r.t, dt)) ev.push(e.type);
   }
   if (!r.lowFuelWarned && r.fuel < r.fuelMax * 0.25) {
     r.lowFuelWarned = true;
@@ -156,6 +230,9 @@ export function tickRun(r: RunState, p: Where, dt: number, plan: Pick<Plan, 'spo
   }
   return ev;
 }
+
+/** Everyone is aboard and the escape route is still to fly. */
+export const escaping = (r: RunState): boolean => r.stage === 'return' && !!r.escape && !escapeDone(r.escape) && waiting(r) === 0;
 
 export function fail(r: RunState, reason: string): void {
   if (over(r)) return;
@@ -170,7 +247,7 @@ export function canHoist(r: RunState, p: Where): { ok: boolean; why: string } {
   if (!r.spotted) return { ok: false, why: 'FIND THEM FIRST' };
   if (waiting(r) === 0) return { ok: false, why: '' };
   if (cabinFull(r)) return { ok: false, why: 'CABIN FULL' };
-  if (distToSite(r, p) > HOIST_ZONE) return { ok: false, why: '' };
+  if (distToSpot(r, p) > HOIST_ZONE) return { ok: false, why: '' };
   if (p.speed > HOIST_MAX_SPEED) return { ok: false, why: 'SLOW DOWN' };
   return { ok: true, why: '' };
 }
@@ -211,7 +288,7 @@ export interface Objective {
   target: { x: number; z: number; kind: TargetKind; label: string } | null;
 }
 
-export type TargetKind = 'search' | 'site' | 'pad' | 'fire' | 'water' | 'base';
+export type TargetKind = 'search' | 'site' | 'pad' | 'fire' | 'water' | 'base' | 'gate';
 
 /** The head of the fire: the burning cell closest to what it threatens. */
 export function fireHead(ops: FireOps): { x: number; z: number } | null {
@@ -260,12 +337,19 @@ export function objective(r: RunState, hoisting: boolean, beacon = false, pos?: 
   const def = r.def;
   const who = def.survivors === 1 ? (def.look === 'hiker' ? 'THE HIKER' : 'THEM') : def.look === 'climber' ? 'THE CLIMBERS' : 'THEM';
   const pad = PADS[def.deliverTo];
-  const site = { x: def.site.x, z: def.site.z, kind: 'site' as const, label: def.survivors === 1 ? 'SURVIVOR' : 'SURVIVORS' };
+  const spot = pos ? hoistSpot(r, pos) : def.site;
+  const site = { x: spot.x, z: spot.z, kind: 'site' as const, label: waiting(r) === 1 ? 'SURVIVOR' : 'SURVIVORS' };
   switch (r.stage) {
     case 'takeoff':
       if (r.def.survivors === 0) return { icon: '🔥', title: 'AIRBORNE', detail: def.place, target: null };
       return { icon: '🚁', title: 'LIFTING OFF', detail: r.trips > 0 ? `Back for the other ${waiting(r) === 1 ? 'one' : waiting(r)}` : def.place, target: null };
     case 'search':
+      if (r.scan && def.contacts && def.recon) {
+        const i = nextContact(def.contacts, r.scan, pos ?? def.search);
+        const left = r.scan.identified.filter((x) => !x).length;
+        const c = i >= 0 ? def.contacts[i] : null;
+        return { icon: '🔭', title: def.recon.title, detail: `${def.recon.detail} · ${left} to check`, target: c ? { x: c.x, z: c.z, kind: 'search', label: c.label } : null };
+      }
       if (beacon) return { icon: '📡', title: `FIND ${who}`, detail: 'Follow the beacon', target: { ...site, label: 'BEACON' } };
       return { icon: '🔎', title: `FIND ${who}`, detail: r.signalled ? `Look for the ${def.signal === 'smoke' ? 'smoke' : 'flare'}` : `Search ${def.place}`, target: { x: def.search.x, z: def.search.z, kind: 'search', label: 'SEARCH AREA' } };
     case 'rescue': {
@@ -279,6 +363,11 @@ export function objective(r: RunState, hoisting: boolean, beacon = false, pos?: 
     case 'attack':
       return fireObjective(r, pos ?? { x: def.search.x, z: def.search.z });
     case 'return':
+      if (escaping(r)) {
+        const e = r.escape!;
+        const g = e.gates[e.next];
+        return { icon: '🏁', title: e.def.name.toUpperCase(), detail: `Gate ${e.next + 1} of ${e.gates.length} · ${aboard(r)} aboard`, target: { x: g.x, z: g.z, kind: 'gate', label: `GATE ${e.next + 1}` } };
+      }
       return { icon: '🏥', title: 'FLY TO THE HOSPITAL', detail: `${aboard(r)} aboard · land on the H`, target: { x: pad.x, z: pad.z, kind: 'pad', label: 'HOSPITAL' } };
     case 'complete':
       if (r.ops && def.survivors === 0) return { icon: '✅', title: r.ops.outcome === 'contained' ? 'FIRE CONTAINED' : 'FIRE HELD', detail: '', target: null };

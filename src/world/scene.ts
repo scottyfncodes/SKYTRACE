@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { clamp, fbm, rng } from '../core/math';
-import { forestAt, getHeightField, type HeightField } from './terrain';
+import { canyonDist, forestAt, getHeightField, type HeightField } from './terrain';
 import { tintFarmland } from './countryside';
-import { ROADS, RUNWAY, WATER_LEVEL, WORLD_HALF, WORLD_SIZE, type Pt } from './worldData';
+import { CANYON, ROADS, RUNWAY, WATER_LEVEL, WORLD_HALF, WORLD_SIZE, type Pt } from './worldData';
 
 export const PALETTE = {
   skyTop: 0x3f8fdc,
@@ -113,6 +113,14 @@ function buildTerrain(hf: HeightField): THREE.Mesh {
   const forestFloor = new THREE.Color(0x3c7a32);
   const scratch = new THREE.Color();
   const marsh = new THREE.Color(0x5b7a44);
+  const cliffA = new THREE.Color(0xc0713f);
+  const cliffB = new THREE.Color(0xd99a5e);
+  const cliffC = new THREE.Color(0x9a5233);
+  const dust = new THREE.Color(0xc9ab7c);
+  const smoothstepN = (e0: number, e1: number, v: number) => {
+    const t = clamp((v - e0) / (e1 - e0), 0, 1);
+    return t * t * (3 - 2 * t);
+  };
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const z = pos.getZ(i);
@@ -135,6 +143,17 @@ function buildTerrain(hf: HeightField): THREE.Mesh {
     // snow on Mount Kell, thinning on the steepest crags
     if (h > 320) c.lerp(snow, clamp((h - 320) / 45, 0, 1) * (1 - clamp((slope - 0.45) * 2, 0, 0.35)));
     c.lerp(forestFloor, f * 0.8);
+    // Harrow Gorge: banded sandstone walls and a dusty floor, so the canyon reads from anywhere
+    if (x > 560 && x < 940 && z > -480 && z < 420) {
+      const cd = canyonDist(x, z).d;
+      if (cd < CANYON.rim * 1.35) {
+        const band = Math.sin(h * 0.42 + fbm(x / 40, z / 40, 2) * 2.2);
+        scratch.copy(band > 0.35 ? cliffA : band > -0.3 ? cliffB : cliffC);
+        const wall = clamp((slope - 0.06) * 6, 0, 1) * smoothstepN(CANYON.rim * 1.35, CANYON.floor, cd);
+        c.lerp(scratch, wall);
+        if (cd < CANYON.floor + 4) c.lerp(dust, 0.75);
+      }
+    }
     // gentle valley shading for a diorama feel
     c.multiplyScalar(0.92 + 0.12 * clamp(h / 120, 0, 1));
     colors[i * 3] = c.r;

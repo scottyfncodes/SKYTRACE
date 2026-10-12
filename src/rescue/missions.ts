@@ -8,14 +8,16 @@
  */
 import type { Attack, Capability, CrewId, EquipmentId, VehicleId } from './catalog';
 import type { FireSpec } from '../fire/fireSim';
+import type { EscapeDef } from './route';
+import type { Contact } from './recon';
 import { LEDGES, type PadId } from '../world/worldData';
 
-export type MissionId = 'mountain-rescue' | 'lost-hiker' | 'summit-storm' | 'spot-fire' | 'wind-fire' | 'mountain-fire' | 'hotspots' | 'forest-fire' | 'capsized-boat' | 'flood' | 'injured-skier' | 'distress-beacon';
+export type MissionId = 'canyon-crash' | 'mountain-rescue' | 'lost-hiker' | 'summit-storm' | 'spot-fire' | 'wind-fire' | 'mountain-fire' | 'hotspots' | 'forest-fire' | 'capsized-boat' | 'flood' | 'injured-skier' | 'distress-beacon';
 export type RescueType = 'mountain' | 'forest' | 'water' | 'fire' | 'flood' | 'snow' | 'beacon';
 export type Visibility = 'good' | 'fair' | 'poor';
 /** How the people waiting for you show where they are. */
 export type Signal = 'flare' | 'smoke' | 'none';
-export type SurvivorLook = 'climber' | 'hiker' | 'skier';
+export type SurvivorLook = 'climber' | 'hiker' | 'skier' | 'driver';
 
 /** A wildfire call: the fire itself, and what the crews are up against. */
 export interface FireMission extends FireSpec {
@@ -75,6 +77,13 @@ export interface MissionDef {
     allAboard: string;
     landed: string;
   };
+  /** Where each person stands when they are not all together (index = person). */
+  spots?: readonly { x: number; z: number }[];
+  /** Recon: what to look for (they are found by identifying the right contact). */
+  contacts?: readonly Contact[];
+  recon?: { title: string; detail: string };
+  /** The way home once everyone is aboard: a route of gates out of the danger. */
+  escape?: EscapeDef;
   /** A wildfire: the fire, the places it threatens, the water. */
   fire?: FireMission;
   /** Built and playable in this version. */
@@ -95,6 +104,64 @@ const COMING = { site: { x: 0, z: 0 }, search: { x: 0, z: 0, r: 0 }, signal: 'no
 const NO_RADIO = { call: [], launch: '', signal: '', spotted: '', allAboard: '', landed: '' };
 
 export const MISSIONS: readonly MissionDef[] = [
+  {
+    // the flagship: RECON (find the right truck) → EXECUTE (two lifts off the gorge floor) → ESCAPE (out ahead of the storm)
+    id: 'canyon-crash',
+    type: 'mountain',
+    title: 'Canyon Crash',
+    icon: '🚚',
+    place: 'Harrow Gorge · Gorge Road',
+    situation: 'A truck has gone off the Gorge Road. A storm is coming.',
+    terrain: 'Narrow canyon',
+    elevation: 30,
+    wind: { speed: 7, from: 350, gust: 0.5 },
+    visibility: 'fair',
+    site: { x: 753, z: -170 },
+    survivors: 2,
+    look: 'driver',
+    search: { x: 765, z: -10, r: 230 },
+    signal: 'none',
+    signalRange: 0,
+    spotRange: 0,
+    reach: 6,
+    startPad: 'base',
+    deliverTo: 'hospital',
+    requires: ['hover', 'hoist'],
+    recommended: { vehicle: 'rescue-heli', crew: 'winch', equipment: ['basket'] },
+    fuel: 480,
+    par: 230,
+    contacts: [
+      { x: 776, z: 168, kind: 'logtruck', label: 'TRUCK', clear: 'Logging truck, parked up. Not them.', heading: 2.9 },
+      { x: 772, z: -14, kind: 'van', label: 'VAN', clear: 'Van with a flat. They are waving us on.', heading: 0.37 },
+      { x: 737, z: -158, kind: 'wreck', label: 'TRUCK', clear: '', target: true, heading: 2.8 },
+    ],
+    recon: { title: 'FIND THE CRASHED TRUCK', detail: 'Nose on each vehicle' },
+    escape: {
+      name: 'Out down the gorge',
+      reason: 'Storm is right behind us. Stay low between the walls and fly the gates out.',
+      gates: [
+        [761, -122, 20],
+        [785, -45, 20],
+        [766, 20, 20],
+        [745, 85, 20],
+        [757, 145, 22],
+        [765, 200, 24],
+        [745, 265, 26],
+      ],
+      r: 14,
+      corridor: 60,
+      par: 16,
+    },
+    radio: {
+      call: ['Rescue One, a truck has gone off the Gorge Road in Harrow Gorge.', 'Two aboard. A storm is coming down the gorge from the north.'],
+      launch: 'Rescue One, cleared for lift. Enter the gorge at the quarry, check every vehicle.',
+      signal: 'Vehicles on the road ahead. Nose on each one.',
+      spotted: "That's the one! Two of them by the wreck. Bring us into a hover.",
+      allAboard: 'Both aboard! The storm is on top of us. Out down the gorge!',
+      landed: 'Both safe at Varrow. Textbook, Rescue One.',
+    },
+    ready: true,
+  },
   {
     id: 'mountain-rescue',
     type: 'mountain',
@@ -120,6 +187,21 @@ export const MISSIONS: readonly MissionDef[] = [
     recommended: { vehicle: 'rescue-heli', crew: 'winch', equipment: ['basket'] },
     fuel: 480,
     par: 240,
+    escape: {
+      name: 'Down the south face',
+      reason: 'Gusts are building on the ridge. Down the south face, out of the wind.',
+      gates: [
+        [185, -585, 30],
+        [150, -510, 28],
+        [105, -440, 26],
+        [55, -370, 24],
+        [0, -290, 24],
+        [-60, -205, 24],
+      ],
+      r: 16,
+      corridor: 80,
+      par: 18,
+    },
     radio: {
       call: ['Rescue One, two climbers stuck on the north ridge of Mount Kell.', "They can't get down. Wind is picking up."],
       launch: 'Rescue One, cleared for lift. Head north to Mount Kell.',
@@ -155,6 +237,21 @@ export const MISSIONS: readonly MissionDef[] = [
     recommended: { vehicle: 'rescue-heli', crew: 'spotter', equipment: ['basket', 'beacon'] },
     fuel: 480,
     par: 230,
+    escape: {
+      name: 'Over the treetops',
+      reason: 'Haze is thickening. Follow the gates over Keld Forest to the river.',
+      gates: [
+        [190, -140, 34],
+        [130, -80, 34],
+        [60, -15, 32],
+        [-10, 55, 30],
+        [-80, 130, 28],
+        [-150, 210, 28],
+      ],
+      r: 16,
+      corridor: 80,
+      par: 18,
+    },
     radio: {
       call: ['Rescue One, a hiker is missing in Keld Forest.', 'Her phone pinged once. The search area is big.'],
       launch: 'Rescue One, cleared for lift. Search Keld Forest.',
@@ -178,6 +275,12 @@ export const MISSIONS: readonly MissionDef[] = [
     wind: { speed: 11, from: 280, gust: 0.6 },
     visibility: 'poor',
     site: { x: LEDGES.summit.x, z: LEDGES.summit.z },
+    // two on the summit shelf; the third slipped to the shelf below (the third lift is a new approach)
+    spots: [
+      { x: LEDGES.summit.x - 1.6, z: LEDGES.summit.z + 1.2 },
+      { x: LEDGES.summit.x + 1.8, z: LEDGES.summit.z - 0.8 },
+      { x: LEDGES.lowerShelf.x, z: LEDGES.lowerShelf.z },
+    ],
     survivors: 3,
     look: 'climber',
     search: { x: 330, z: -760, r: 150 },
@@ -191,11 +294,27 @@ export const MISSIONS: readonly MissionDef[] = [
     recommended: { vehicle: 'heavy-heli', crew: 'winch', equipment: ['basket', 'thermal'] },
     fuel: 600,
     par: 330,
+    escape: {
+      name: 'Under the cloud',
+      reason: 'Cloud is closing on the summit. Down the west shoulder, under the cloud base.',
+      gates: [
+        [245, -715, 32],
+        [165, -690, 30],
+        [85, -655, 28],
+        [5, -610, 26],
+        [-70, -555, 24],
+        [-140, -490, 24],
+        [-200, -420, 24],
+      ],
+      r: 16,
+      corridor: 80,
+      par: 22,
+    },
     radio: {
       call: ['Rescue One, three climbers trapped near the summit.', 'Strong gusts and low cloud. This one is hard.'],
       launch: 'Rescue One, cleared for lift. Mind the gusts up top.',
       signal: 'Flare in the cloud, near the summit!',
-      spotted: 'Three of them on the shelf. Hold it steady in this wind.',
+      spotted: 'Two on the summit shelf, one on the shelf below. Steady in this wind.',
       allAboard: 'Everyone aboard! Get them down to the hospital.',
       landed: 'All three safe. That was outstanding, Rescue One.',
     },
@@ -396,6 +515,21 @@ export const MISSIONS: readonly MissionDef[] = [
     recommended: { vehicle: 'fire-heli', crew: 'medic', equipment: ['basket'] },
     fuel: 480,
     par: 260,
+    escape: {
+      name: 'Out of the smoke',
+      reason: 'Smoke is thick to the west. Out east over the trees, then home along the river.',
+      gates: [
+        [290, -140, 34],
+        [340, -60, 32],
+        [370, 30, 30],
+        [380, 130, 30],
+        [350, 230, 30],
+        [300, 320, 30],
+      ],
+      r: 16,
+      corridor: 80,
+      par: 18,
+    },
     radio: {
       call: ['Rescue One, two hikers cut off by a fire in Keld Forest.', 'They are in the clearing. The fire is coming from the west.'],
       launch: 'Rescue One, cleared for lift. Hurry.',

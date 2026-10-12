@@ -83,9 +83,15 @@ export function newBasket(a: Anchor): Basket {
   return { len: 0, x: a.x, y: a.y - WINCH_DROP - BASKET_H, z: a.z, vx: a.vx, vz: a.vz, grounded: false, carrying: null };
 }
 
-export function placeSurvivors(site: { x: number; z: number }, n: number): Survivor[] {
+/** `spots`: where each one stands, when they are not all together (the rest gather at the site). */
+export function placeSurvivors(site: { x: number; z: number }, n: number, spots?: readonly { x: number; z: number }[]): Survivor[] {
   const out: Survivor[] = [];
   for (let i = 0; i < n; i++) {
+    const own = spots?.[i];
+    if (own) {
+      out.push({ id: i, homeX: own.x, homeZ: own.z, x: own.x, z: own.z, state: 'waiting', board: 0 });
+      continue;
+    }
     const a = (i / Math.max(1, n)) * Math.PI * 2 + 0.6;
     const r = n === 1 ? 0 : 2.2;
     const x = site.x + Math.cos(a) * r;
