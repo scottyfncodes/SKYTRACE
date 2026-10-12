@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyVerticalMode, DEFAULT_PREFS, loadPrefs, otherSide, PREFS_KEY, savePrefs } from '../src/core/settings';
-import { Input } from '../src/core/input';
+import { Input, shapeAxis } from '../src/core/input';
 import { initialAircraft, stepAircraft, type FlightInput } from '../src/flight/aircraft';
 import { loadProgress, newProgress, PROGRESS_KEY, saveProgress } from '../src/rescue/progress';
 
@@ -63,12 +63,12 @@ describe('steering side', () => {
     expect(DEFAULT_PREFS.steer).toBe('left');
     expect(loadPrefs(st).steer).toBe('left');
     st.setItem(PREFS_KEY, JSON.stringify({ verticalMode: 'inverted' })); // saved before the setting existed
-    expect(loadPrefs(st)).toEqual({ verticalMode: 'inverted', steer: 'left' });
+    expect(loadPrefs(st)).toEqual({ verticalMode: 'inverted', steer: 'left', assist: true });
   });
   it('round-trips, rejects junk, and keeps the vertical setting alongside', () => {
     const st = memStorage();
-    savePrefs({ verticalMode: 'inverted', steer: 'right' }, st);
-    expect(loadPrefs(st)).toEqual({ verticalMode: 'inverted', steer: 'right' });
+    savePrefs({ verticalMode: 'inverted', steer: 'right', assist: false }, st);
+    expect(loadPrefs(st)).toEqual({ verticalMode: 'inverted', steer: 'right', assist: false });
     st.setItem(PREFS_KEY, JSON.stringify({ verticalMode: 'standard', steer: 'middle' }));
     expect(loadPrefs(st).steer).toBe('left');
   });
@@ -214,7 +214,8 @@ describe('Input vertical axis (stick + keyboard share one path)', () => {
       expect(t.input.readStick().y).toBe(1);
       t.release();
       t.stick(27, 0);
-      expect(t.input.readStick().x).toBeCloseTo(0.5);
+      // half a stick, through the response curve (gentle near the centre)
+      expect(t.input.readStick().x).toBeCloseTo(shapeAxis(0.5));
       t.release();
       t.key('ArrowDown', true);
       expect(t.input.readStick().y).toBe(-1);

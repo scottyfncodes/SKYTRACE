@@ -13,6 +13,17 @@ export interface InputState {
   throttleDelta: number;
 }
 
+/**
+ * Touch stick response: gentle near the centre for fine corrections, full
+ * authority at the edge. Dead zone included. Pure.
+ */
+export function shapeAxis(v: number, dead = 0.08): number {
+  const a = Math.abs(v);
+  if (a < dead) return 0;
+  const t = Math.min(1, (a - dead) / (1 - dead));
+  return Math.sign(v) * (0.45 * t + 0.55 * t * t);
+}
+
 export class Input {
   private keys = new Set<string>();
   private pressed = new Set<Action>();
@@ -36,7 +47,7 @@ export class Input {
     this.stickKnob = stickKnob;
     window.addEventListener('keydown', (e) => this.onKey(e, true));
     window.addEventListener('keyup', (e) => this.onKey(e, false));
-    window.addEventListener('blur', () => this.keys.clear());
+    window.addEventListener('blur', () => this.reset());
 
     stickZone.addEventListener('pointerdown', (e) => {
       if (this.stickId !== null) return;
@@ -73,6 +84,7 @@ export class Input {
     stickZone.addEventListener('pointermove', moveStick);
     stickZone.addEventListener('pointerup', endStick);
     stickZone.addEventListener('pointercancel', endStick);
+    stickZone.addEventListener('lostpointercapture', endStick);
 
     if (throttleEl) {
       throttleEl.addEventListener('pointerdown', (e) => {
@@ -91,7 +103,24 @@ export class Input {
       };
       throttleEl.addEventListener('pointerup', end);
       throttleEl.addEventListener('pointercancel', end);
+      throttleEl.addEventListener('lostpointercapture', end);
     }
+  }
+
+  /**
+   * Let go of everything: keys, the stick, the lever, queued presses. Called
+   * when the game pauses, loses focus, or starts a mission, so nothing is
+   * left held down across a screen change.
+   */
+  reset(): void {
+    this.keys.clear();
+    this.pressed.clear();
+    this.stickId = null;
+    this.stickVec = { x: 0, y: 0 };
+    this.stickKnob.style.transform = 'translate(-50%, -50%)';
+    this.stickEl.classList.remove('active');
+    this.throttleTouch = null;
+    this.touchThrottle = null;
   }
 
   private applyThrottleFromPointer(e: PointerEvent, el: HTMLElement): void {
@@ -170,8 +199,8 @@ export class Input {
     if (k.has('ArrowUp') || k.has('w')) y += 1;
     if (k.has('ArrowDown') || k.has('s')) y -= 1;
     if (this.stickId !== null) {
-      x = Math.abs(this.stickVec.x) < 0.08 ? 0 : this.stickVec.x;
-      y = Math.abs(this.stickVec.y) < 0.08 ? 0 : -this.stickVec.y;
+      x = shapeAxis(this.stickVec.x);
+      y = -shapeAxis(this.stickVec.y);
     }
     return { x, y };
   }
@@ -194,11 +223,8 @@ export class Input {
     if (k.has('Shift') || k.has('q')) throttleDelta += 1;
     if (k.has('Control') || k.has('z')) throttleDelta -= 1;
     if (this.stickId !== null) {
-      roll = this.stickVec.x;
-      pitch = -this.stickVec.y; // stick up = climb
-      // small dead zone
-      if (Math.abs(roll) < 0.08) roll = 0;
-      if (Math.abs(pitch) < 0.08) pitch = 0;
+      roll = shapeAxis(this.stickVec.x);
+      pitch = -shapeAxis(this.stickVec.y); // stick up = climb
     }
     return applyVerticalMode({ roll, pitch, throttleDelta }, this.verticalMode);
   }
