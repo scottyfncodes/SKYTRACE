@@ -24,8 +24,10 @@
       <section id="title" class="screen title hidden" aria-label="Title">
         <div class="t-brand">
           <div class="t-logo"><span class="t-cross" aria-hidden="true">✚</span>SKYTRACE</div>
-          <div class="t-sub">RESCUE &amp; FIREFIGHTING</div>
-          <p class="t-line">Someone needs help. Plan the response, choose the aircraft, fly it, and change what happens.</p>
+          <div class="t-sub">AERIAL RESCUE &amp; FIREFIGHTING</div>
+          <div class="t-ops" aria-label="Every operation"><span>RECON</span><i>›</i><span>EXECUTE</span><i>›</i><span>ESCAPE</span></div>
+          <p class="t-line">Find them. Lift them out. Fly everyone home.</p>
+          <button id="btn-quick" class="launch-btn quick" type="button"><small>NEXT CALL</small><span id="quick-name">FLY</span></button>
         </div>
         <div class="t-calls">
           <div class="t-calls-head"><span>EMERGENCY CALLS</span><em id="t-saved"></em></div>
@@ -74,7 +76,7 @@
       <!-- ===== FLIGHT HUD ===== -->
       <section id="hud" class="screen hud hidden" aria-label="Flight">
         <div class="hud-top">
-          <div id="objective" class="objective" role="status" aria-live="polite"><span id="obj-icon" class="obj-icon">🔎</span><div class="obj-text"><b id="obj-title"></b><small id="obj-detail"></small></div></div>
+          <div id="objective" class="objective" role="status" aria-live="polite"><span id="obj-icon" class="obj-icon">🔎</span><div class="obj-text"><span id="phases" class="phases hidden" aria-label="Phase"><i data-p="recon">RECON</i><i data-p="execute">EXECUTE</i><i data-p="escape">ESCAPE</i></span><b id="obj-title"></b><small id="obj-detail"></small></div></div>
           <div id="nav" class="nav"><i id="nav-arrow" class="nav-arrow"></i><b id="nav-dist"></b><small id="nav-label"></small></div>
           <div class="hud-right">
             <div id="people" class="people" aria-label="Survivors"></div>
@@ -90,6 +92,8 @@
         <div id="radio" class="radio" aria-live="polite"><b id="radio-who"></b><span id="radio-text"></span></div>
         <div id="banner" class="banner" aria-live="assertive"><b id="banner-text"></b><small id="banner-sub"></small></div>
         <div id="warn" class="warn"></div>
+        <div id="toast" class="toast" aria-live="polite"></div>
+        <div id="scan" class="scan hidden" aria-live="polite"><b id="scan-label">IDENTIFYING</b><div class="bar"><i id="scan-fill"></i></div></div>
         <div id="hint" class="hint"></div>
         <canvas id="minimap" class="minimap" aria-hidden="true"></canvas>
         <div id="readout" class="readout"></div>
@@ -134,6 +138,13 @@
               </div>
             </div>
             <div class="set-row">
+              <span class="set-name">HOVER ASSIST</span>
+              <div class="seg" role="radiogroup" aria-label="Hover assist">
+                <button type="button" role="radio" data-assist="on" aria-checked="true" class="on">ON</button>
+                <button type="button" role="radio" data-assist="off" aria-checked="false">OFF</button>
+              </div>
+            </div>
+            <div class="set-row">
               <span class="set-name">SOUND</span>
               <div class="seg">
                 <button type="button" id="btn-sound" class="on">ON</button>
@@ -152,6 +163,7 @@
             <div id="db-headline" class="db-headline">RESCUE COMPLETE</div>
             <div id="db-mission" class="db-mission"></div>
             <div id="db-stars" class="db-stars" aria-label="Stars"></div>
+            <div id="db-score" class="db-score"></div>
             <ul id="db-lines" class="db-lines"></ul>
           </div>
           <div class="db-side">

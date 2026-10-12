@@ -6,6 +6,7 @@ import { Radio, type Speaker } from '../core/radio';
 import { loadPrefs, savePrefs, type Prefs, type SteerSide, type VerticalMode } from '../core/settings';
 import { initialAircraft, stepAircraft, type AircraftState } from '../flight/aircraft';
 import { ChaseCamera } from '../flight/camera';
+import { assistedDrift, newWindEstimate } from '../flight/assist';
 import { HelicopterMesh } from '../flight/helicopterMesh';
 import { PlaneMesh } from '../flight/planeMesh';
 import { CALL_LEN, canFireAction, canFill, fireAction, LINE_LEN, RELOAD, THREAT_WORDS, nearestThreat, waterUnder, type FireEvent } from '../fire/fireRun';
@@ -19,7 +20,7 @@ import { headingAxes, hoverTilt, stepHover, type HoverVel } from '../rescue/hove
 import { canLaunch, defaultLoadout, planOf, toggleEquipment, withCrew, withVehicle, type Loadout, type Plan } from '../rescue/loadout';
 import { MISSION_BY_ID, type MissionDef, type MissionId } from '../rescue/missions';
 import { loadProgress, nextMission, recordRescue, saveProgress, type Progress } from '../rescue/progress';
-import { aboard, cabinFull, canHoist, canLand, delivered, distToSite, fireHead, landAtPad, newRun, objective, tickRun, waiting, type RunEvent, type RunState } from '../rescue/run';
+import { aboard, cabinFull, canHoist, canLand, delivered, distToSite, distToSpot, escaping, fireHead, hoistSpot, landAtPad, newRun, objective, tickRun, waiting, type RunEvent, type RunState } from '../rescue/run';
 import { HOVER_DRIFT, windAt, type Wind } from '../rescue/wind';
 import { Hud, type ActionState, type DropState, type MapFrame } from '../ui/hud';
 import { PreflightView } from '../ui/preflight';
@@ -28,6 +29,8 @@ import { buildCountryside } from '../world/countryside';
 import { buildProps, buildTrees, updateProps, type WorldProps } from '../world/props';
 import { BasketMesh, buildCamp, buildRescueProps, Burst, Marker, reachRing, searchArea, Signals, SurvivorMesh, type RescueProps } from '../world/rescueScene';
 import { createScene, type SceneBundle } from '../world/scene';
+import { ContactView, GateView, GroundShadow, RouteRibbon } from '../world/routeScene';
+import { escapeDone } from '../rescue/route';
 import { PADS, RUNWAY, WORLD_HALF } from '../world/worldData';
 import { pauseTransition, type Mode } from './modes';
 
@@ -72,6 +75,12 @@ export class RescueGame {
   private burst = new Burst();
   private camp: THREE.Group | null = null;
   private people: SurvivorMesh[] = [];
+  private gates = new GateView();
+  private ribbon = new RouteRibbon();
+  private shadow = new GroundShadow();
+  private contacts = new ContactView();
+  /** Seconds before another scrape can count (one bump is one scrape). */
+  private scrapeCool = 0;
   private chase = new ChaseCamera();
   private input: Input;
   private audio = new AudioSystem();
@@ -94,6 +103,8 @@ export class RescueGame {
   private hv: HoverVel = { vx: 0, vz: 0 };
   private basket: Basket;
   private wind: Wind = { x: 0, z: 0, speed: 0, gust: 0 };
+  /** The hover assist's running estimate of the wind's push. */
+  private windEst = newWindEstimate();
   private hoisting = false;
   /** Leaving the hover: reel the basket in first. */
   private reeling = false;
@@ -124,7 +135,7 @@ export class RescueGame {
       if (!e) throw new Error(`missing #${id}`);
       return e;
     };
-    for (const id of ['gl', 'loading', 'title', 'preflight', 'hud', 'pause', 'debrief', 'card', 'card-kicker', 'card-title', 'card-line', 'flash', 'stick-zone', 'stick-knob', 'throttle', 'btn-action', 'btn-drop', 'db-compare', 'btn-pause', 'btn-resume', 'btn-restart', 'btn-abort', 'btn-sound', 'btn-voice', 'pause-objective', 'btn-db-next', 'btn-db-again', 'btn-db-menu', 'db-headline', 'db-mission', 'db-stars', 'db-lines', 'db-unlocks', 'btn-title-settings']) this.el[id] = q(id);
+    for (const id of ['gl', 'loading', 'title', 'preflight', 'hud', 'pause', 'debrief', 'card', 'card-kicker', 'card-title', 'card-line', 'flash', 'stick-zone', 'stick-knob', 'throttle', 'btn-action', 'btn-drop', 'db-compare', 'btn-pause', 'btn-resume', 'btn-restart', 'btn-abort', 'btn-sound', 'btn-voice', 'pause-objective', 'btn-db-next', 'btn-db-again', 'btn-db-menu', 'db-headline', 'db-mission', 'db-stars', 'db-lines', 'db-unlocks', 'btn-title-settings', 'db-score']) this.el[id] = q(id);
 
     this.bundle = createScene(this.el['gl'] as HTMLCanvasElement);
     const hf = this.bundle.heightField;
@@ -135,7 +146,7 @@ export class RescueGame {
     this.fireView = new FireView(scene, hf);
     this.rescueProps = buildRescueProps(hf);
     this.plane.group.visible = false;
-    scene.add(this.rescueProps.group, this.heli.group, this.plane.group, this.basketMesh.group, this.basketMesh.cable, this.basketMesh.shadow, this.marker.group, this.tube, this.ring, this.signals.group, this.burst.group);
+    scene.add(this.rescueProps.group, this.heli.group, this.plane.group, this.basketMesh.group, this.basketMesh.cable, this.basketMesh.shadow, this.marker.group, this.tube, this.ring, this.signals.group, this.burst.group, this.gates.group, this.ribbon.mesh, this.shadow.mesh, this.contacts.group);
 
     this.input = new Input(this.el['stick-zone'], this.el['stick-knob'], this.el['throttle']);
     this.prefs = loadPrefs(localStorage);
@@ -186,6 +197,7 @@ export class RescueGame {
     this.el['btn-db-menu'].addEventListener('click', () => this.showTitle());
     for (const b of root.querySelectorAll<HTMLElement>('[data-vert]')) b.addEventListener('click', () => this.setVertical(b.dataset.vert as VerticalMode));
     for (const b of root.querySelectorAll<HTMLElement>('[data-steer]')) b.addEventListener('click', () => this.setSteer(b.dataset.steer as SteerSide));
+    for (const b of root.querySelectorAll<HTMLElement>('[data-assist]')) b.addEventListener('click', () => this.setAssist(b.dataset.assist === 'on'));
     try {
       this.radio.voice = localStorage.getItem('skytrace.voice') !== 'off';
     } catch {
@@ -196,6 +208,7 @@ export class RescueGame {
     window.addEventListener('resize', () => this.resize());
     window.addEventListener('orientationchange', () => setTimeout(() => this.resize(), 250));
     document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.input.reset();
       if (document.hidden && this.mode === 'flight') this.togglePause();
     });
 
@@ -219,6 +232,7 @@ export class RescueGame {
   }
 
   private showTitle(): void {
+    this.input.reset();
     this.radio.clear();
     this.hud.clearBanners();
     this.hideCard();
@@ -274,7 +288,7 @@ export class RescueGame {
     this.el['btn-restart'].classList.add('hidden');
     this.el['btn-abort'].classList.add('hidden');
     this.root.querySelector('#pause-title')!.textContent = 'CONTROLS & SOUND';
-    this.el['pause-objective'].textContent = 'Drag on one side to steer and climb. Slide the lever on the other side for speed. In a hover the lever lowers the basket.';
+    this.el['pause-objective'].textContent = 'Drag on one side to steer and climb. The lever on the other side is speed; in a hover it lowers the basket. Hover assist leans into the wind for you.';
     const close = () => {
       this.el['pause'].classList.add('hidden');
       this.el['btn-restart'].classList.remove('hidden');
@@ -299,6 +313,12 @@ export class RescueGame {
     this.renderPrefs();
   }
 
+  private setAssist(on: boolean): void {
+    this.prefs.assist = on;
+    savePrefs(this.prefs, localStorage);
+    this.renderPrefs();
+  }
+
   private prefsExtra(p: { voice: boolean }): void {
     try {
       localStorage.setItem('skytrace.voice', p.voice ? 'on' : 'off');
@@ -318,6 +338,11 @@ export class RescueGame {
       b.classList.toggle('on', on);
       b.setAttribute('aria-checked', String(on));
     }
+    for (const b of this.root.querySelectorAll<HTMLElement>('[data-assist]')) {
+      const on = (b.dataset.assist === 'on') === this.prefs.assist;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', String(on));
+    }
     this.root.classList.toggle('steer-right', this.prefs.steer === 'right');
     this.el['btn-sound'].classList.toggle('on', !this.audio.muted);
     this.el['btn-sound'].textContent = this.audio.muted ? 'OFF' : 'ON';
@@ -331,6 +356,8 @@ export class RescueGame {
     // face the way out: toward the mountain from the base, toward the base from the hospital
     const a = initialAircraft(p.x, g + PAD_TOP + SKID, p.z, id === 'base' ? -0.62 : 0.5);
     a.speed = 0;
+    a.vx = 0;
+    a.vz = 0;
     a.throttle = 0;
     a.agl = PAD_TOP + SKID;
     return a;
@@ -350,6 +377,9 @@ export class RescueGame {
 
   private clearMissionScene(): void {
     this.fireView.clear();
+    this.gates.clear();
+    this.contacts.clear();
+    this.ribbon.mesh.visible = false;
     this.overview = null;
     this.audio.updateFire(0, 0);
     for (const p of this.people) this.bundle.scene.remove(p.group);
@@ -388,6 +418,8 @@ export class RescueGame {
     this.heli.setBucket(this.plan.bucket && !!this.run.ops, true);
     this.a = plane ? this.onRunway() : this.onPad(def.startPad);
     this.hv = { vx: 0, vz: 0 };
+    this.windEst = newWindEstimate();
+    this.input.reset();
     this.hoisting = false;
     this.reeling = false;
     this.winchCmd = 0;
@@ -420,14 +452,17 @@ export class RescueGame {
       this.bundle.scene.add(m.group);
     });
     const rescue = def.survivors > 0;
-    if (rescue) {
+    if (rescue && def.look !== 'driver') {
       this.camp = buildCamp(hf, def.site.x, def.site.z, def.look);
       this.bundle.scene.add(this.camp);
     }
+    if (this.run.escape) this.gates.setup(this.run.escape.gates, hf);
+    if (def.contacts) this.contacts.setup(def.contacts, hf);
+    this.scrapeCool = 0;
     const gy = hf.sample(def.search.x, def.search.z);
     this.tube.position.set(def.search.x, gy + 120, def.search.z);
     this.tube.scale.set(def.search.r, 420, def.search.r);
-    this.tube.visible = rescue && !def.fire;
+    this.tube.visible = rescue && !def.fire && !def.contacts;
     const sy = hf.sample(def.site.x, def.site.z);
     this.ring.position.set(def.site.x, sy + 0.35, def.site.z);
     this.ring.scale.setScalar(this.plan.hoist.reach + RING_PAD);
@@ -449,6 +484,7 @@ export class RescueGame {
     const next = pauseTransition(this.mode);
     if (!next) return;
     if (next === 'paused') {
+      this.input.reset();
       const o = objective(this.run, this.hoisting, this.plan.beacon);
       this.el['pause-objective'].textContent = `${o.icon} ${o.title}${o.detail ? ` · ${o.detail}` : ''}`;
       this.audio.winch(0);
@@ -473,10 +509,11 @@ export class RescueGame {
   }
 
   /** Where the aircraft is and how it is moving over the ground. */
-  private where(): { x: number; z: number; agl: number; speed: number; vx: number; vz: number } {
-    if (this.hoisting) return { x: this.a.x, z: this.a.z, agl: this.a.agl, speed: this.a.speed, vx: this.hv.vx, vz: this.hv.vz };
+  private where(): { x: number; y: number; z: number; yaw: number; agl: number; speed: number; vx: number; vz: number } {
+    const base = { x: this.a.x, y: this.a.y, z: this.a.z, yaw: this.a.yaw, agl: this.a.agl, speed: this.a.speed };
+    if (this.hoisting) return { ...base, vx: this.hv.vx, vz: this.hv.vz };
     const ax = headingAxes(this.a.yaw);
-    return { x: this.a.x, z: this.a.z, agl: this.a.agl, speed: this.a.speed, vx: ax.fx * this.a.speed, vz: ax.fz * this.a.speed };
+    return { ...base, vx: this.a.vx ?? ax.fx * this.a.speed, vz: this.a.vz ?? ax.fz * this.a.speed };
   }
 
   /** The fire button: drop retardant, let the bucket go, or start marking a line for Tanker 42. */
@@ -489,11 +526,12 @@ export class RescueGame {
 
   private enterHover(): void {
     const ax = headingAxes(this.a.yaw);
-    this.hv = { vx: ax.fx * this.a.speed, vz: ax.fz * this.a.speed };
+    this.hv = { vx: this.a.vx ?? ax.fx * this.a.speed, vz: this.a.vz ?? ax.fz * this.a.speed };
     this.hoisting = true;
     this.reeling = false;
     this.winchCmd = this.basket.len;
-    this.holdY = this.bundle.heightField.sample(this.def.site.x, this.def.site.z) + HOVER_HEIGHT;
+    const spot = hoistSpot(this.run, this.a);
+    this.holdY = this.bundle.heightField.sample(spot.x, spot.z) + HOVER_HEIGHT;
     this.audio.hoverIn();
     if (!this.said.has('hover')) {
       this.said.add('hover');
@@ -506,8 +544,10 @@ export class RescueGame {
       this.reeling = true;
       return;
     }
-    const ax = headingAxes(this.a.yaw);
-    this.a.speed = Math.max(0, this.hv.vx * ax.fx + this.hv.vz * ax.fz);
+    // the helicopter flies on with the momentum it had in the hover
+    this.a.vx = this.hv.vx;
+    this.a.vz = this.hv.vz;
+    this.a.speed = Math.hypot(this.hv.vx, this.hv.vz);
     this.a.throttle = 0;
     this.a.pitch = 0;
     this.hoisting = false;
@@ -586,7 +626,15 @@ export class RescueGame {
     const def = this.def;
     const plan = this.plan;
     this.wind = windAt(def.wind, run.t);
-    const drift = { x: this.wind.x * HOVER_DRIFT * plan.windFactor, z: this.wind.z * HOVER_DRIFT * plan.windFactor };
+    const raw = { x: this.wind.x * HOVER_DRIFT * plan.windFactor, z: this.wind.z * HOVER_DRIFT * plan.windFactor };
+    // the hover assist learns the steady push and leans into it; gusts still get through for a moment
+    const drift = assistedDrift(this.windEst, raw, dt, this.prefs.assist && plan.kind !== 'plane');
+    // off the escape route, the weather you are escaping catches you: rough air the assist cannot cancel
+    if (run.escape?.off) {
+      drift.x += Math.sin(this.t * 2.3) * Math.sin(this.t * 0.9) * 6;
+      drift.z += Math.cos(this.t * 1.7) * Math.sin(this.t * 1.1) * 6;
+      this.shake = Math.max(this.shake, 0.18 + 0.12 * Math.abs(Math.sin(this.t * 3.1)));
+    }
 
     // ---- fly
     const plane = plan.kind === 'plane';
@@ -597,11 +645,13 @@ export class RescueGame {
       if (this.takeoffT > 1.6) this.a.y += Math.min(9, 2 + (this.takeoffT - 1.6) * 5) * dt;
       this.a.agl = this.a.y - ground(this.a.x, this.a.z);
       this.a.speed = 0;
+      this.a.vx = 0;
+      this.a.vz = 0;
       this.input.syncThrottle(0);
       this.input.touchThrottle = null;
     } else if (this.hoisting) {
       const stick = this.input.readStick();
-      this.a = stepHover(this.a, this.hv, stick, { maxSpeed: HOVER_SPEED, response: 1.5, drift, holdY: this.holdY, clearance: 9 }, ground, dt);
+      this.a = stepHover(this.a, this.hv, stick, { maxSpeed: HOVER_SPEED, response: 1.8, drift, holdY: this.holdY, clearance: 9, hold: this.prefs.assist ? 0.8 : 0 }, ground, dt);
       const max = plan.hoist.maxLen;
       if (this.input.touchThrottle !== null) {
         // the lever is the basket: top stowed, bottom all the way down
@@ -621,11 +671,16 @@ export class RescueGame {
         this.a.throttle = this.input.touchThrottle;
         this.input.touchThrottle = null;
       }
-      this.a = stepAircraft(this.a, inp, dt, ground, plan.perf);
-      // the wind leans on a slow helicopter
-      const k = plane ? 0 : 1 - Math.min(1, this.a.speed / 30) * 0.6;
-      this.a.x += drift.x * k * dt;
-      this.a.z += drift.z * k * dt;
+      // the wind leans on a slow helicopter (inside the rotor model); an aeroplane flies through it
+      this.a = stepAircraft(this.a, inp, dt, ground, plan.perf, plane ? {} : { drift });
+      this.scrapeCool = Math.max(0, this.scrapeCool - dt);
+      if (this.a.contact && this.scrapeCool <= 0 && run.stage !== 'takeoff') {
+        run.scrapes++;
+        this.scrapeCool = 1.5;
+        this.shake = 0.45;
+        this.audio.clunk(true);
+        if (run.scrapes === 1 || run.scrapes % 3 === 0) this.crew(pick(['Whoa! Watch the ground!', 'Too low! Pull up!']), true);
+      }
       this.input.syncThrottle(this.a.throttle);
       this.winchCmd = 0;
     }
@@ -706,15 +761,17 @@ export class RescueGame {
         this.hud.banner('IN THE BASKET', 'Slide the lever up to reel them in ▲', 'spot', 2.2);
         this.crew(pick(CREW_LINES.boarded), true);
       } else if (e.type === 'secured') {
+        run.lifts++;
         this.audio.secured();
         this.burst.fire(this.winchPos.clone());
         const n = aboard(run) + delivered(run);
-        const word = this.def.look === 'climber' ? 'CLIMBER' : this.def.look === 'skier' ? 'SKIER' : 'HIKER';
+        const word = { climber: 'CLIMBER', skier: 'SKIER', hiker: 'HIKER', driver: 'CREWMAN' }[this.def.look];
         this.hud.banner(`${word} SECURED!`, `${n} of ${run.survivors.length} safe aboard`, 'good', 2.4);
         if (waiting(run) > 0 && !cabinFull(run)) this.crew(pick(CREW_LINES.secured));
         if (waiting(run) === 0 || cabinFull(run)) this.autoExit = 1.4;
         this.shake = 0.15;
       } else if (e.type === 'stepped-back') {
+        run.stepBacks++;
         this.crew(pick(CREW_LINES.steppedBack), true);
       } else if (e.type === 'bump') {
         run.bumps++;
@@ -736,16 +793,50 @@ export class RescueGame {
           this.flareIn = 0;
         }
         this.say('CREW', def.radio.signal);
+      } else if (e === 'cleared') {
+        const c = def.contacts?.[this.run.lastIdentified];
+        this.audio.resolved();
+        // said on the banner, not queued on the radio: it has to land now, while you are looking at it
+        this.hud.banner('CLEAR', c ? c.clear : '', '', 1.8);
+      } else if (e === 'gate') {
+        const esc = this.run.escape!;
+        const i = esc.result.lastIndexOf('passed');
+        this.gates.flash(i, true);
+        this.audio.ring();
+        if (!escapeDone(esc)) this.hud.toast(`GATE ${i + 1}/${esc.gates.length}`, 'good');
+      } else if (e === 'gate-missed') {
+        const esc = this.run.escape!;
+        const i = esc.result.lastIndexOf('missed');
+        this.gates.flash(i, false);
+        this.audio.ringMissed();
+        this.hud.toast(`MISSED ${i + 1}`, 'bad');
+      } else if (e === 'escape-done') {
+        const esc = this.run.escape!;
+        const n = esc.result.filter((r) => r === 'passed').length;
+        this.audio.phase('escape');
+        this.hud.banner(n === esc.gates.length ? 'CLEAN ESCAPE!' : 'WE\'RE OUT!', `${n} of ${esc.gates.length} gates · now the hospital`, 'good', 2.6);
+        this.say('CREW', n === esc.gates.length ? 'Beautiful line. Hospital next.' : "We're clear. Hospital next.");
+      } else if (e === 'off-route') {
+        this.audio.warn();
+        this.crew(pick(['Rough air out here! Back on the route!', "We're off the line! Get back to the gates!"]), true);
       } else if (e === 'spotted') {
         this.audio.spotted();
-        this.hud.banner('SPOTTED!', def.survivors === 1 ? 'Fly over and come into a hover' : `${def.survivors} people · fly over and hover`, 'spot', 2.6);
+        this.audio.phase('execute');
+        this.hud.banner(def.contacts ? 'FOUND THEM!' : 'SPOTTED!', def.survivors === 1 ? 'Fly over and come into a hover' : `${def.survivors} people · fly over and hover`, 'spot', 2.6);
         this.say('CREW', def.radio.spotted);
       } else if (e === 'cabin-full') {
         this.hud.banner('CABIN FULL', 'Take them to the hospital', 'spot', 2.4);
         this.crew(pick(CREW_LINES.cabinFull));
       } else if (e === 'all-aboard') {
-        this.hud.banner('ALL ABOARD!', 'Now get them to the hospital', 'good', 2.6);
-        this.say('CREW', def.radio.allAboard);
+        if (this.run.escape) {
+          this.audio.phase('escape');
+          this.hud.banner('ESCAPE!', `${this.run.escape.def.name} · fly the gates`, 'spot', 2.8);
+          this.say('CREW', def.radio.allAboard);
+          this.say('CREW', this.run.escape.def.reason);
+        } else {
+          this.hud.banner('ALL ABOARD!', 'Now get them to the hospital', 'good', 2.6);
+          this.say('CREW', def.radio.allAboard);
+        }
       } else if (e === 'low-fuel') {
         this.crew(pick(CREW_LINES.lowFuel));
       } else if (e === 'out-of-fuel') {
@@ -952,6 +1043,8 @@ export class RescueGame {
     this.a.y = L.from.y + (L.to.y - L.from.y) * (k < 1 ? Math.pow(k, 1.6) : 1);
     this.a.roll = damp(this.a.roll, 0, 3, dt);
     this.a.speed = 0;
+    this.a.vx = 0;
+    this.a.vz = 0;
     this.a.agl = this.a.y - this.bundle.heightField.sample(this.a.x, this.a.z);
     this.tilt = damp(this.tilt, 0, 3, dt);
     if (L.t > 2.4) this.power = Math.max(0.35, this.power - dt * 0.5);
@@ -1007,7 +1100,7 @@ export class RescueGame {
     this.hideCard();
     this.audio.winch(0);
     if (d.success) {
-      this.unlocked = recordRescue(this.progress, this.def.id, { stars: d.stars, time: d.time, rescued: d.rescued }, this.loadout);
+      this.unlocked = recordRescue(this.progress, this.def.id, { stars: d.stars, time: d.time, rescued: d.rescued, score: d.score.total }, this.loadout);
       saveProgress(this.progress, localStorage);
     } else this.unlocked = [];
     const h = this.el['db-headline'];
@@ -1015,7 +1108,14 @@ export class RescueGame {
     h.classList.toggle('fail', !d.success);
     this.el['db-mission'].textContent = `${this.def.icon} ${this.def.title.toUpperCase()} · ${this.def.place.toUpperCase()}`;
     this.el['db-stars'].innerHTML = [0, 1, 2].map((i) => `<i class="${i < d.stars ? 'on' : ''}" style="animation-delay:${0.25 + i * 0.25}s">★</i>`).join('');
-    this.el['db-lines'].innerHTML = d.lines.map((l, i) => `<li style="animation-delay:${0.1 + i * 0.15}s"><i>${l.icon}</i>${l.text}</li>`).join('');
+    // the breakdown: what each part of the operation earned, and the medal
+    const sc = d.score;
+    const best = this.progress.done[this.def.id]?.score ?? 0;
+    const medal = sc.medal ? `<span class="medal ${sc.medal}">${sc.medal.toUpperCase()}</span>` : '';
+    this.el['db-score'].innerHTML = `${medal}<b>${sc.total.toLocaleString('en-US')}</b>${d.success && best > sc.total ? `<small>BEST ${best.toLocaleString('en-US')}</small>` : d.success && best === sc.total ? '<small>BEST YET</small>' : ''}`;
+    this.el['db-lines'].innerHTML = sc.rows
+      .map((r, i) => `<li class="row${r.points >= r.max ? ' full' : ''}" style="animation-delay:${0.1 + i * 0.12}s"><b>${r.label}</b><span>${r.detail}</span><em>${r.points}<small>/${r.max}</small></em></li>`)
+      .join('');
     this.drawCompare();
     this.el['db-unlocks'].innerHTML = this.unlocked.length ? `<div class="u-head">UNLOCKED</div>${this.unlocked.map((u, i) => `<div class="u" style="animation-delay:${0.8 + i * 0.15}s">${u}</div>`).join('')}` : '';
     const next = nextMission(this.progress, this.def);
@@ -1108,13 +1208,15 @@ export class RescueGame {
     }
     // markers: the search area, then the people, then the hospital
     const onMountain = waiting(run) > 0;
-    this.tube.visible = !run.spotted && rescue && !def.fire;
-    const dSite = distToSite(run, this.a);
+    this.tube.visible = !run.spotted && rescue && !def.fire && !def.contacts;
+    const spot = hoistSpot(run, this.a);
+    const dSite = distToSpot(run, this.a);
+    this.ring.position.set(spot.x, hf.sample(spot.x, spot.z) + 0.35, spot.z);
     this.ring.visible = run.spotted && onMountain && dSite < 160;
     const pulse = 0.65 + 0.35 * Math.sin(this.t * 5);
     const ringMat = this.ring.material as THREE.MeshBasicMaterial;
     ringMat.opacity = pulse;
-    const over = this.hoisting && Math.hypot(this.basket.x - def.site.x, this.basket.z - def.site.z) <= this.plan.hoist.reach + RING_PAD;
+    const over = this.hoisting && Math.hypot(this.basket.x - spot.x, this.basket.z - spot.z) <= this.plan.hoist.reach + RING_PAD;
     ringMat.color.setHex(over ? 0x22e070 : 0xffffff);
     const pad = PADS[def.deliverTo];
     const toHospital = aboard(run) > 0 && (run.stage === 'return' || cabinFull(run) || waiting(run) === 0);
@@ -1127,13 +1229,15 @@ export class RescueGame {
     } else if (run.spotted && onMountain) {
       this.marker.set('person');
       this.marker.group.visible = !(this.hoisting && dSite < 50);
-      this.marker.update(def.site.x, hf.sample(def.site.x, def.site.z), def.site.z, cam, this.t, 16);
+      this.marker.update(spot.x, hf.sample(spot.x, spot.z), spot.z, cam, this.t, 16);
     } else if (!rescue) {
       // on a fire: a pin over the airfield when it is time to reload
       const reload = run.ops?.attack === 'retardant' && run.ops.load === 0;
       this.marker.set('h');
       this.marker.group.visible = reload;
       if (reload) this.marker.update(RELOAD.x, hf.sample(RELOAD.x, RELOAD.z), RELOAD.z, cam, this.t, 40);
+    } else if (!run.spotted && def.contacts) {
+      this.marker.group.visible = false;
     } else if (!run.spotted) {
       this.marker.set('search');
       this.marker.group.visible = run.stage !== 'takeoff' && Math.hypot(this.a.x - def.search.x, this.a.z - def.search.z) > def.search.r * 0.9;
@@ -1144,6 +1248,18 @@ export class RescueGame {
     const smoke = def.signal === 'smoke' ? new THREE.Vector3(def.site.x + 3, hf.sample(def.site.x + 3, def.site.z + 2), def.site.z + 2) : null;
     this.signals.update(dt, this.wind, smoke);
     this.burst.update(dt);
+    // recon contacts, escape gates, the route ribbon and the shadow
+    this.contacts.update(run.scan, run.spotted, hf, cam, this.t);
+    const esc = run.escape;
+    this.gates.update(!!esc && escaping(run) && this.mode === 'flight', esc?.next ?? 0, esc?.result ?? [], this.t, dt);
+    const o = objective(run, this.hoisting, false, this.a);
+    const tg = this.mode === 'flight' && !this.hoisting && run.stage !== 'takeoff' ? o.target : null;
+    const gate = tg?.kind === 'gate' && esc ? esc.gates[esc.next] : null;
+    const ty = gate ? gate.y : tg ? Math.max(hf.sample(tg.x, tg.z) + 30, Math.min(this.a.y, hf.sample(tg.x, tg.z) + 120)) : 0;
+    const col = tg?.kind === 'pad' ? 0x6dff9a : tg?.kind === 'gate' ? 0xffc35a : tg?.kind === 'fire' ? 0xff8a5a : 0x9fe4ff;
+    this.ribbon.update(this.a, this.a.yaw, tg ? { x: tg.x, y: ty, z: tg.z } : null, this.t, col);
+    const big = this.plan.kind === 'plane' ? (this.plan.style === 'tanker' ? 26 : 14) : this.plan.style === 'heavy' ? 16 : 12;
+    this.shadow.update(this.a.x, this.a.z, this.a.agl, hf.sample(this.a.x, this.a.z), this.a.yaw, big);
   }
 
   private updateHud(dt: number): void {
@@ -1154,6 +1270,11 @@ export class RescueGame {
     hud.tick(dt);
     const o = objective(run, this.hoisting, plan.beacon && dist2(this.a, def.site) < 1100, this.a);
     hud.objective(o.icon, o.title, o.detail);
+    // RECON · EXECUTE · ESCAPE (rescues; a fire tells its own story)
+    const solo = !!run.ops && def.survivors === 0;
+    hud.phase(solo || run.stage === 'complete' || run.stage === 'failed' ? null : run.stage === 'return' ? 'escape' : run.spotted ? 'execute' : 'recon');
+    if (run.scan && def.contacts && !run.spotted && run.scan.looking >= 0) hud.scan(run.scan.progress[run.scan.looking], def.contacts[run.scan.looking].label);
+    else hud.scan(null);
     if (o.target && !(this.hoisting && o.target.kind === 'site')) {
       const dx = o.target.x - this.a.x;
       const dz = o.target.z - this.a.z;
@@ -1208,7 +1329,7 @@ export class RescueGame {
     hud.readout(this.hoisting ? `WIND ${Math.round(this.wind.speed * 3.6)} km/h` : `${Math.round(this.a.agl)} m · ${Math.round(this.a.speed * 3.6)} km/h`);
     // warnings
     const fuelLow = run.fuel < run.fuelMax * 0.2;
-    hud.warn(this.a.terrainWarning && !this.hoisting && this.a.speed > 15 ? 'TERRAIN · CLIMB' : fuelLow ? 'LOW FUEL' : '');
+    hud.warn(run.escape?.off && escaping(run) ? 'OFF ROUTE · ROUGH AIR' : this.a.terrainWarning && !this.hoisting && this.a.speed > 15 ? 'TERRAIN · CLIMB' : fuelLow ? 'LOW FUEL' : '');
     // the hint: always says what to do next, in a few words
     this.hintT += dt;
     hud.hint(this.hint(touch, where));
@@ -1220,7 +1341,7 @@ export class RescueGame {
       yaw: this.a.yaw,
       target: o.target ? { x: o.target.x, z: o.target.z, kind: o.target.kind } : null,
       search: run.spotted ? null : def.search,
-      site: run.spotted && waiting(run) > 0 ? def.site : null,
+      site: run.spotted && waiting(run) > 0 ? hoistSpot(run, this.a) : null,
       pads: [
         { x: PADS.base.x, z: PADS.base.z, hospital: false },
         { x: PADS.hospital.x, z: PADS.hospital.z, hospital: true },
@@ -1248,7 +1369,7 @@ export class RescueGame {
     if (this.hoisting)
       frame.hoist = {
         reach: plan.hoist.reach,
-        site: def.site,
+        site: hoistSpot(run, this.a),
         people: run.survivors.map((s) => ({ x: s.x, z: s.z, state: s.state })),
         basket: { x: this.basket.x, z: this.basket.z, grounded: this.basket.grounded, len: this.basket.len },
         winch: { x: this.winchPos.x, z: this.winchPos.z },
@@ -1278,12 +1399,18 @@ export class RescueGame {
       const h = this.fireHint(touch, where);
       if (h !== null) return h;
     }
+    if (run.stage === 'search' && this.def.contacts) return run.scan && run.scan.looking >= 0 ? 'Hold the nose on it…' : 'Point the nose at each ? to check it';
     if (run.stage === 'search') return run.signalled ? `Look for the ${this.def.signal === 'smoke' ? 'smoke' : 'red flare'}` : 'Head for the blue search area';
     if (run.stage === 'rescue') {
-      const d = distToSite(run, where);
+      const d = distToSpot(run, where);
       if (d < 140 && where.speed > 22) return 'Slow down: lever DOWN';
       if (d < 140) return 'Fly over them and press HOVER & HOIST';
       return 'Follow the orange pin';
+    }
+    if (escaping(run)) {
+      const esc = run.escape!;
+      if (esc.off) return 'Back to the gates: the air is rough out here';
+      return esc.next === 0 ? 'Fly through the glowing gate' : 'Next gate: follow the chevrons';
     }
     if (run.stage === 'return') {
       const pad = PADS[this.def.deliverTo];
@@ -1336,9 +1463,10 @@ export class RescueGame {
   private updateCamera(dt: number): void {
     const hf = this.bundle.heightField;
     // the hoist view frames the people and the basket coming down to them
-    const gy = hf.sample(this.def.site.x, this.def.site.z);
-    const sep = Math.hypot(this.basket.x - this.def.site.x, this.basket.z - this.def.site.z);
-    const look = this.hoisting ? new THREE.Vector3(this.basket.x * 0.5 + this.def.site.x * 0.5, gy + 4 + Math.min(10, Math.max(0, this.basket.y - gy) * 0.25), this.basket.z * 0.5 + this.def.site.z * 0.5) : undefined;
+    const spot = hoistSpot(this.run, this.a);
+    const gy = hf.sample(spot.x, spot.z);
+    const sep = Math.hypot(this.basket.x - spot.x, this.basket.z - spot.z);
+    const look = this.hoisting ? new THREE.Vector3(this.basket.x * 0.5 + spot.x * 0.5, gy + 4 + Math.min(10, Math.max(0, this.basket.y - gy) * 0.25), this.basket.z * 0.5 + spot.z * 0.5) : undefined;
     const dist = this.plan.style === 'tanker' ? 2.1 : this.plan.style === 'spotter' ? 1.35 : 1;
     const lift = this.run.ops && this.def.survivors === 0 ? 5 : 0;
     this.chase.update(this.bundle.camera, this.a, dt, (x, z) => hf.sample(x, z), { hoist: this.hoisting ? 1 : 0, look, pull: Math.min(40, sep * 0.8), dist, lift, orbit: this.overview ?? undefined });
@@ -1400,8 +1528,13 @@ export class RescueGame {
         this.a.z = z;
         this.a.y = this.bundle.heightField.sample(x, z) + agl;
         this.a.speed = 0;
+        this.a.vx = 0;
+        this.a.vz = 0;
         this.a.throttle = 0;
         if (headingDeg !== undefined) this.a.yaw = wrapAngle((-headingDeg * Math.PI) / 180);
+        this.a.vx = 0;
+        this.a.vz = 0;
+        this.hv = { vx: 0, vz: 0 };
         this.chase.reset();
       },
       getOps: () => this.run.ops,
@@ -1426,6 +1559,8 @@ export class RescueGame {
         this.a.yaw = yaw;
         if (this.plan.kind !== 'plane') {
           this.a.speed = 0;
+          this.a.vx = 0;
+          this.a.vz = 0;
           this.a.throttle = 0;
         }
         this.chase.reset();
@@ -1454,6 +1589,10 @@ export class RescueGame {
         this.a.y = this.bundle.heightField.sample(d.site.x, d.site.z) + 24;
         this.a.yaw = 0;
         this.a.speed = 0;
+        this.a.vx = 0;
+        this.a.vz = 0;
+        this.a.vx = 0;
+        this.a.vz = 0;
         this.a.throttle = 0;
         this.chase.reset();
       },

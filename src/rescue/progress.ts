@@ -15,6 +15,8 @@ export interface MissionRecord {
   /** Best time (s). */
   best: number;
   rescues: number;
+  /** Best score (missing on saves from before scores). */
+  score?: number;
 }
 
 export interface Progress {
@@ -45,10 +47,11 @@ export function opensWith(id: MissionId): { missions: MissionDef[]; vehicles: Ve
  * Record a completed rescue. Returns the names of what it opened for the
  * first time (empty on a replay).
  */
-export function recordRescue(p: Progress, id: MissionId, r: { stars: number; time: number; rescued: number }, loadout: Loadout): string[] {
+export function recordRescue(p: Progress, id: MissionId, r: { stars: number; time: number; rescued: number; score?: number }, loadout: Loadout): string[] {
   const first = !p.done[id];
   const prev = p.done[id];
-  p.done[id] = { stars: Math.max(prev?.stars ?? 0, r.stars), best: Math.min(prev?.best ?? Infinity, r.time), rescues: (prev?.rescues ?? 0) + 1 };
+  const score = Math.max(prev?.score ?? 0, r.score ?? 0);
+  p.done[id] = { stars: Math.max(prev?.stars ?? 0, r.stars), best: Math.min(prev?.best ?? Infinity, r.time), rescues: (prev?.rescues ?? 0) + 1, ...(score > 0 ? { score } : {}) };
   p.last[id] = { ...loadout, equipment: [...loadout.equipment] };
   p.saved += r.rescued;
   if (!first) return [];

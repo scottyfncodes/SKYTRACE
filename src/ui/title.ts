@@ -7,6 +7,10 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 export function renderTitle(root: HTMLElement, p: Progress, onPick: (id: MissionId) => void): void {
   const list = root.querySelector<HTMLElement>('#call-list')!;
   const next = nextMission(p);
+  // one tap into the next call
+  const quick = root.querySelector<HTMLElement>('#btn-quick')!;
+  root.querySelector<HTMLElement>('#quick-name')!.textContent = `▶ ${next.icon} ${next.title.toUpperCase()}`;
+  quick.onclick = () => onPick(next.id);
   const rows: string[] = [];
   const ready = MISSIONS.filter((x) => x.ready);
   const families = [
@@ -19,7 +23,7 @@ export function renderTitle(root: HTMLElement, p: Progress, onPick: (id: Mission
       const open = isAvailable(p, m);
       const rec = p.done[m.id];
       const lockedBy = m.unlockedBy ? MISSION_BY_ID[m.unlockedBy] : null;
-      const badge = rec ? `<span class="c-stars">${'★'.repeat(rec.stars)}${'☆'.repeat(3 - rec.stars)}</span>` : open ? '<span class="c-badge">NEW</span>' : '';
+      const badge = rec ? `<span class="c-stars">${'★'.repeat(rec.stars)}${'☆'.repeat(3 - rec.stars)}${rec.score ? `<em>${rec.score.toLocaleString('en-US')}</em>` : ''}</span>` : open ? '<span class="c-badge">NEW</span>' : '';
       const sit = open ? esc(m.situation) : `🔒 Complete ${esc(lockedBy?.title ?? '')} to unlock`;
       const kind = m.fire ? `<span class="c-kind">${esc(m.fire.kind.toUpperCase())}</span>` : '';
       rows.push(
