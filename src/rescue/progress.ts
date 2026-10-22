@@ -56,7 +56,7 @@ export function recordRescue(p: Progress, id: MissionId, r: { stars: number; tim
   p.saved += r.rescued;
   if (!first) return [];
   const o = opensWith(id);
-  return [...o.missions.map((m) => `${m.icon} ${m.title}`), ...o.vehicles.map((v) => `${v.icon} ${v.name}`), ...o.equipment.map((e) => `${e.icon} ${e.name}`), ...o.crew.map((c) => `${c.icon} ${c.role}`)];
+  return [...o.missions.map((m) => m.title), ...o.vehicles.map((v) => v.name), ...o.equipment.map((e) => e.name), ...o.crew.map((c) => c.role)];
 }
 
 /** The next call to fly: the first open one not yet done, else the first. `after`: prefer the same kind of call (fire after fire). */
