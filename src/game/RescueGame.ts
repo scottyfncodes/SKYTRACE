@@ -475,7 +475,7 @@ export class RescueGame {
     this.radio.clear();
     this.radio.say('DISPATCH', def.radio.launch);
     const callsign = plane ? (this.plan.attack === 'lead' ? 'LEAD ONE' : 'TANKER ONE') : def.fire && !rescue ? 'FIRE ONE' : 'RESCUE ONE';
-    this.showCard(callsign, plane ? 'AIRBORNE' : 'LIFTING OFF', `${def.icon} ${def.title}`, '', 2.4);
+    this.showCard(callsign, plane ? 'AIRBORNE' : 'LIFTING OFF', def.title, '', 2.4);
     this.show('flight');
   }
 
@@ -486,7 +486,7 @@ export class RescueGame {
     if (next === 'paused') {
       this.input.reset();
       const o = objective(this.run, this.hoisting, this.plan.beacon);
-      this.el['pause-objective'].textContent = `${o.icon} ${o.title}${o.detail ? ` · ${o.detail}` : ''}`;
+      this.el['pause-objective'].textContent = `${o.title}${o.detail ? ` · ${o.detail}` : ''}`;
       this.audio.winch(0);
     }
     this.show(next);
@@ -1106,7 +1106,7 @@ export class RescueGame {
     const h = this.el['db-headline'];
     h.textContent = d.headline;
     h.classList.toggle('fail', !d.success);
-    this.el['db-mission'].textContent = `${this.def.icon} ${this.def.title.toUpperCase()} · ${this.def.place.toUpperCase()}`;
+    this.el['db-mission'].textContent = `${this.def.title.toUpperCase()} · ${this.def.place.toUpperCase()}`;
     this.el['db-stars'].innerHTML = [0, 1, 2].map((i) => `<i class="${i < d.stars ? 'on' : ''}" style="animation-delay:${0.25 + i * 0.25}s">★</i>`).join('');
     // the breakdown: what each part of the operation earned, and the medal
     const sc = d.score;
@@ -1290,7 +1290,7 @@ export class RescueGame {
     if (ops) {
       const th = nearestThreat(ops);
       hud.fire({
-        name: `${th.icon} ${th.name.toUpperCase()}`,
+        name: th.name.toUpperCase(),
         threat: ops.threat,
         word: THREAT_WORDS[ops.threatLevel],
         load: ops.load,
@@ -1425,12 +1425,12 @@ export class RescueGame {
   private dropState(): DropState {
     const ops = this.run.ops!;
     if (!ops.attack || this.run.stage === 'takeoff') return { kind: 'hidden' };
-    if (ops.dropping) return { kind: 'wait', label: '🟥 DROPPING… HOLD STEADY' };
-    if (ops.marking) return { kind: 'wait', label: '📍 MARKING… FLY THE LINE' };
-    if (ops.fill > 0) return { kind: 'wait', label: ops.attack === 'water' ? `💧 FILLING ${Math.round(ops.fill * 100)}%` : `⛽ RELOADING ${Math.round(ops.fill * 100)}%` };
+    if (ops.dropping) return { kind: 'wait', label: 'DROPPING… HOLD STEADY' };
+    if (ops.marking) return { kind: 'wait', label: 'MARKING… FLY THE LINE' };
+    if (ops.fill > 0) return { kind: 'wait', label: ops.attack === 'water' ? `FILLING ${Math.round(ops.fill * 100)}%` : `RELOADING ${Math.round(ops.fill * 100)}%` };
     const w = this.where();
     const act = canFireAction(ops, w, this.hoisting);
-    if (act.ok) return { kind: 'ready', label: ops.attack === 'water' ? '💧 DROP WATER' : ops.attack === 'lead' ? '📍 MARK LINE' : '🟥 DROP RETARDANT' };
+    if (act.ok) return { kind: 'ready', label: ops.attack === 'water' ? 'DROP WATER' : ops.attack === 'lead' ? 'MARK LINE' : 'DROP RETARDANT' };
     const near = inArea(ops.fire, w.x, w.z, 120);
     if (act.why === 'TOO HIGH') return { kind: 'wait', label: 'TOO HIGH · DESCEND' };
     if (act.why && near) return { kind: 'wait', label: act.why };

@@ -79,7 +79,7 @@ export class Hud {
   private dropKey = '';
 
   constructor(root: HTMLElement) {
-    for (const id of ['objective', 'obj-icon', 'obj-title', 'obj-detail', 'nav', 'nav-arrow', 'nav-dist', 'nav-label', 'people', 'fuel-fill', 'radio', 'radio-who', 'radio-text', 'banner', 'banner-text', 'banner-sub', 'warn', 'hint', 'readout', 'throttle', 'thr-fill', 'thr-handle', 'thr-basket', 'thr-label', 'thr-hint', 'btn-action', 'stick-label', 'firestat', 'fs-name', 'fs-word', 'fs-fill', 'fs-load', 'fs-hold', 'btn-drop', 'phases', 'toast', 'scan', 'scan-label', 'scan-fill']) {
+    for (const id of ['objective', 'obj-title', 'obj-detail', 'nav', 'nav-arrow', 'nav-dist', 'nav-label', 'people', 'fuel-fill', 'radio', 'radio-who', 'radio-text', 'banner', 'banner-text', 'banner-sub', 'warn', 'hint', 'readout', 'throttle', 'thr-fill', 'thr-handle', 'thr-basket', 'thr-label', 'thr-hint', 'btn-action', 'stick-label', 'firestat', 'fs-name', 'fs-word', 'fs-fill', 'fs-load', 'fs-hold', 'btn-drop', 'phases', 'toast', 'scan', 'scan-label', 'scan-fill']) {
       const e = root.querySelector<HTMLElement>(`#${id}`);
       if (!e) throw new Error(`missing #${id}`);
       this.el[id] = e;
@@ -102,7 +102,6 @@ export class Hud {
       this.el['objective'].classList.add('obj-pop');
     }
     this.last['obj'] = key;
-    this.text('obj-icon', icon);
     this.text('obj-title', title);
     this.text('obj-detail', detail);
   }
@@ -299,7 +298,7 @@ export class Hud {
     b.classList.toggle('hidden', a.kind === 'hidden');
     b.classList.toggle('fly', a.kind === 'fly');
     b.classList.toggle('wait', a.kind === 'wait');
-    b.textContent = a.kind === 'hover' ? '🛟 HOVER & HOIST' : a.kind === 'fly' || a.kind === 'wait' ? a.label : '';
+    b.textContent = a.kind === 'hover' ? 'HOVER & HOIST' : a.kind === 'fly' || a.kind === 'wait' ? a.label : '';
   }
 
   // ---------------------------------------------------------------- minimap

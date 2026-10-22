@@ -103,10 +103,9 @@ export class PreflightView {
   /** Show a mission's situation (once per mission). */
   open(def: MissionDef): void {
     this.def = def;
-    this.q('pf-icon').textContent = def.icon;
     this.q('pf-title').textContent = def.title;
     this.q('pf-situation').textContent = def.situation;
-    this.q('pf-place').textContent = `📍 ${def.place}`;
+    this.q('pf-place').textContent = def.place;
     const windy = def.wind.speed >= 9 ? 'c-bad' : def.wind.speed >= 5 ? 'c-warn' : '';
     const vis = def.visibility === 'poor' ? 'c-bad' : def.visibility === 'fair' ? 'c-warn' : '';
     this.root.classList.toggle('fire', !!def.fire);
@@ -115,22 +114,22 @@ export class PreflightView {
     const F = def.fire;
     const fireConds = F && this.fire
       ? [
-          { i: '🔥', t: `${F.kind} · ${F.ignitions.length > 1 ? `${F.ignitions.length} fires` : def.terrain}`, c: F.spread * def.wind.speed > 7 ? 'c-bad' : 'c-warn' },
-          { i: '💨', t: `${windWord(def.wind.speed)}${def.wind.speed >= 2 ? ` · pushing ${compassWord(def.wind.from + 180)}` : ''}`, c: windy },
-          { i: F.threats[0].icon, t: this.fire.first !== null ? `Reaches ${F.threats.length > 1 ? 'a town' : F.threats[0].name} in ~${clock(this.fire.first)}` : `${F.threats[0].name} in danger`, c: this.fire.first !== null && this.fire.first < 200 ? 'c-bad' : 'c-warn' },
-          def.survivors > 0 ? { i: '👥', t: `${def.survivors} people trapped`, c: 'c-bad' } : { i: '⏱', t: `Hold it ${clock(F.hold)} for crews`, c: '' },
+          { t: `${F.kind} · ${F.ignitions.length > 1 ? `${F.ignitions.length} fires` : def.terrain}`, c: F.spread * def.wind.speed > 7 ? 'c-bad' : 'c-warn' },
+          { t: `${windWord(def.wind.speed)}${def.wind.speed >= 2 ? ` · pushing ${compassWord(def.wind.from + 180)}` : ''}`, c: windy },
+          { t: this.fire.first !== null ? `Reaches ${F.threats.length > 1 ? 'a town' : F.threats[0].name} in ~${clock(this.fire.first)}` : `${F.threats[0].name} in danger`, c: this.fire.first !== null && this.fire.first < 200 ? 'c-bad' : 'c-warn' },
+          def.survivors > 0 ? { t: `${def.survivors} people trapped`, c: 'c-bad' } : { t: `Hold it ${clock(F.hold)} for crews`, c: '' },
         ]
       : null;
     const conds = fireConds ?? [
-      { i: def.type === 'forest' ? '🌲' : '⛰️', t: def.type === 'forest' ? def.terrain : `${def.terrain} · ${def.elevation} m`, c: def.elevation > 250 ? 'c-warn' : '' },
-      { i: '💨', t: `${windWord(def.wind.speed)}${def.wind.speed >= 2 ? ` · ${compassWord(def.wind.from)}` : ''}`, c: windy },
-      { i: '👥', t: def.survivors === 1 ? '1 person' : `${def.survivors} people`, c: def.survivors > 2 ? 'c-warn' : '' },
-      { i: def.visibility === 'poor' ? '☁️' : '👁️', t: VISIBILITY_WORD[def.visibility], c: vis },
+      { t: def.type === 'forest' ? def.terrain : `${def.terrain} · ${def.elevation} m`, c: def.elevation > 250 ? 'c-warn' : '' },
+      { t: `${windWord(def.wind.speed)}${def.wind.speed >= 2 ? ` · ${compassWord(def.wind.from)}` : ''}`, c: windy },
+      { t: def.survivors === 1 ? '1 person' : `${def.survivors} people`, c: def.survivors > 2 ? 'c-warn' : '' },
+      { t: VISIBILITY_WORD[def.visibility], c: vis },
     ];
-    this.q('pf-conditions').innerHTML = conds.map((c) => `<div class="cond ${c.c}"><i>${c.i}</i>${esc(c.t)}</div>`).join('');
+    this.q('pf-conditions').innerHTML = conds.map((c) => `<div class="cond ${c.c}">${esc(c.t)}</div>`).join('');
     const r = def.recommended;
-    const kit = r.equipment.map((e) => `${EQUIPMENT_BY_ID[e].icon} ${EQUIPMENT_BY_ID[e].name}`).join(' · ');
-    this.q('pf-recommended').innerHTML = `<b>RECOMMENDED</b> ${VEHICLE_BY_ID[r.vehicle].icon} ${esc(VEHICLE_BY_ID[r.vehicle].name)}${kit ? ` · ${esc(kit)}` : ''} · ${CREW_BY_ID[r.crew].icon} ${esc(CREW_BY_ID[r.crew].role)}`;
+    const kit = r.equipment.map((e) => EQUIPMENT_BY_ID[e].name).join(' · ');
+    this.q('pf-recommended').innerHTML = `<b>RECOMMENDED</b> ${esc(VEHICLE_BY_ID[r.vehicle].name)}${kit ? ` · ${esc(kit)}` : ''} · ${esc(CREW_BY_ID[r.crew].role)}`;
     this.root.querySelector('.pf-left')!.scrollTop = 0;
     this.root.querySelector('.pf-right')!.scrollTop = 0;
   }
@@ -140,32 +139,32 @@ export class PreflightView {
     const def = this.def;
     if (!def) return;
     const r = def.recommended;
-    const lockLine = (by?: string) => (by ? `🔒 Complete ${esc(MISSION_BY_ID[by as keyof typeof MISSION_BY_ID].title)}` : '🔒 Coming soon');
+    const lockLine = (by?: string) => (by ? `Complete ${esc(MISSION_BY_ID[by as keyof typeof MISSION_BY_ID].title)}` : 'Locked');
     // on a fire call the fire fleet comes first
-    const fleet = def.fire ? [...VEHICLES].sort((a, b) => (b.caps.includes('fire') ? 1 : 0) - (a.caps.includes('fire') ? 1 : 0)) : VEHICLES;
+    const fleet = def.fire ? VEHICLES.filter((v) => v.ready).sort((a, b) => (b.caps.includes('fire') ? 1 : 0) - (a.caps.includes('fire') ? 1 : 0)) : VEHICLES.filter((v) => v.ready);
     this.q('pf-vehicles').innerHTML = fleet.map((v) => {
       const open = isAvailable(p, v);
       const tags = def.fire && !v.caps.includes('fire') ? ['Needs the bucket', ...v.strengths.slice(0, 1)] : v.capacity > 0 && !def.fire ? [`Seats ${v.capacity}`, ...v.strengths.slice(0, 2)] : v.strengths.slice(0, 3);
-      return `<button type="button" class="opt${l.vehicle === v.id ? ' on' : ''}${open ? '' : ' locked'}" data-id="${v.id}">${open && r.vehicle === v.id ? '<span class="o-rec">★ BEST FIT</span>' : ''}<span class="o-top"><span class="o-icon">${v.icon}</span><span class="o-name">${esc(v.name)}</span></span><span class="o-line">${open ? esc(v.tagline) : lockLine(v.ready ? v.unlockedBy : undefined)}</span>${open ? `<span class="o-tags">${tags.map((t) => `<span>${esc(t)}</span>`).join('')}</span>` : ''}</button>`;
+      return `<button type="button" class="opt${l.vehicle === v.id ? ' on' : ''}${open ? '' : ' locked'}" data-id="${v.id}">${open && r.vehicle === v.id ? '<span class="o-rec">★ BEST FIT</span>' : ''}<span class="o-top"><span class="o-name">${esc(v.name)}</span></span><span class="o-line">${open ? esc(v.tagline) : lockLine(v.unlockedBy)}</span>${open ? `<span class="o-tags">${tags.map((t) => `<span>${esc(t)}</span>`).join('')}</span>` : ''}</button>`;
     }).join('');
     this.q('pf-crew').innerHTML = CREW.map((c) => {
       const open = isOpen(p, c);
-      return `<button type="button" class="opt${l.crew === c.id ? ' on' : ''}${open ? '' : ' locked'}" data-id="${c.id}">${open && r.crew === c.id ? '<span class="o-rec">★ BEST FIT</span>' : ''}<span class="o-top"><span class="o-icon">${c.icon}</span><span class="o-name">${esc(c.role)}<br><small>${esc(c.name)}</small></span></span><span class="o-line">${open ? esc(def.fire ? c.firePerk : c.perk) : lockLine(c.unlockedBy)}</span></button>`;
+      return `<button type="button" class="opt${l.crew === c.id ? ' on' : ''}${open ? '' : ' locked'}" data-id="${c.id}">${open && r.crew === c.id ? '<span class="o-rec">★ BEST FIT</span>' : ''}<span class="o-top"><span class="o-name">${esc(c.role)}<br><small>${esc(c.name)}</small></span></span><span class="o-line">${open ? esc(def.fire ? c.firePerk : c.perk) : lockLine(c.unlockedBy)}</span></button>`;
     }).join('');
     const veh = VEHICLE_BY_ID[l.vehicle];
     const slots = veh.slots;
-    this.q('pf-slots').textContent = slots === 0 ? `· built in: ${veh.attack === 'retardant' ? '🟥 retardant tank' : veh.attack === 'lead' ? '📻 Tanker 42 on call' : 'nothing to carry'}` : veh.attack === 'water' ? `· 💧 bucket built in · ${l.equipment.length} of ${slots} slots` : `· ${l.equipment.length} of ${slots} slots`;
+    this.q('pf-slots').textContent = slots === 0 ? `· built in: ${veh.attack === 'retardant' ? 'retardant tank' : veh.attack === 'lead' ? 'Tanker 42 on call' : 'nothing to carry'}` : veh.attack === 'water' ? `· bucket built in · ${l.equipment.length} of ${slots} slots` : `· ${l.equipment.length} of ${slots} slots`;
     // on a fire: the bucket (and the basket if people are trapped); nothing at all when the aircraft carries no kit
-    const shown = slots === 0 ? [] : def.fire ? EQUIPMENT.filter((e) => (e.id === 'bucket' && !veh.attack) || (e.id === 'basket' && def.survivors > 0) || (e.id === 'thermal' && def.survivors > 0)) : EQUIPMENT.filter((e) => e.ready || e.id === 'swimmer' || e.id === 'bucket');
+    const shown = slots === 0 ? [] : def.fire ? EQUIPMENT.filter((e) => (e.id === 'bucket' && !veh.attack) || (e.id === 'basket' && def.survivors > 0) || (e.id === 'thermal' && def.survivors > 0)) : EQUIPMENT.filter((e) => e.ready);
     this.q('pf-equip').innerHTML = shown
       .map((e) => {
         const open = isAvailable(p, e);
-        return `<button type="button" class="opt${l.equipment.includes(e.id) ? ' on' : ''}${open ? '' : ' locked'}" data-id="${e.id}">${open && r.equipment.includes(e.id) ? '<span class="o-rec">★ BEST FIT</span>' : ''}<span class="o-top"><span class="o-icon">${e.icon}</span><span class="o-name">${esc(e.name)}</span></span><span class="o-line">${open ? esc(e.does) : lockLine(e.ready ? e.unlockedBy : undefined)}</span></button>`;
+        return `<button type="button" class="opt${l.equipment.includes(e.id) ? ' on' : ''}${open ? '' : ' locked'}" data-id="${e.id}">${open && r.equipment.includes(e.id) ? '<span class="o-rec">★ BEST FIT</span>' : ''}<span class="o-top"><span class="o-name">${esc(e.name)}</span></span><span class="o-line">${open ? esc(e.does) : lockLine(e.unlockedBy)}</span></button>`;
       })
       .join('');
     const notes = checkLoadout(def, l);
     const ok = canLaunch(def, l);
-    this.q('pf-notes').innerHTML = notes.length ? notes.map((n) => `<span class="n${n.blocking ? ' block' : n.info ? ' info' : ''}">${n.blocking ? '⛔' : n.info ? '✅' : '⚠️'} ${esc(n.text)}</span>`).join('') : '<span class="n ok">✅ Ready for the job</span>';
+    this.q('pf-notes').innerHTML = notes.length ? notes.map((n) => `<span class="n${n.blocking ? ' block' : n.info ? ' info' : ''}">${esc(n.text)}</span>`).join('') : '<span class="n ok">Ready for the job</span>';
     (this.q('btn-launch') as HTMLButtonElement).disabled = !ok;
   }
 
