@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mat } from '../world/props';
 import type { AircraftState } from './aircraft';
 
-export type PlaneStyle = 'tanker' | 'spotter';
+export type PlaneStyle = 'tanker' | 'spotter' | 'search';
 
 const blk = (w: number, h: number, d: number, m: THREE.Material) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
 const cylZ = (rt: number, rb: number, len: number, seg: number, m: THREE.Material) => {
@@ -14,8 +14,9 @@ const cylZ = (rt: number, rb: number, len: number, seg: number, m: THREE.Materia
 /**
  * The fixed-wing fire fleet, in the same chunky style as the helicopters:
  * a big red-and-yellow Fire Tanker (high wing, two engines, a belly tank with
- * drop doors) and a small yellow Fire Spotter. Props spin, the strobes
- * blink, and the belly point is exposed for the drop.
+ * drop doors), a small yellow Fire Spotter, and the white-and-orange Search
+ * Aircraft (the spotter's airframe with a raft hatch). Props spin, the
+ * strobes blink, and the belly point is exposed for the drop.
  */
 export class PlaneMesh {
   readonly group = new THREE.Group();
@@ -37,6 +38,7 @@ export class PlaneMesh {
     for (const c of [...this.body.children]) this.body.remove(c);
     this.props = [];
     this.strobe = [];
+    this.body.scale.setScalar(1);
     const add = (...o: THREE.Object3D[]) => this.body.add(...o);
     const dark = mat(0x2a2e33);
     const grey = mat(0x9aa3ab);
@@ -118,9 +120,10 @@ export class PlaneMesh {
       light(0, 5.3, 13.3, 0xffffff, true);
       light(0, -1.6, -3, 0xff4433, true);
     } else {
-      const yellow = mat(0xffd23f);
+      const search = style === 'search';
+      const yellow = mat(search ? 0xff6a1a : 0xffd23f);
       const white = mat(0xf6f4ef);
-      const red = mat(0xe23d28);
+      const red = mat(search ? 0x1f5fae : 0xe23d28);
       const hull = blk(1.3, 1.3, 5.2, white);
       hull.position.set(0, 0.2, 0);
       const cowl = blk(1.2, 1.1, 1.4, yellow);
@@ -150,6 +153,13 @@ export class PlaneMesh {
         light(s * 5.8, 1.55, -0.6, s < 0 ? 0xff3b30 : 0x34e05a);
       }
       prop(0, 0.15, -3.9, 1.0, 2);
+      if (search) {
+        // the raft hatch under the cabin
+        const hatch = blk(0.9, 0.1, 1.2, dark);
+        hatch.position.set(0, -0.48, 0.9);
+        add(hatch);
+        this.body.scale.setScalar(1.15);
+      }
       this.belly.position.set(0, -0.5, 2.6);
       light(0, 2.3, 5.8, 0xffffff, true);
     }

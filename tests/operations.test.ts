@@ -14,7 +14,8 @@ const ground = (x: number, z: number) => hf.sample(x, z);
 const DT = 1 / 30;
 
 describe('the escape route data', () => {
-  for (const m of MISSIONS.filter((x) => x.ready && x.escape)) {
+  // (the river run's arches sit on the water: tests/water.test.ts checks those)
+  for (const m of MISSIONS.filter((x) => x.ready && x.escape && !x.water)) {
     it(`${m.id}: every gate stands clear of the ground, and the line between them can be flown`, () => {
       const e = newEscape(m.escape!, ground);
       expect(e.gates.length).toBeGreaterThanOrEqual(5);

@@ -38,7 +38,7 @@ export interface VehicleDef {
   /** Fuel relative to the mission's standard allowance. */
   fuel: number;
   /** Which model to draw. */
-  style: 'rescue' | 'heavy' | 'fire' | 'tanker' | 'spotter' | null;
+  style: 'rescue' | 'heavy' | 'fire' | 'tanker' | 'spotter' | 'search' | null;
   /** How it fights fire (built in). */
   attack?: Attack;
   /** Built and flyable in this version. */
@@ -167,16 +167,16 @@ export const VEHICLES: readonly VehicleDef[] = [
     name: 'Search Aircraft',
     icon: '✈️',
     kind: 'plane',
-    tagline: 'Fast and far. Finds them, marks them.',
-    strengths: ['Fast', 'Long range', 'Finds beacons'],
+    tagline: 'Fast and low. Finds them, drops a raft.',
+    strengths: ['Fast', 'Low passes', 'Raft drops'],
     capacity: 0,
     slots: 2,
     caps: ['search'],
-    perf: null,
+    perf: { minSpeed: 24, maxSpeed: 84, maxRoll: 1.0, maxPitch: 0.55, rollRate: 2.6, pitchRate: 1.8, turnGain: 1.1, accel: 0.95, ceiling: 820, floorAgl: 12, bounds: 1180 },
     windFactor: 0,
-    fuel: 2,
-    style: null,
-    ready: false,
+    fuel: 1.6,
+    style: 'search',
+    ready: true,
   },
   {
     id: 'rescue-boat',
@@ -184,7 +184,7 @@ export const VEHICLES: readonly VehicleDef[] = [
     icon: '🚤',
     kind: 'boat',
     tagline: 'Lakes, rivers and floods.',
-    strengths: ['Water rescue', 'Tows boats', 'Carries 6'],
+    strengths: ['Fast', 'Slides the bends', 'Carries 6'],
     capacity: 6,
     slots: 2,
     caps: ['water'],
@@ -204,7 +204,7 @@ export const EQUIPMENT: readonly EquipmentDef[] = [
   { id: 'swimmer', name: 'Rescue Swimmer', icon: '🏊', does: 'Goes into the water to bring people out.', caps: ['water'], ready: false },
   { id: 'bucket', name: 'Water Bucket', icon: '🪣', does: 'Scoop from the river, drop on the flames.', caps: ['fire'], attack: 'water', ready: true },
   { id: 'towline', name: 'Tow Line', icon: '🪢', does: 'Pull a stranded boat to safety.', caps: ['water'], ready: false },
-  { id: 'raft', name: 'Rescue Raft', icon: '🛶', does: 'Drop a raft to people in the water.', caps: ['water'], ready: false },
+  { id: 'raft', name: 'Rescue Raft', icon: '🛶', does: 'Drop a raft to people in the water. Two aboard.', caps: ['water'], ready: true },
 ];
 
 export const CREW: readonly CrewDef[] = [

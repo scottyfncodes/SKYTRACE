@@ -102,6 +102,10 @@ export function checkLoadout(def: MissionDef, l: Loadout): Note[] {
     if (a && !notes.some((n) => n.blocking)) notes.push({ text: ATTACK_PLAN[a], blocking: false, info: true });
     return notes;
   }
+  if (def.water) {
+    if (!notes.some((n) => n.blocking)) notes.push({ text: `Plan: find them, drop a raft on a low pass, then take the Rescue Boat from ${def.water.station.name}.`, blocking: false, info: true });
+    return notes;
+  }
   if (def.wind.speed >= 9 && v.windFactor > 0.7) notes.push({ text: 'Strong gusts: a light helicopter will be pushed around.', blocking: false });
   if (def.signal === 'smoke' && !caps.has('beacon') && l.crew !== 'spotter') notes.push({ text: 'Big search area: a beacon receiver or a spotter will help.', blocking: false });
   if (def.visibility === 'poor' && !caps.has('thermal')) notes.push({ text: 'Low cloud: they will be hard to see without thermal.', blocking: false });
@@ -127,7 +131,7 @@ export interface Plan {
   beacon: boolean;
   thermal: boolean;
   fuelMult: number;
-  style: 'rescue' | 'heavy' | 'fire' | 'tanker' | 'spotter';
+  style: 'rescue' | 'heavy' | 'fire' | 'tanker' | 'spotter' | 'search';
   kind: 'helicopter' | 'plane';
   /** How it fights fire (none: it does not). */
   attack: Attack | null;
@@ -137,6 +141,8 @@ export interface Plan {
   forecast: boolean;
   /** Bucket fill time multiplier. */
   fillMult: number;
+  /** Time to pull people into the boat, as a multiple of the standard. */
+  pullMult: number;
 }
 
 export function planOf(def: MissionDef, l: Loadout): Plan {
@@ -158,6 +164,7 @@ export function planOf(def: MissionDef, l: Loadout): Plan {
     bucket: attackOf(l) === 'water',
     forecast: !!c.forecast || v.attack === 'lead',
     fillMult: c.fill ?? 1,
+    pullMult: c.boardTime ?? 1,
   };
 }
 

@@ -85,7 +85,7 @@ export interface BriefingFire {
 }
 
 /** The Pre-Flight map: where you are, where they are (roughly), where they go; or where the fire is and where it is going. */
-export function drawBriefingMap(cv: HTMLCanvasElement, m: { search: { x: number; z: number; r: number }; deliverTo: keyof typeof PADS; startPad: keyof typeof PADS }, t: number, fire?: BriefingFire): void {
+export function drawBriefingMap(cv: HTMLCanvasElement, m: { search: { x: number; z: number; r: number }; deliverTo: keyof typeof PADS; startPad: keyof typeof PADS; water?: { station: { x: number; z: number } } }, t: number, fire?: BriefingFire): void {
   const rect = cv.getBoundingClientRect();
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const W = Math.max(1, Math.round(rect.width * dpr));
@@ -97,7 +97,8 @@ export function drawBriefingMap(cv: HTMLCanvasElement, m: { search: { x: number;
   const ctx = cv.getContext('2d')!;
   // frame the part of the valley that matters: base, hospital, search area
   const S = PADS[m.startPad];
-  const D = PADS[m.deliverTo];
+  // on the river they come home to the boat station
+  const D = m.water ? m.water.station : PADS[m.deliverTo];
   const showD = !fire || fire.people;
   // a fire: frame the fire and its water (the base sits off the edge, the route pointing to it)
   const xs = fire ? [fire.x0, fire.x0 + fire.size, ...fire.water.map((w) => w.x)] : [S.x, D.x, m.search.x - m.search.r, m.search.x + m.search.r];
@@ -171,7 +172,7 @@ export function drawBriefingMap(cv: HTMLCanvasElement, m: { search: { x: number;
   ctx.textAlign = side(sp);
   if (!sp.off) label(fire ? (fire.people ? 'BASE' : 'AIRFIELD') : 'BASE', sp.x + (side(sp) === 'right' ? -14 : 14) * dpr, sp.y + 4 * dpr);
   ctx.textAlign = side(dp) === 'right' ? 'right' : 'left';
-  if (showD && !dp.off) label('HOSPITAL', dp.x + (side(dp) === 'right' ? -14 : 14) * dpr, dp.y + 4 * dpr);
+  if (showD && !dp.off) label(m.water ? 'BOAT STATION' : 'HOSPITAL', dp.x + (side(dp) === 'right' ? -14 : 14) * dpr, dp.y + 4 * dpr);
   ctx.textAlign = 'center';
   // north
   ctx.fillStyle = 'rgba(18,38,63,0.75)';

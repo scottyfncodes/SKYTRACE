@@ -15,6 +15,7 @@ import { PADS, type PadId } from '../world/worldData';
 import { forestAt, getHeightField } from '../world/terrain';
 import { cellX, cellZ, BURNING, type TerrainSampler } from '../fire/fireSim';
 import { newFireOps, nearestThreat, RELOAD, THREAT_WORDS, threatLevel, tickFire, type FireEvent, type FireOps } from '../fire/fireRun';
+import { newWater, PULL_TIME, swimmers, tickWater, type WaterEvent, type WaterOps } from '../water/waterRun';
 
 /**
  * A wildfire call adds the fire to the run: `attack` is the stage you spend
@@ -60,9 +61,11 @@ export interface RunState {
   scan: ScanState | null;
   /** The contact identified most recently (for the radio). */
   lastIdentified: number;
+  /** A water rescue: the river, the rafts, the hand-off to the boat. */
+  water: WaterOps | null;
 }
 
-export type RunEvent = 'cleared' | 'gate' | 'gate-missed' | 'escape-done' | 'off-route' | 'on-route' | 'airborne' | 'signal' | 'spotted' | 'cabin-full' | 'all-aboard' | 'low-fuel' | 'out-of-fuel' | 'delivered' | 'complete' | FireEvent;
+export type RunEvent = 'cleared' | 'gate' | 'gate-missed' | 'escape-done' | 'off-route' | 'on-route' | 'airborne' | 'signal' | 'spotted' | 'cabin-full' | 'all-aboard' | 'low-fuel' | 'out-of-fuel' | 'delivered' | 'complete' | FireEvent | WaterEvent;
 
 /** Within this of the site, slow enough, you can come into a hover and hoist (m, m/s). */
 export const HOIST_ZONE = 60;
@@ -106,6 +109,7 @@ export function newRun(def: MissionDef, plan: Plan, terrain: TerrainSampler = va
     stepBacks: 0,
     scan: def.contacts ? newScan(def.contacts) : null,
     lastIdentified: -1,
+    water: def.water ? newWater(def.water) : null,
   };
 }
 
@@ -159,7 +163,7 @@ export const distToSpot = (r: RunState, p: { x: number; z: number }): number => 
 };
 
 /** Advance the rescue. `hoisting`: the helicopter is in a hover over the site. */
-export function tickRun(r: RunState, p: Where, dt: number, plan: Pick<Plan, 'spotMult'>, hoisting: boolean): RunEvent[] {
+export function tickRun(r: RunState, p: Where, dt: number, plan: Pick<Plan, 'spotMult'> & Partial<Pick<Plan, 'pullMult'>>, hoisting: boolean): RunEvent[] {
   if (over(r)) return [];
   const ev: RunEvent[] = [];
   r.t += dt;
@@ -168,6 +172,7 @@ export function tickRun(r: RunState, p: Where, dt: number, plan: Pick<Plan, 'spo
     r.stage = r.def.survivors === 0 ? 'attack' : r.spotted ? 'rescue' : 'search';
     ev.push('airborne');
   }
+  if (r.water) return tickWaterRun(r, p, dt, plan, ev);
   if (r.ops) {
     const fe = tickFire(r.ops, p, r.t, dt, r.def.wind, r.def.survivors === 0 || waiting(r) > 0);
     ev.push(...fe);
@@ -226,6 +231,61 @@ export function tickRun(r: RunState, p: Where, dt: number, plan: Pick<Plan, 'spo
   }
   if (r.fuel <= 0) {
     fail(r, 'Out of fuel. Rescue Two is taking over.');
+    ev.push('out-of-fuel');
+  }
+  return ev;
+}
+
+/**
+ * A water rescue's stages: search (the aircraft finds them), rescue (the
+ * raft, then the boat alongside), return (the run down the river and the
+ * station). The people drift with the river all the way.
+ */
+function tickWaterRun(r: RunState, p: Where, dt: number, plan: Pick<Plan, 'spotMult'> & Partial<Pick<Plan, 'pullMult'>>, ev: RunEvent[]): RunEvent[] {
+  const w = r.water!;
+  const g = swimmers(w);
+  const n = r.survivors.length;
+  r.survivors.forEach((s, i) => {
+    if (s.state !== 'waiting') return;
+    const off = (i - (n - 1) / 2) * 2.4;
+    s.x = s.homeX = g.x + off;
+    s.z = s.homeZ = g.z + off * 0.5;
+  });
+  if (!r.spotted && r.stage === 'search' && Math.hypot(p.x - g.x, p.z - g.z) < r.def.spotRange * plan.spotMult) {
+    r.spotted = true;
+    r.signalled = true;
+    r.foundAt = r.t;
+    r.stage = 'rescue';
+    ev.push('spotted');
+  }
+  const boat = w.phase === 'boat' ? { x: p.x, z: p.z, speed: p.speed } : null;
+  for (const e of tickWater(w, r.t, dt, boat, PULL_TIME * (plan.pullMult ?? 1))) {
+    ev.push(e);
+    if (e === 'too-cold') {
+      fail(r, 'The cold got them before help did.');
+      return ev;
+    }
+    if (e === 'handoff') {
+      // the boat brings its own tank
+      r.fuel = r.fuelMax = Math.max(r.fuelMax, 360);
+      r.lowFuelWarned = false;
+    }
+    if (e === 'picked-up') {
+      for (const s of r.survivors) if (s.state === 'waiting') s.state = 'aboard';
+      r.lifts = n;
+      r.stage = 'return';
+      ev.push('all-aboard');
+    }
+  }
+  if (escaping(r) && p.y !== undefined) {
+    for (const e of tickEscape(r.escape!, { x: p.x, y: p.y, z: p.z }, r.t, dt)) ev.push(e.type);
+  }
+  if (!r.lowFuelWarned && r.fuel < r.fuelMax * 0.25) {
+    r.lowFuelWarned = true;
+    ev.push('low-fuel');
+  }
+  if (r.fuel <= 0) {
+    fail(r, w.phase === 'air' ? 'Out of fuel. Search Two is taking over.' : 'Out of fuel. The second boat is on its way.');
     ev.push('out-of-fuel');
   }
   return ev;
@@ -332,9 +392,45 @@ export function fireObjective(r: RunState, p: { x: number; z: number }): Objecti
   return { icon: ops.attack === 'water' ? '💧' : ops.attack === 'retardant' ? '🟥' : '📍', title, detail: status, target: fireTarget };
 }
 
+/** What to do next on a water rescue. */
+export function waterObjective(r: RunState): Objective {
+  const w = r.water!;
+  const def = r.def;
+  const g = swimmers(w);
+  const who = { x: g.x, z: g.z, kind: 'site' as const, label: w.rafted >= 0 ? 'RAFT' : 'SWIMMERS' };
+  const st = w.spec.station;
+  switch (r.stage) {
+    case 'takeoff':
+      return { icon: '✈️', title: 'AIRBORNE', detail: def.place, target: null };
+    case 'search':
+      return { icon: '🔎', title: 'FIND THEM', detail: 'Fly low along the river', target: { x: def.search.x, z: def.search.z, kind: 'search', label: 'SEARCH AREA' } };
+    case 'rescue':
+      if (w.phase === 'air') {
+        if (w.dropped.some((d) => d.state === 'falling')) return { icon: '🛶', title: 'RAFT AWAY!', detail: 'Watch it fall', target: who };
+        if (w.rafted >= 0) return { icon: '🛶', title: "THEY'RE IN THE RAFT", detail: 'The Rescue Boat is launching', target: null };
+        if (w.rafts === 0) return { icon: '🚤', title: 'NO RAFT', detail: 'The Rescue Boat is launching', target: null };
+        return { icon: '🛶', title: 'DROP THE RAFT', detail: `${w.rafts} ${w.rafts === 1 ? 'raft' : 'rafts'} · low pass, lead them`, target: who };
+      }
+      if (w.pull > 0) return { icon: '🚤', title: 'PULLING THEM IN', detail: 'Stay alongside', target: who };
+      return { icon: '🚤', title: 'GET ALONGSIDE', detail: `${w.rafted >= 0 ? 'In the raft' : 'In the water'} · slow down next to them`, target: who };
+    case 'return':
+      if (escaping(r)) {
+        const e = r.escape!;
+        const gate = e.gates[e.next];
+        return { icon: '🏁', title: e.def.name.toUpperCase(), detail: `Arch ${e.next + 1} of ${e.gates.length} · ${aboard(r)} aboard`, target: { x: gate.x, z: gate.z, kind: 'gate', label: `ARCH ${e.next + 1}` } };
+      }
+      return { icon: '⚓', title: 'BACK TO THE STATION', detail: `${aboard(r)} aboard · ease in to the jetty`, target: { x: st.x, z: st.z, kind: 'pad', label: 'BOAT STATION' } };
+    case 'complete':
+      return { icon: '✅', title: 'RESCUE COMPLETE', detail: '', target: null };
+    default:
+      return { icon: '⚠️', title: 'MISSION FAILED', detail: r.failReason ?? '', target: null };
+  }
+}
+
 /** `beacon`: a beacon receiver is fitted, and points at them while you search. */
 export function objective(r: RunState, hoisting: boolean, beacon = false, pos?: { x: number; z: number }): Objective {
   const def = r.def;
+  if (r.water) return waterObjective(r);
   const who = def.survivors === 1 ? (def.look === 'hiker' ? 'THE HIKER' : 'THEM') : def.look === 'climber' ? 'THE CLIMBERS' : 'THEM';
   const pad = PADS[def.deliverTo];
   const spot = pos ? hoistSpot(r, pos) : def.site;
