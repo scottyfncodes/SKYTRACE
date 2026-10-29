@@ -141,7 +141,7 @@ export class PreflightView {
     const r = def.recommended;
     const lockLine = (by?: string) => (by ? `Complete ${esc(MISSION_BY_ID[by as keyof typeof MISSION_BY_ID].title)}` : 'Locked');
     // on a fire call the fire fleet comes first; on the river, the Search Aircraft
-    const lead = (v: (typeof VEHICLES)[number]) => (def.fire ? v.caps.includes('fire') : def.water ? v.caps.includes('search') : false);
+    const lead = (v: (typeof VEHICLES)[number]) => (def.fire ? v.caps.includes('fire') : def.handoff ? v.caps.includes('search') : false);
     const fleet = VEHICLES.filter((v) => v.ready).sort((a, b) => (lead(b) ? 1 : 0) - (lead(a) ? 1 : 0));
     this.q('pf-vehicles').innerHTML = fleet.map((v) => {
       const open = isAvailable(p, v);
@@ -156,7 +156,7 @@ export class PreflightView {
     const slots = veh.slots;
     this.q('pf-slots').textContent = slots === 0 ? `· built in: ${veh.attack === 'retardant' ? 'retardant tank' : veh.attack === 'lead' ? 'Tanker 42 on call' : 'nothing to carry'}` : veh.attack === 'water' ? `· bucket built in · ${l.equipment.length} of ${slots} slots` : `· ${l.equipment.length} of ${slots} slots`;
     // on a fire: the bucket (and the basket if people are trapped); nothing at all when the aircraft carries no kit
-    const shown = slots === 0 ? [] : def.fire ? EQUIPMENT.filter((e) => (e.id === 'bucket' && !veh.attack) || (e.id === 'basket' && def.survivors > 0) || (e.id === 'thermal' && def.survivors > 0)) : def.water ? EQUIPMENT.filter((e) => e.ready && (e.id === 'raft' || e.id === 'thermal')) : EQUIPMENT.filter((e) => e.ready && e.id !== 'raft');
+    const shown = slots === 0 ? [] : def.fire ? EQUIPMENT.filter((e) => (e.id === 'bucket' && !veh.attack) || (e.id === 'basket' && def.survivors > 0) || (e.id === 'thermal' && def.survivors > 0)) : def.handoff ? EQUIPMENT.filter((e) => e.ready && (def.handoff!.drops > 0 ? ['raft', 'thermal'] : ['beacon', 'thermal']).includes(e.id)) : EQUIPMENT.filter((e) => e.ready && e.id !== 'raft');
     this.q('pf-equip').innerHTML = shown
       .map((e) => {
         const open = isAvailable(p, e);

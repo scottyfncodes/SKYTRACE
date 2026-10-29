@@ -163,15 +163,16 @@ export class AudioSystem {
     this.windFilter.frequency.setTargetAtTime(350 + speed * 6, t, tc);
   }
 
-  /** The Rescue Boat: a higher, rasping jet that climbs with the throttle, and the rush of water past the hull. */
-  updateBoat(throttle: number, speed: number): void {
+  /** The Rescue Boat (or, `bike`, the Trail Bike's sharper two-stroke): a rasping engine that climbs with the throttle, and the rush of water (or air) past it. */
+  updateBoat(throttle: number, speed: number, bike = false): void {
     if (!this.ctx || !this.engineGain || !this.engineOsc || !this.engineOsc2 || !this.engineFilter || !this.windGain || !this.windFilter) return;
     const t = this.ctx.currentTime;
     const tc = 0.1;
     this.engineGain.gain.setTargetAtTime(0.06 + throttle * 0.11, t, tc);
-    this.engineOsc.frequency.setTargetAtTime(78 + throttle * 120 + speed * 1.2, t, tc);
-    this.engineOsc2.frequency.setTargetAtTime(39 + throttle * 60, t, tc);
-    this.engineFilter.frequency.setTargetAtTime(500 + throttle * 1100, t, tc);
+    const k = bike ? 1.45 : 1;
+    this.engineOsc.frequency.setTargetAtTime((78 + throttle * 120 + speed * 1.2) * k, t, tc);
+    this.engineOsc2.frequency.setTargetAtTime((39 + throttle * 60) * k, t, tc);
+    this.engineFilter.frequency.setTargetAtTime((500 + throttle * 1100) * k, t, tc);
     this.windGain.gain.setTargetAtTime(0.03 + (speed / 26) * 0.16, t, tc);
     this.windFilter.frequency.setTargetAtTime(900 + speed * 40, t, tc);
   }

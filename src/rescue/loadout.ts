@@ -102,8 +102,9 @@ export function checkLoadout(def: MissionDef, l: Loadout): Note[] {
     if (a && !notes.some((n) => n.blocking)) notes.push({ text: ATTACK_PLAN[a], blocking: false, info: true });
     return notes;
   }
-  if (def.water) {
-    if (!notes.some((n) => n.blocking)) notes.push({ text: `Plan: find them, drop a raft on a low pass, then take the Rescue Boat from ${def.water.station.name}.`, blocking: false, info: true });
+  if (def.handoff) {
+    if (def.signal === 'smoke' && !caps.has('beacon') && l.crew !== 'spotter') notes.push({ text: 'Big search area: a beacon receiver or a spotter will help.', blocking: false });
+    if (!notes.some((n) => n.blocking)) notes.push({ text: def.handoff.brief, blocking: false, info: true });
     return notes;
   }
   if (def.wind.speed >= 9 && v.windFactor > 0.7) notes.push({ text: 'Strong gusts: a light helicopter will be pushed around.', blocking: false });

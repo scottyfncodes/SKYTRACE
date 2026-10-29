@@ -4,7 +4,7 @@ Someone needs help. Figure out what they need, choose the right aircraft, fly th
 
 Every rescue is an operation in three beats: **RECON → EXECUTE → ESCAPE**. Find them, lift them out, and fly everyone home through the escape route.
 
-Three families of emergency calls share one valley, one Mission Control and one set of controls: **search & rescue** (the hoist), **wildfire** (a living fire you fight from the air) and **the river** (a raft drop from a plane, then the Rescue Boat).
+Emergency calls of every kind share one valley, one Mission Control and one set of controls: **search & rescue** (the hoist), **wildfire** (a living fire you fight from the air), and **two-vehicle rescues** where the Search Aircraft finds them and something fast on the ground brings them home: **the river** (a raft drop, then the Rescue Boat) and **the forest** (the Trail Bike).
 
 **Play it:** https://scottyfncodes.github.io/SKYTRACE/
 
@@ -43,6 +43,20 @@ A canoe has flipped on the upper Varrow River. Two paddlers are in cold, fast wa
 
 Miss with both rafts and the boat still goes, just with the cold still running. The Search Aircraft circles overhead while you drive.
 
+## The forest: Lost Hiker
+
+A hiker hasn't come home from Keld Forest. The canopy is too thick to land or hoist, so it takes two vehicles.
+
+| | |
+| --- | --- |
+| ![Up the forest track](docs/screenshots/trail-ride.png) | ![Off a ramp](docs/screenshots/trail-jump.png) |
+| ![Arches on the haul road](docs/screenshots/trail-arches.png) | ![Pre-Flight](docs/screenshots/trail-preflight.png) |
+
+1. **Find her.** The Search Aircraft sweeps the forest until her campfire smoke shows over the trees. The beacon receiver points at her phone; Ari the spotter sees her from further out.
+2. **The Trail Bike.** Once she is found, the bike sets off from the trailhead by the river road. Same stick and lever: steer, push forward (or the lever) for speed. The track is fast (100 km/h); the brush off it is slow, and the back steps out on loose ground.
+3. **She climbs on.** Stop inside the ring next to her fire.
+4. **Out by the haul road.** Nine arches back up the forest track and down the haul road to the ambulance at Harrow Quarry, with dirt ramps to fly off on the way.
+
 ## The loop
 
 **EMERGENCY CALL → PRE-FLIGHT → LAUNCH → FLY → FIND THEM → HOVER & HOIST → FLY THEM HOME → DEBRIEF**
@@ -67,7 +81,7 @@ Run out of fuel and the mission fails (TRY AGAIN relaunches it with the same pla
 | 🚚 **Canyon Crash** | A truck off the Gorge Road; two aboard | Recon (which truck?), a narrow canyon floor, an escape down the gorge | |
 | 🛶 **Capsized Canoe** | Two paddlers swept down the Varrow River | Leading a raft drop at speed, then the boat: upriver, alongside, back through the arches | |
 | 🏔️ **Mountain Rescue** | Two climbers stranded on the north ridge of Mount Kell | A narrow ledge, a moderate north-westerly | Lost Hiker · Beacon Receiver · Spotter |
-| 🌲 **Lost Hiker** | A hiker missing in Keld Forest; one phone ping | A big search area, haze, a clearing ringed by trees | Storm on the Summit · Heavy Rescue Helicopter · Thermal Camera |
+| 🌲 **Lost Hiker** | A hiker missing in Keld Forest; one phone ping | Finding the smoke from the air, then the Trail Bike: in up the forest track, out by the haul road | Storm on the Summit · Heavy Rescue Helicopter · Thermal Camera |
 | ⛈️ **Storm on the Summit** | Three climbers caught near the summit | Strong gusts, low cloud; the third climber has slipped to a lower shelf (a new approach for the third lift) | |
 
 Flood Rescue, Injured Skier and Distress Beacon are defined as data and wait for their vehicles and kit.
@@ -120,6 +134,7 @@ Tools, not stat sheets: each one has an obvious job.
 | 🛩️ **Fire Spotter** | Fast · Sees the spread · Calls 3 tanker drops | After Keld Forest Fire |
 | ✈️ **Search Aircraft** | Fast · Low passes · Raft drops | From the start |
 | 🚤 **Rescue Boat** | Fast · Slides the bends · Carries 6 | Takes over on the river |
+| 🏍️ **Trail Bike** | Fast on the track · Ramps · Room for 1 | Takes over in the forest |
 
 **Crew** (one seat): the Winch Operator steadies the basket (half the swing), the Paramedic gets people into the basket twice as fast, the Spotter sees people from much further away.
 
@@ -146,7 +161,7 @@ Tools, not stat sheets: each one has an obvious job.
 | In a hover: hold position | Drag (up is always forward) | Arrows / WASD |
 | In a hover: the winch | The lever is the basket: slide it down to lower, up to reel in | Ctrl / Z lower, Shift / Q reel in |
 | Drop a raft | The red DROP RAFT button | Space, F or X |
-| The boat: steer and throttle | Drag to steer (forward: faster); the lever is the throttle | Arrows / WASD (up: faster); Shift / Q, Ctrl / Z |
+| The boat or the bike: steer and throttle | Drag to steer (forward: faster); the lever is the throttle | Arrows / WASD (up: faster); Shift / Q, Ctrl / Z |
 | Pause | II | Esc / P |
 
 In the pause menu: **Hover assist** (on / off), **Climb** (stick up or stick down climbs), **Steer with** (left or right thumb; the lever, minimap and buttons move to the other side), sound, and the radio voice (the device's speech voice reads the radio; subtitles are always on). Preferences and progress are saved in the browser.
@@ -190,8 +205,10 @@ Plain TypeScript + Vite + Three.js, no backend. The rules are pure, data-driven 
 | `src/fire/fireRun.ts` | Fighting it as part of a run: loads, drops, the tanker's line along your path, the bucket, scooping and reloading, the spotter's marks and Tanker 42, the threat level, held / contained / breached, and the fire nobody fought for the debrief (pure, tested) |
 | `src/water/river.ts` | The Varrow River as a course: where along it a point is, the current, points and arches along it (pure, tested) |
 | `src/water/boat.ts` | The Rescue Boat: an arcade jet boat that slides, planes, glances off the banks, rides the current and flies off rapids, driving an `AircraftState` so the camera and HUD work unchanged (pure, tested) |
-| `src/water/waterRun.ts` | The water rescue: the drift, the cold, raft drops and where they land, the hand-off to the boat, the pull aboard, docking (pure, tested) |
+| `src/rescue/handoff.ts` | A two-vehicle rescue: the aircraft finds them (and drops a raft on the river), then the boat or the bike takes over: the drift, the clock, raft drops and where they land, the hand-off, getting them aboard, arriving home (pure, tested) |
+| `src/land/bike.ts`, `src/land/trail.ts` | The Trail Bike: fast on the tracks, slowed by the brush, slides on loose ground, follows the hills and flies off crests and ramps; the tracks as somewhere to ride (pure, tested) |
 | `src/flight/boatMesh.ts`, `src/world/waterScene.ts` | The boat; the rafts, the canoe, the boat station and jetty, the rapids, the spray, the aim and reach rings |
+| `src/flight/bikeMesh.ts`, `src/world/trailScene.ts` | The bike and its passenger; the ramps, the trailhead, the ambulance, the dust |
 | `src/rescue/progress.ts` | Completed rescues, stars, best times, last plan; unlocks derived from `unlockedBy` (pure, tested) |
 | `src/rescue/debrief.ts` | Three lines and up to three stars (pure, tested) |
 | `src/game/RescueGame.ts` | Orchestration: screens, launch, flight, hover and hoist, landing, debrief, radio and sound cues |
@@ -203,4 +220,4 @@ Plain TypeScript + Vite + Three.js, no backend. The rules are pure, data-driven 
 
 **Adding a rescue or a fire** of an existing kind is a new entry in `MISSIONS` (a fire is a `fire` block: where it starts, what it threatens, how fast it spreads). **A new vehicle** is an entry in `VEHICLES` (and a mesh if it flies something new). **New equipment** is an entry in `EQUIPMENT` with the capability it grants; a new capability (water, fire) needs the mechanic it unlocks.
 
-Automated checks live in `tests/` (`tests/fire.test.ts`: the fire's behaviour, the drops and loads, Mission Control's choices, and every wildfire call won with a sensible plan and lost when ignored; `tests/water.test.ts`: the river, the boat, the raft drop and Capsized Canoe played through). A Playwright bot drove Capsized Canoe end to end (raft drop, boat, arches, jetty) at desktop and iPhone landscape sizes, and flew the Mountain Rescue end to end through the real keyboard controls at iPhone landscape and portrait sizes for QA.
+Automated checks live in `tests/` (`tests/fire.test.ts`: the fire's behaviour, the drops and loads, Mission Control's choices, and every wildfire call won with a sensible plan and lost when ignored; `tests/handoff.test.ts`: the river, the boat, the raft drop and Capsized Canoe played through; `tests/bike.test.ts`: the trails, the bike and Lost Hiker played through). A Playwright bot rode Lost Hiker and drove Capsized Canoe end to end (raft drop, boat, arches, jetty) at desktop and iPhone landscape sizes, and flew the Mountain Rescue end to end through the real keyboard controls at iPhone landscape and portrait sizes for QA.

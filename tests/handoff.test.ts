@@ -12,14 +12,14 @@ import { debrief } from '../src/rescue/debrief';
 import { newEscape } from '../src/rescue/route';
 import { boatSpeed, JUMP_SPEED, newBoat, stepBoat, type BoatEnv, type BoatState } from '../src/water/boat';
 import { CURRENT, currentAt, DEEP, riverAt, riverPoint } from '../src/water/river';
-import { canDock, canDropRaft, dropRaft, newWater, PULL_TIME, raftLanding, rapidAt, swimmers, tickWater, type WaterOps } from '../src/water/waterRun';
+import { canArrive, canDropItem, dropItem, newHandoff, PICKUP, dropLanding, rapidAt, peopleAt, tickHandoff, type HandoffOps } from '../src/rescue/handoff';
 import { getHeightField } from '../src/world/terrain';
 
 const hf = getHeightField();
 const ground = (x: number, z: number) => hf.sample(x, z);
 const DT = 1 / 30;
 const def = MISSION_BY_ID['capsized-boat'];
-const spec = def.water!;
+const spec = def.handoff!;
 const env: BoatEnv = { height: ground, current: currentAt, rapid: (x, z) => rapidAt(spec, x, z) };
 const deep = (x: number, z: number) => ground(x, z) < DEEP;
 
@@ -94,7 +94,7 @@ describe('the Rescue Boat', () => {
   });
 
   it('flies off a rapid at speed, and only at speed', () => {
-    const s = spec.rapids[0];
+    const s = spec.rapids![0];
     const from = riverPoint(s - 120);
     const launch = (throttle: number, steps: number) => {
       let b = newBoat(from.x, from.z, Math.atan2(-from.dx, -from.dz));
@@ -119,91 +119,91 @@ describe('the Rescue Boat', () => {
 
 describe('the raft drop', () => {
   /** An aircraft low over the river, flying downstream at the people, `back` metres short of them. */
-  const pass = (ops: WaterOps, back: number, agl: number, speed = 40) => {
-    const g = swimmers(ops);
+  const pass = (ops: HandoffOps, back: number, agl: number, speed = 40) => {
+    const g = peopleAt(ops);
     const c = currentAt(g.x, g.z);
     const l = Math.hypot(c.x, c.z);
     return { x: g.x - (c.x / l) * back, y: agl, z: g.z - (c.z / l) * back, vx: (c.x / l) * speed, vz: (c.z / l) * speed, agl };
   };
-  const settle = (ops: WaterOps, sec: number) => {
+  const settle = (ops: HandoffOps, sec: number) => {
     const ev: string[] = [];
-    for (let i = 0; i < sec / DT; i++) ev.push(...tickWater(ops, i * DT, DT, null));
+    for (let i = 0; i < sec / DT; i++) ev.push(...tickHandoff(ops, i * DT, DT, null));
     return ev;
   };
 
   it('lands where the preview says it will', () => {
-    const ops = newWater(spec);
+    const ops = newHandoff(spec);
     const m = pass(ops, 200, 45);
-    const at = raftLanding(m);
-    dropRaft(ops, m, true);
+    const at = dropLanding(m);
+    dropItem(ops, m, true);
     const r = ops.dropped[0];
-    for (let i = 0; i < 300 && r.state === 'falling'; i++) tickWater(ops, 0, DT, null);
+    for (let i = 0; i < 300 && r.state === 'falling'; i++) tickHandoff(ops, 0, DT, null);
     expect(r.state).toBe('floating');
     // (the raft settles onto the river's course where it lands)
     expect(Math.hypot(r.x - at.x, r.z - at.z)).toBeLessThan(3);
   });
 
   it('a raft led right onto them: they climb in, the cold stops, and the boat takes over', () => {
-    const ops = newWater(spec);
+    const ops = newHandoff(spec);
     // let go where it will come down on them: lead them by the fall
     const m0 = pass(ops, 0, 40);
-    const lead = raftLanding(m0);
+    const lead = dropLanding(m0);
     const m = { ...m0, x: m0.x - (lead.x - m0.x), z: m0.z - (lead.z - m0.z) };
-    expect(dropRaft(ops, m, true)).toEqual(['raft-away']);
-    expect(canDropRaft(ops, m, true).why).toBe('RAFT FALLING');
+    expect(dropItem(ops, m, true)).toEqual(['drop-away']);
+    expect(canDropItem(ops, m, true).why).toBe('RAFT FALLING');
     const ev = settle(ops, 8);
-    expect(ev).toContain('rafted');
+    expect(ev).toContain('caught');
     expect(ev).toContain('handoff');
-    expect(ops.phase).toBe('boat');
-    const cold = ops.cold;
+    expect(ops.phase).toBe('ground');
+    const cold = ops.clock;
     settle(ops, 20);
-    expect(ops.cold).toBe(cold);
+    expect(ops.clock).toBe(cold);
   });
 
   it('a raft dropped right over them falls long: the aircraft has to lead them', () => {
-    const ops = newWater(spec);
-    dropRaft(ops, pass(ops, 0, 60, 50), true);
-    expect(settle(ops, 6)).toContain('raft-missed');
-    expect(ops.rafts).toBe(1);
+    const ops = newHandoff(spec);
+    dropItem(ops, pass(ops, 0, 60, 50), true);
+    expect(settle(ops, 6)).toContain('drop-missed');
+    expect(ops.drops).toBe(1);
     expect(ops.phase).toBe('air');
   });
 
   it('no raft from too high, or before they are found', () => {
-    const ops = newWater(spec);
-    expect(canDropRaft(ops, pass(ops, 150, 120), true)).toEqual({ ok: false, why: 'TOO HIGH' });
-    expect(canDropRaft(ops, pass(ops, 150, 40), false).ok).toBe(false);
+    const ops = newHandoff(spec);
+    expect(canDropItem(ops, pass(ops, 150, 120), true)).toEqual({ ok: false, why: 'TOO HIGH' });
+    expect(canDropItem(ops, pass(ops, 150, 40), false).ok).toBe(false);
   });
 
   it('with both rafts missed the boat still goes, against the cold', () => {
-    const ops = newWater(spec);
+    const ops = newHandoff(spec);
     for (let k = 0; k < 2; k++) {
-      dropRaft(ops, pass(ops, -150, 40), true);
+      dropItem(ops, pass(ops, -150, 40), true);
       settle(ops, 7);
     }
-    expect(ops.rafts).toBe(0);
-    expect(ops.rafted).toBe(-1);
-    expect(ops.phase).toBe('boat');
-    expect(settle(ops, spec.cold)).toContain('too-cold');
+    expect(ops.drops).toBe(0);
+    expect(ops.caught).toBe(-1);
+    expect(ops.phase).toBe('ground');
+    expect(settle(ops, spec.clock)).toContain('clock-out');
   });
 
   it('the boat pulls them in only alongside and slow; it ties up only at the station', () => {
-    const ops = newWater(spec);
-    ops.phase = 'boat';
-    const g = swimmers(ops);
+    const ops = newHandoff(spec);
+    ops.phase = 'ground';
+    const g = peopleAt(ops);
     // too fast: nothing
-    for (let i = 0; i < 60; i++) tickWater(ops, 0, DT, { x: g.x + 5, z: g.z, speed: 15 });
+    for (let i = 0; i < 60; i++) tickHandoff(ops, 0, DT, { x: g.x + 5, z: g.z, speed: 15 });
     expect(ops.pull).toBe(0);
     // alongside, slow: everyone aboard in the pull time
     const ev: string[] = [];
-    for (let i = 0; i < (PULL_TIME + 0.2) / DT; i++) {
-      const p = swimmers(ops);
-      ev.push(...tickWater(ops, 0, DT, { x: p.x + 5, z: p.z, speed: 4 }));
+    for (let i = 0; i < (PICKUP.boat.time + 0.2) / DT; i++) {
+      const p = peopleAt(ops);
+      ev.push(...tickHandoff(ops, 0, DT, { x: p.x + 5, z: p.z, speed: 4 }));
     }
     expect(ev).toContain('pulling');
     expect(ev).toContain('picked-up');
-    expect(canDock(ops, { x: spec.station.x, z: spec.station.z, speed: 3 })).toBe(true);
-    expect(canDock(ops, { x: spec.station.x, z: spec.station.z, speed: 12 })).toBe(false);
-    expect(canDock(ops, { x: g.x, z: g.z, speed: 3 })).toBe(false);
+    expect(canArrive(ops, { x: spec.home.x, z: spec.home.z, speed: 3 })).toBe(true);
+    expect(canArrive(ops, { x: spec.home.x, z: spec.home.z, speed: 12 })).toBe(false);
+    expect(canArrive(ops, { x: g.x, z: g.z, speed: 3 })).toBe(false);
   });
 });
 
@@ -211,13 +211,13 @@ describe('Capsized Canoe, the call', () => {
   it('puts them in the river, inside the search area, upstream of the station', () => {
     expect(deep(def.site.x, def.site.z)).toBe(true);
     expect(Math.hypot(def.site.x - def.search.x, def.site.z - def.search.z)).toBeLessThan(def.search.r);
-    expect(deep(spec.station.x, spec.station.z)).toBe(true);
-    expect(riverAt(spec.station.x, spec.station.z).s).toBeGreaterThan(spec.s + 400);
-    for (const s of spec.rapids) {
+    expect(deep(spec.home.x, spec.home.z)).toBe(true);
+    expect(riverAt(spec.home.x, spec.home.z).s).toBeGreaterThan(spec.river!.s + 400);
+    for (const s of spec.rapids!) {
       const p = riverPoint(s);
       expect(deep(p.x, p.z)).toBe(true);
-      expect(s).toBeGreaterThan(spec.s);
-      expect(s).toBeLessThan(riverAt(spec.station.x, spec.station.z).s);
+      expect(s).toBeGreaterThan(spec.river!.s);
+      expect(s).toBeLessThan(riverAt(spec.home.x, spec.home.z).s);
     }
   });
 
@@ -239,7 +239,7 @@ describe('Capsized Canoe, the call', () => {
     }
     // the last arch leads into the station
     const last = e.gates[e.gates.length - 1];
-    expect(Math.hypot(last.x - spec.station.x, last.z - spec.station.z)).toBeLessThan(80);
+    expect(Math.hypot(last.x - spec.home.x, last.z - spec.home.z)).toBeLessThan(80);
   });
 
   it('is flown with the Search Aircraft, the raft and the paramedic, open from the start', () => {
@@ -258,20 +258,20 @@ describe('Capsized Canoe, the call', () => {
     // airborne, then over them
     step({ x: -500, y: 60, z: 600, agl: 60, speed: 40 }, 1);
     expect(r.stage).toBe('search');
-    const g = swimmers(r.water!);
+    const g = peopleAt(r.handoff!);
     step({ x: g.x, y: 50, z: g.z - 100, agl: 50, speed: 40 }, 0.2);
     expect(ev).toContain('spotted');
     expect(objective(r, false).title).toBe('DROP THE RAFT');
     // a raft led onto them
     const at = { x: g.x, y: 40, z: g.z, vx: 40, vz: 0, agl: 40 };
-    const lead = raftLanding(at);
-    dropRaft(r.water!, { ...at, x: at.x - (lead.x - at.x), z: at.z - (lead.z - at.z) }, true);
+    const lead = dropLanding(at);
+    dropItem(r.handoff!, { ...at, x: at.x - (lead.x - at.x), z: at.z - (lead.z - at.z) }, true);
     step({ x: g.x + 300, y: 80, z: g.z, agl: 80, speed: 40 }, 8);
     expect(ev).toContain('handoff');
     expect(objective(r, false).title).toBe('GET ALONGSIDE');
     // alongside in the boat
     for (let i = 0; i < 4 / DT; i++) {
-      const p = swimmers(r.water!);
+      const p = peopleAt(r.handoff!);
       ev.push(...tickRun(r, { x: p.x + 6, y: 0.5, z: p.z, agl: 0, speed: 3 }, DT, plan, false));
     }
     expect(ev).toContain('all-aboard');
@@ -295,7 +295,7 @@ describe('Capsized Canoe, the call', () => {
     const plan = planOf(def, defaultLoadout(def, newProgress()));
     const r = newRun(def, plan);
     const far = { x: -500, y: 60, z: 600, agl: 60, speed: 40 };
-    for (let i = 0; i < (spec.cold + 2) / DT && r.stage !== 'failed'; i++) tickRun(r, far, DT, plan, false);
+    for (let i = 0; i < (spec.clock + 2) / DT && r.stage !== 'failed'; i++) tickRun(r, far, DT, plan, false);
     expect(r.stage).toBe('failed');
     expect(r.failReason).toMatch(/cold/);
   });

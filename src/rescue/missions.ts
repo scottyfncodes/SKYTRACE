@@ -12,7 +12,8 @@ import type { EscapeDef } from './route';
 import type { Contact } from './recon';
 import { LEDGES, type PadId } from '../world/worldData';
 import { riverGates, riverPoint } from '../water/river';
-import type { WaterSpec } from '../water/waterRun';
+import { trailGates, trailPoint, trailYaw } from '../land/trail';
+import type { HandoffSpec } from '../rescue/handoff';
 
 export type MissionId = 'canyon-crash' | 'mountain-rescue' | 'lost-hiker' | 'summit-storm' | 'spot-fire' | 'wind-fire' | 'mountain-fire' | 'hotspots' | 'forest-fire' | 'capsized-boat' | 'flood' | 'injured-skier' | 'distress-beacon';
 export type RescueType = 'mountain' | 'forest' | 'water' | 'fire' | 'flood' | 'snow' | 'beacon';
@@ -89,7 +90,7 @@ export interface MissionDef {
   /** A wildfire: the fire, the places it threatens, the water. */
   fire?: FireMission;
   /** A water rescue: the river, the raft drop, then the Rescue Boat. */
-  water?: WaterSpec;
+  handoff?: HandoffSpec;
   /** Built and playable in this version. */
   ready: boolean;
   /** A clean rescue of this mission opens this one (none: open from the start). */
@@ -105,6 +106,18 @@ export interface MissionDef {
 const FIRE = { site: { x: 0, z: 0 }, survivors: 0, look: 'hiker', signal: 'none', signalRange: 0, spotRange: 0, reach: 6, startPad: 'base', deliverTo: 'hospital', visibility: 'fair' } as const;
 
 const COMING = { site: { x: 0, z: 0 }, search: { x: 0, z: 0, r: 0 }, signal: 'none', signalRange: 0, spotRange: 0, reach: 0, startPad: 'base', deliverTo: 'hospital', fuel: 0, par: 0, elevation: 0, look: 'hiker' } as const;
+/** Where the lost hiker sits, by her fire, a few metres off the forest track. */
+const HIKER = (() => {
+  const p = trailPoint('foresttrack', 175, 7);
+  return { x: Math.round(p.x), z: Math.round(p.z) };
+})();
+
+/** A ramp across a track, `s` metres along it, rising toward the start of the track (the way it is ridden here). */
+function rampOn(id: string, s: number): { x: number; z: number; yaw: number } {
+  const p = trailPoint(id, s);
+  return { x: p.x, z: p.z, yaw: trailYaw(id, s, true) };
+}
+
 /** The boat station: in the water by the right bank, facing upstream. */
 function stationAt(s: number, side: number): { x: number; z: number; yaw: number } {
   const p = riverPoint(s, side);
@@ -198,15 +211,17 @@ export const MISSIONS: readonly MissionDef[] = [
     recommended: { vehicle: 'search-plane', crew: 'medic', equipment: ['raft'] },
     fuel: 300,
     par: 200,
-    water: {
-      s: 560,
-      side: -6,
-      drift: 0.75,
-      cold: 240,
-      rafts: 2,
+    handoff: {
+      vehicle: 'boat',
+      river: { s: 560, side: -6, drift: 0.75 },
+      clock: 240,
+      drops: 2,
       reach: 30,
-      station: { name: 'Varrow Boat Station', ...stationAt(1250, 18) },
+      // the boat sets off just out from the jetty, upstream, and comes back to it
+      start: stationAt(1232, 18),
+      home: { name: 'Varrow Boat Station', ...stationAt(1250, 18) },
       rapids: [960, 1110],
+      brief: 'Plan: find them, drop a raft on a low pass, then take the Rescue Boat from Varrow Boat Station.',
     },
     escape: {
       name: 'Down the river',
@@ -277,6 +292,7 @@ export const MISSIONS: readonly MissionDef[] = [
     ready: true,
   },
   {
+    // the plane finds her smoke over the trees; the canopy is too thick to land or hoist, so the Trail Bike rides in for her
     id: 'lost-hiker',
     type: 'forest',
     title: 'Lost Hiker',
@@ -287,42 +303,49 @@ export const MISSIONS: readonly MissionDef[] = [
     elevation: 75,
     wind: { speed: 3, from: 200, gust: 0.25 },
     visibility: 'fair',
-    site: { x: 236, z: -186 },
+    site: HIKER,
     survivors: 1,
     look: 'hiker',
-    search: { x: 330, z: -60, r: 320 },
+    search: { x: 320, z: -30, r: 300 },
     signal: 'smoke',
-    signalRange: 340,
-    spotRange: 170,
+    signalRange: 420,
+    spotRange: 190,
     reach: 5,
     startPad: 'base',
     deliverTo: 'hospital',
-    requires: ['hover', 'hoist'],
-    recommended: { vehicle: 'rescue-heli', crew: 'spotter', equipment: ['basket', 'beacon'] },
-    fuel: 480,
-    par: 230,
+    requires: ['search'],
+    recommended: { vehicle: 'search-plane', crew: 'spotter', equipment: ['beacon'] },
+    fuel: 300,
+    par: 190,
+    handoff: {
+      vehicle: 'bike',
+      at: HIKER,
+      clock: 0,
+      drops: 0,
+      reach: 0,
+      // the bike sets off from the trailhead by the river road, up the forest track
+      start: { ...trailPoint('foresttrack', 600), yaw: trailYaw('foresttrack', 600, true) },
+      home: { name: 'Harrow Quarry', ...trailPoint('haul', 22), yaw: trailYaw('haul', 22) },
+      // ramps face the way the bike rides: up the forest track, down the haul road
+      ramps: [rampOn('foresttrack', 430), rampOn('haul', 470), rampOn('haul', 250)],
+      brief: 'Plan: find her smoke from the air, then ride the Trail Bike in and out to the ambulance.',
+    },
     escape: {
-      name: 'Over the treetops',
-      reason: 'Haze is thickening. Follow the gates over Keld Forest to the river.',
-      gates: [
-        [190, -140, 34],
-        [130, -80, 34],
-        [60, -15, 32],
-        [-10, 55, 30],
-        [-80, 130, 28],
-        [-150, 210, 28],
-      ],
-      r: 16,
-      corridor: 80,
-      par: 18,
+      name: 'Out by the haul road',
+      reason: 'The ambulance is at the quarry. Out along the haul road!',
+      // back up the forest track to the clearing, then down the haul road
+      gates: [...trailGates('foresttrack', 120, 15, 2, 2.5), ...trailGates('haul', 600, 70, 7, 2.5)],
+      r: 8,
+      corridor: 40,
+      par: 26,
     },
     radio: {
-      call: ['Rescue One, a hiker is missing in Keld Forest.', 'Her phone pinged once. The search area is big.'],
-      launch: 'Rescue One, cleared for lift. Search Keld Forest.',
+      call: ['Search One, a hiker is missing in Keld Forest.', 'Her phone pinged once. The search area is big.'],
+      launch: 'Search One, cleared. Search Keld Forest, low and slow.',
       signal: "Smoke over the trees! She's lit a fire.",
-      spotted: "There she is, in the clearing. Watch the trees on the way down.",
-      allAboard: "She's aboard. Varrow Hospital, please.",
-      landed: 'Hiker delivered. Well found, Rescue One.',
+      spotted: 'There she is, by the track. Too thick to land. Bike is going in.',
+      allAboard: "She's on the back. Hold on tight!",
+      landed: 'Hiker with the ambulance. Well found, well ridden.',
     },
     ready: true,
     unlockedBy: 'mountain-rescue',

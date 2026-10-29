@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { rng } from '../core/math';
 import { forestAt, type HeightField } from './terrain';
+import { nearTrail } from '../land/trail';
 import { BASE, FORESTS, VILLAGE_HOUSES } from './worldData';
 
 const matCache = new Map<number, THREE.MeshLambertMaterial>();
@@ -51,7 +52,8 @@ export function place(obj: THREE.Object3D, hf: HeightField, x: number, z: number
 }
 
 // ---------------- trees ----------------
-export function buildTrees(hf: HeightField): THREE.InstancedMesh {
+/** The forest, as instanced trees. None on the tracks (they are ridden), nor inside `clear` (a camp). */
+export function buildTrees(hf: HeightField, clear: readonly { x: number; z: number; r: number }[] = []): THREE.InstancedMesh {
   const canopy = new THREE.ConeGeometry(1, 1, 6);
   canopy.translate(0, 0.5, 0);
   const cCol = new Float32Array(canopy.attributes.position.count * 3).fill(1);
@@ -80,7 +82,7 @@ export function buildTrees(hf: HeightField): THREE.InstancedMesh {
         const jz = z + (r() - 0.5) * spacing;
         if (Math.abs(jx) > 1190 || Math.abs(jz) > 1190) continue;
         const d = forestAt(jx, jz);
-        if (d > 0.12 && r() < d * 0.95) spots.push({ x: jx, z: jz, d });
+        if (d > 0.12 && r() < d * 0.95 && !nearTrail(jx, jz, 7) && !clear.some((c) => Math.hypot(jx - c.x, jz - c.z) < c.r)) spots.push({ x: jx, z: jz, d });
       }
     }
   }
@@ -360,4 +362,62 @@ export function updateProps(p: WorldProps, t: number): void {
     (s.mesh.material as THREE.MeshLambertMaterial).opacity = 0.45 * (1 - u);
   }
   p.windsock.rotation.y = Math.sin(t * 0.8) * 0.25;
+}
+
+/**
+ * Lets the chase view through the forest: the few trees right around the
+ * camera are hidden while it is down among them (riding the bike off the
+ * trail), and come back when it moves on.
+ */
+export class TreeClearance {
+  private cell = 20;
+  private grid = new Map<string, number[]>();
+  private pos: Float32Array;
+  private saved = new Map<number, THREE.Matrix4>();
+  private zero = new THREE.Matrix4().makeScale(0, 0, 0);
+
+  constructor(private mesh: THREE.InstancedMesh) {
+    const m = new THREE.Matrix4();
+    const p = new THREE.Vector3();
+    this.pos = new Float32Array(mesh.count * 2);
+    for (let i = 0; i < mesh.count; i++) {
+      mesh.getMatrixAt(i, m);
+      p.setFromMatrixPosition(m);
+      this.pos[i * 2] = p.x;
+      this.pos[i * 2 + 1] = p.z;
+      const k = `${Math.floor(p.x / this.cell)},${Math.floor(p.z / this.cell)}`;
+      const list = this.grid.get(k);
+      if (list) list.push(i);
+      else this.grid.set(k, [i]);
+    }
+  }
+
+  /** Hide the trees within `r` of (x, z); `r` 0 puts every one back. */
+  update(x: number, z: number, r: number): void {
+    const want = new Set<number>();
+    if (r > 0) {
+      const cx = Math.floor(x / this.cell);
+      const cz = Math.floor(z / this.cell);
+      const n = Math.ceil(r / this.cell);
+      for (let i = cx - n; i <= cx + n; i++)
+        for (let j = cz - n; j <= cz + n; j++)
+          for (const t of this.grid.get(`${i},${j}`) ?? []) if (Math.hypot(this.pos[t * 2] - x, this.pos[t * 2 + 1] - z) < r) want.add(t);
+    }
+    let changed = false;
+    for (const [t, m] of this.saved)
+      if (!want.has(t)) {
+        this.mesh.setMatrixAt(t, m);
+        this.saved.delete(t);
+        changed = true;
+      }
+    for (const t of want)
+      if (!this.saved.has(t)) {
+        const m = new THREE.Matrix4();
+        this.mesh.getMatrixAt(t, m);
+        this.saved.set(t, m);
+        this.mesh.setMatrixAt(t, this.zero);
+        changed = true;
+      }
+    if (changed) this.mesh.instanceMatrix.needsUpdate = true;
+  }
 }

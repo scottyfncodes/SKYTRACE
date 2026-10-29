@@ -10,7 +10,7 @@ import { fireStats } from '../fire/fireSim';
 import { decoysCleared } from './recon';
 import { escapeTime, gatesPassed } from './route';
 import { delivered, type RunState } from './run';
-import { bestLanding } from '../water/waterRun';
+import { bestLanding } from '../rescue/handoff';
 
 export type Medal = 'gold' | 'silver' | 'bronze';
 
@@ -72,16 +72,16 @@ export function rescueScore(r: RunState): Score {
   }
   rows.push({ label: 'RECON', detail: reconDetail, points: recon, max: reconMax });
 
-  if (r.water) {
+  if (r.handoff && r.handoff.spec.drops > 0) {
     // the raft: how close it landed to them (a raft that misses costs)
-    const w = r.water;
+    const w = r.handoff;
     const best = bestLanding(w);
     const missed = w.landings.filter((d) => d > w.spec.reach).length;
     const close = best !== null && best <= w.spec.reach;
     const pts = close ? Math.max(0, Math.round(400 - 240 * (best / w.spec.reach)) - 80 * missed) : 0;
     const detail = best === null ? 'No raft dropped' : close ? `${Math.round(best)} m from them${missed ? ` · ${missed} missed` : ''}` : 'Every raft missed';
     rows.push({ label: 'RAFT', detail, points: pts, max: 400 });
-  } else {
+  } else if (!r.handoff) {
     // the lifts: every bump with someone in the basket, every step back, costs
     const lift = Math.max(0, 400 - 120 * r.bumps - 40 * r.stepBacks) * (home / Math.max(1, total));
     const liftDetail = r.bumps === 0 && r.stepBacks === 0 ? 'Clean lifts' : [r.bumps ? `${r.bumps} bump${r.bumps > 1 ? 's' : ''}` : '', r.stepBacks ? `${r.stepBacks} step-back${r.stepBacks > 1 ? 's' : ''}` : ''].filter(Boolean).join(' · ');
@@ -97,12 +97,12 @@ export function rescueScore(r: RunState): Score {
     const quick = t !== null && t <= e.def.par;
     const rough = Math.min(120, Math.round(e.offRoute * 10));
     const pts = Math.max(0, 50 * passed + (quick ? 100 : 0) - rough);
-    rows.push({ label: 'ESCAPE', detail: `${passed}/${n} ${r.water ? 'arches' : 'gates'}${t !== null ? ` · ${t.toFixed(1)} s` : ''}${e.offRoute > 1 ? ' · off route' : ''}`, points: pts, max: 50 * n + 100 });
+    rows.push({ label: 'ESCAPE', detail: `${passed}/${n} ${r.handoff ? 'arches' : 'gates'}${t !== null ? ` · ${t.toFixed(1)} s` : ''}${e.offRoute > 1 ? ' · off route' : ''}`, points: pts, max: 50 * n + 100 });
   }
 
   // the flying: never put it into the ground
-  const knock = r.water ? 'knock' : 'scrape';
-  rows.push({ label: r.water ? 'HANDLING' : 'FLYING', detail: r.scrapes === 0 ? `No ${knock}s` : `${r.scrapes} ${knock}${r.scrapes > 1 ? 's' : ''}`, points: Math.max(0, 200 - 70 * r.scrapes), max: 200 });
+  const knock = r.handoff ? 'knock' : 'scrape';
+  rows.push({ label: r.handoff ? 'HANDLING' : 'FLYING', detail: r.scrapes === 0 ? `No ${knock}s` : `${r.scrapes} ${knock}${r.scrapes > 1 ? 's' : ''}`, points: Math.max(0, 200 - 70 * r.scrapes), max: 200 });
 
   // the clock: at most a sixth of the score
   const time = r.endTime || r.t;

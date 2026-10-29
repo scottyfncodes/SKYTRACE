@@ -10,9 +10,13 @@ import { assistedDrift, newWindEstimate } from '../flight/assist';
 import { HelicopterMesh } from '../flight/helicopterMesh';
 import { PlaneMesh } from '../flight/planeMesh';
 import { BoatMesh } from '../flight/boatMesh';
+import { BikeMesh } from '../flight/bikeMesh';
+import { HARD_LANDING, newBike, stepBike, type BikeEnv } from '../land/bike';
+import { trailAt } from '../land/trail';
+import { TrailView } from '../world/trailScene';
 import { boatSpeed, newBoat, stepBoat, type BoatEnv, type BoatState } from '../water/boat';
 import { currentAt } from '../water/river';
-import { canDock, canDropRaft, dropRaft, PULL_RANGE, PULL_SPEED, RAFT_MAX_AGL, raftLanding, rapidAt, swimmers, type Mover } from '../water/waterRun';
+import { canArrive, canDropItem, dropItem, PICKUP, DROP_MAX_AGL, dropLanding, rampAt, rapidAt, peopleAt, type Mover } from '../rescue/handoff';
 import { WaterView } from '../world/waterScene';
 import { CALL_LEN, canFireAction, canFill, fireAction, LINE_LEN, RELOAD, THREAT_WORDS, nearestThreat, waterUnder, type FireEvent } from '../fire/fireRun';
 import { inArea, stepFire } from '../fire/fireSim';
@@ -23,7 +27,7 @@ import { debrief, type Debrief } from '../rescue/debrief';
 import { newBasket, RING_PAD, stepHoist, type Basket, type HoistEvent } from '../rescue/hoist';
 import { headingAxes, hoverTilt, stepHover, type HoverVel } from '../rescue/hover';
 import { canLaunch, defaultLoadout, planOf, toggleEquipment, withCrew, withVehicle, type Loadout, type Plan } from '../rescue/loadout';
-import { MISSION_BY_ID, type MissionDef, type MissionId } from '../rescue/missions';
+import { MISSION_BY_ID, MISSIONS, type MissionDef, type MissionId } from '../rescue/missions';
 import { loadProgress, nextMission, recordRescue, saveProgress, type Progress } from '../rescue/progress';
 import { aboard, cabinFull, canHoist, canLand, delivered, distToSite, distToSpot, escaping, fireHead, hoistSpot, landAtPad, newRun, objective, tickRun, waiting, type RunEvent, type RunState } from '../rescue/run';
 import { HOVER_DRIFT, windAt, type Wind } from '../rescue/wind';
@@ -31,7 +35,8 @@ import { Hud, type ActionState, type DropState, type MapFrame } from '../ui/hud'
 import { PreflightView } from '../ui/preflight';
 import { renderTitle } from '../ui/title';
 import { buildCountryside } from '../world/countryside';
-import { buildProps, buildTrees, updateProps, type WorldProps } from '../world/props';
+import { forestAt } from '../world/terrain';
+import { buildProps, buildTrees, TreeClearance, updateProps, type WorldProps } from '../world/props';
 import { BasketMesh, buildCamp, buildRescueProps, Burst, Marker, reachRing, searchArea, Signals, SurvivorMesh, type RescueProps } from '../world/rescueScene';
 import { createScene, type SceneBundle } from '../world/scene';
 import { ContactView, GateView, GroundShadow, RouteRibbon } from '../world/routeScene';
@@ -71,14 +76,20 @@ export class RescueGame {
   /** The Rescue Boat: waits at its station, and is yours once the raft is down. */
   private boat = new BoatMesh();
   private waterView = new WaterView();
-  /** Driving the boat (the second half of a water rescue). */
-  private onWater = false;
+  /** The Trail Bike, and the trail it rides. */
+  private bike = new BikeMesh();
+  private trailView: TrailView;
+  /** Driving the boat or the bike (the second half of a two-vehicle rescue). */
+  private driving = false;
   private waterEnv: BoatEnv | null = null;
+  private bikeEnv: BikeEnv | null = null;
   /** The Search Aircraft circling overhead once the boat has taken over. */
   private orbitA = 0;
   /** Tying up at the station: the boat eases in, they walk up to the ambulance. */
   private docking: { t: number; from: THREE.Vector3; to: THREE.Vector3; yaw0: number; walkers: { mesh: SurvivorMesh; from: THREE.Vector3; to: THREE.Vector3 }[]; done: boolean } | null = null;
   private trees: THREE.InstancedMesh;
+  /** Clears the trees around the camera while the bike is down in the forest. */
+  private clearance: TreeClearance;
   private fireView: FireView;
   /** The mission is over and the camera circles the fire (or the place it reached). */
   private overview: { x: number; y: number; z: number; r: number; t: number; a0: number } | null = null;
@@ -156,13 +167,17 @@ export class RescueGame {
     const hf = this.bundle.heightField;
     const scene = this.bundle.scene;
     this.props = buildProps(hf);
-    this.trees = buildTrees(hf);
+    // no trees where a hiker sits by her fire
+    this.trees = buildTrees(hf, MISSIONS.flatMap((m) => (m.handoff?.at ? [{ ...m.handoff.at, r: 9 }] : [])));
+    this.clearance = new TreeClearance(this.trees);
     scene.add(this.props.group, this.trees, buildCountryside(hf).group);
     this.fireView = new FireView(scene, hf);
     this.rescueProps = buildRescueProps(hf);
     this.plane.group.visible = false;
     this.boat.group.visible = false;
-    scene.add(this.waterView.group, this.boat.group);
+    this.bike.group.visible = false;
+    this.trailView = new TrailView(hf);
+    scene.add(this.waterView.group, this.boat.group, this.trailView.group, this.bike.group);
     scene.add(this.rescueProps.group, this.heli.group, this.plane.group, this.basketMesh.group, this.basketMesh.cable, this.basketMesh.shadow, this.marker.group, this.tube, this.ring, this.signals.group, this.burst.group, this.gates.group, this.ribbon.mesh, this.shadow.mesh, this.contacts.group);
 
     this.input = new Input(this.el['stick-zone'], this.el['stick-knob'], this.el['throttle']);
@@ -266,6 +281,7 @@ export class RescueGame {
     this.heli.group.visible = true;
     this.plane.group.visible = false;
     this.boat.group.visible = false;
+    this.bike.group.visible = false;
     this.a = this.onPad('base');
     this.a.y += 26;
     this.bundle.setVisibility(1);
@@ -396,8 +412,11 @@ export class RescueGame {
   private clearMissionScene(): void {
     this.fireView.clear();
     this.waterView.clear();
+    this.trailView.clear();
     this.boat.group.visible = false;
-    this.onWater = false;
+    this.bike.group.visible = false;
+    this.bike.setPillion(false);
+    this.driving = false;
     this.docking = null;
     this.gates.clear();
     this.contacts.clear();
@@ -466,16 +485,23 @@ export class RescueGame {
     this.winchPrev.copy(this.winchPos);
     this.basket = newBasket({ x: this.winchPos.x, y: this.winchPos.y, z: this.winchPos.z, vx: 0, vz: 0 });
     if (this.run.ops) this.fireView.setup(this.run.ops, this.trees);
-    if (this.run.water) {
+    const hand = this.run.handoff;
+    if (hand?.spec.vehicle === 'boat') {
       // the river course, and the boat waiting at its jetty for its turn
-      const w = this.run.water;
-      this.waterView.setup(w, hf);
-      this.waterEnv = { height: (x, z) => hf.sample(x, z), current: currentAt, rapid: (x, z) => rapidAt(w.spec, x, z) };
-      const st = w.spec.station;
-      const idle = newBoat(st.x, st.z, st.yaw);
-      this.boat.sync(idle, this.t);
+      this.waterView.setup(hand, hf);
+      this.waterEnv = { height: (x, z) => hf.sample(x, z), current: currentAt, rapid: (x, z) => rapidAt(hand.spec, x, z) };
+      const st = hand.spec.home;
+      this.boat.sync(newBoat(st.x, st.z, st.yaw), this.t);
       this.boat.setAboard(0);
       this.boat.group.visible = true;
+    } else if (hand?.spec.vehicle === 'bike') {
+      // the ramps, the ambulance at the end, and the bike waiting at the trailhead
+      this.trailView.setup(hand.spec);
+      this.bikeEnv = { height: (x, z) => hf.sample(x, z), brush: forestAt, trail: trailAt, ramp: (x, z) => rampAt(hand.spec, x, z), water: (x, z) => hf.sample(x, z) < -0.5 };
+      const st = hand.spec.start;
+      this.bike.sync(newBike(st.x, st.z, st.yaw, hf.sample(st.x, st.z)), 0, 0);
+      this.bike.setPillion(false);
+      this.bike.group.visible = true;
     }
     // the people, their camp, the search area
     this.run.survivors.forEach((s, i) => {
@@ -485,7 +511,7 @@ export class RescueGame {
       this.bundle.scene.add(m.group);
     });
     const rescue = def.survivors > 0;
-    if (rescue && def.look !== 'driver' && !def.water) {
+    if (rescue && def.look !== 'driver' && !def.handoff?.river) {
       this.camp = buildCamp(hf, def.site.x, def.site.z, def.look);
       this.bundle.scene.add(this.camp);
     }
@@ -500,14 +526,14 @@ export class RescueGame {
     this.ring.position.set(def.site.x, sy + 0.35, def.site.z);
     this.ring.scale.setScalar(this.plan.hoist.reach + RING_PAD);
     this.ring.visible = false;
-    this.basketMesh.group.visible = rescue && !def.water;
+    this.basketMesh.group.visible = rescue && !def.handoff;
     this.el['hud'].classList.toggle('has-fire', !!this.run.ops);
     this.bundle.setVisibility(VISIBILITY[def.visibility]);
     this.chase.reset();
     this.hud.clearBanners();
     this.radio.clear();
     this.radio.say('DISPATCH', def.radio.launch);
-    const callsign = plane ? (def.water ? 'SEARCH ONE' : this.plan.attack === 'lead' ? 'LEAD ONE' : 'TANKER ONE') : def.fire && !rescue ? 'FIRE ONE' : 'RESCUE ONE';
+    const callsign = plane ? (def.handoff ? 'SEARCH ONE' : this.plan.attack === 'lead' ? 'LEAD ONE' : 'TANKER ONE') : def.fire && !rescue ? 'FIRE ONE' : 'RESCUE ONE';
     this.showCard(callsign, plane ? 'AIRBORNE' : 'LIFTING OFF', def.title, '', 2.4);
     this.show('flight');
   }
@@ -528,8 +554,8 @@ export class RescueGame {
   /** The one context button: HOVER & HOIST over the people, FLY to leave the hover; on a fire with nobody trapped, the drop. */
   private contextAction(): void {
     if (this.mode !== 'flight') return;
-    if (this.run.water) {
-      if (!this.onWater) this.raftDrop();
+    if (this.run.handoff) {
+      if (!this.driving) this.raftDrop();
       return;
     }
     if (this.run.ops && this.def.survivors === 0) {
@@ -547,7 +573,7 @@ export class RescueGame {
 
   /** Where the aircraft is and how it is moving over the ground. */
   private where(): { x: number; y: number; z: number; yaw: number; agl: number; speed: number; vx: number; vz: number } {
-    const base = { x: this.a.x, y: this.a.y, z: this.a.z, yaw: this.a.yaw, agl: this.a.agl, speed: this.onWater ? boatSpeed(this.a as BoatState) : this.a.speed };
+    const base = { x: this.a.x, y: this.a.y, z: this.a.z, yaw: this.a.yaw, agl: this.a.agl, speed: this.driving ? boatSpeed(this.a as BoatState) : this.a.speed };
     if (this.hoisting) return { ...base, vx: this.hv.vx, vz: this.hv.vz };
     const ax = headingAxes(this.a.yaw);
     return { ...base, vx: this.a.vx ?? ax.fx * this.a.speed, vz: this.a.vz ?? ax.fz * this.a.speed };
@@ -555,8 +581,8 @@ export class RescueGame {
 
   /** The fire button: drop retardant, let the bucket go, or start marking a line for Tanker 42. */
   private fireDrop(): void {
-    if (this.run.water) {
-      if (!this.onWater) this.raftDrop();
+    if (this.run.handoff) {
+      if (!this.driving) this.raftDrop();
       return;
     }
     const ops = this.run.ops;
@@ -573,33 +599,41 @@ export class RescueGame {
 
   /** The DROP RAFT button. */
   private raftDrop(): void {
-    const w = this.run.water;
+    const w = this.run.handoff;
     if (this.mode !== 'flight' || !w || this.run.stage === 'takeoff') return;
-    if (dropRaft(w, this.mover(), this.run.spotted).length) {
+    if (dropItem(w, this.mover(), this.run.spotted).length) {
       this.audio.drop();
       this.shake = 0.12;
-      this.crew(w.rafts > 0 ? 'Raft away!' : 'Last raft away!');
+      this.crew(w.drops > 0 ? 'Raft away!' : 'Last raft away!');
     }
   }
 
-  /** The aircraft's part is done: the Rescue Boat is yours. */
-  private toBoat(): void {
-    const w = this.run.water!;
-    const st = w.spec.station;
-    this.onWater = true;
-    // just out from the jetty, pointing upstream
-    const b = newBoat(st.x - Math.sin(st.yaw) * 18, st.z - Math.cos(st.yaw) * 18, st.yaw);
-    b.throttle = 0.35;
-    this.a = b;
+  /** The aircraft's part is done: the Rescue Boat (or the Trail Bike) is yours. */
+  private toGround(): void {
+    const w = this.run.handoff!;
+    const st = w.spec.start;
+    this.driving = true;
+    if (w.spec.vehicle === 'boat') {
+      const b = newBoat(st.x, st.z, st.yaw);
+      b.throttle = 0.35;
+      this.a = b;
+      this.boat.group.visible = true;
+      this.showCard('RESCUE BOAT', 'YOUR TURN ON THE WATER', w.spec.home.name.toUpperCase(), '', 2.6);
+      this.say('BOAT STATION', w.caught >= 0 ? 'Boat away. They are in the raft upstream. Go get them.' : 'No raft on them. Boat away, flat out!');
+    } else {
+      const b = newBike(st.x, st.z, st.yaw, this.bundle.heightField.sample(st.x, st.z));
+      b.throttle = 0.35;
+      this.a = b;
+      this.bike.group.visible = true;
+      this.showCard('TRAIL BIKE', 'YOUR TURN ON THE TRAIL', this.def.place.toUpperCase(), '', 2.6);
+      this.say('SEARCH ONE', 'She is by the forest track. Follow the pin and I will keep circling.');
+    }
     this.orbitA = 0;
     this.input.reset();
-    this.input.syncThrottle(b.throttle);
-    this.boat.group.visible = true;
+    this.input.syncThrottle(0.35);
     this.chase.reset();
     this.flash();
     this.audio.phase('execute');
-    this.showCard('RESCUE BOAT', 'YOUR TURN ON THE WATER', st.name.toUpperCase(), '', 2.6);
-    this.say('BOAT STATION', w.rafted >= 0 ? 'Boat away. They are in the raft upstream. Go get them.' : 'No raft on them. Boat away, flat out!');
     this.hintT = 0;
   }
 
@@ -728,7 +762,7 @@ export class RescueGame {
       this.a.vz = 0;
       this.input.syncThrottle(0);
       this.input.touchThrottle = null;
-    } else if (this.onWater) {
+    } else if (this.driving) {
       // the boat: the stick steers, and pushed forward it opens the throttle; the lever is the throttle
       const stick = this.input.readStick();
       const b = this.a as BoatState;
@@ -736,7 +770,9 @@ export class RescueGame {
         b.throttle = this.input.touchThrottle;
         this.input.touchThrottle = null;
       }
-      const nb = stepBoat(b, { steer: stick.x, throttleDelta: this.input.throttleKeys() * 1.2 + stick.y * 1.4 }, dt, this.waterEnv!);
+      const inp = { steer: stick.x, throttleDelta: this.input.throttleKeys() * 1.2 + stick.y * 1.4 };
+      const onBike = run.handoff?.spec.vehicle === 'bike';
+      const nb = onBike ? stepBike(b, inp, dt, this.bikeEnv!) : stepBoat(b, inp, dt, this.waterEnv!);
       this.a = nb;
       this.scrapeCool = Math.max(0, this.scrapeCool - dt);
       if (nb.contact && this.scrapeCool <= 0) {
@@ -744,7 +780,7 @@ export class RescueGame {
         this.scrapeCool = 1.5;
         this.shake = 0.4;
         this.audio.clunk(true);
-        if (run.scrapes === 1 || run.scrapes % 3 === 0) this.crew(pick(['Easy! That was the bank!', 'Watch the rocks!']), true);
+        if (run.scrapes === 1 || run.scrapes % 3 === 0) this.crew(onBike ? pick(nb.landed > HARD_LANDING ? ['Oof! Easy on the landings!', 'Hard landing! Hold on back there!'] : ['Watch the rocks!', 'Easy! Too steep!']) : pick(['Easy! That was the bank!', 'Watch the rocks!']), true);
       }
       if (nb.launched) {
         this.audio.whoosh();
@@ -754,9 +790,14 @@ export class RescueGame {
         }
       }
       if (nb.landed > 2) {
-        this.audio.splash();
         this.shake = Math.min(0.5, 0.15 + nb.landed * 0.04);
-        this.waterView.spray.splash(new THREE.Vector3(nb.x, WATER_LEVEL + 0.3, nb.z), 22, Math.min(1.4, 0.5 + nb.landed * 0.12));
+        if (onBike) {
+          this.audio.land();
+          this.trailView.dust.splash(new THREE.Vector3(nb.x, nb.y + 0.2, nb.z), 18, Math.min(1.2, 0.4 + nb.landed * 0.08));
+        } else {
+          this.audio.splash();
+          this.waterView.spray.splash(new THREE.Vector3(nb.x, WATER_LEVEL + 0.3, nb.z), 22, Math.min(1.4, 0.5 + nb.landed * 0.12));
+        }
       }
       this.input.syncThrottle(nb.throttle);
     } else if (this.hoisting) {
@@ -798,13 +839,13 @@ export class RescueGame {
     // ---- the aircraft; the helicopter's winch and basket
     const targetTilt = this.hoisting ? hoverTilt(this.a.yaw, this.hv, HOVER_SPEED) : (this.a.speed / plan.perf.maxSpeed) * 0.2;
     this.tilt = damp(this.tilt, targetTilt, 3, dt);
-    if (this.onWater) {
-      this.boat.sync(this.a, this.t);
+    if (this.driving) {
+      this.syncGround(dt);
       this.orbitPlane(dt);
     } else if (plane) this.plane.sync(this.a, this.t, dt);
     this.heli.sync(this.a, this.t, dt, this.tilt, this.power);
     if (run.ops && plan.bucket) this.heli.setBucket(true, run.ops.load > 0 || run.ops.fill > 0.5);
-    if (def.survivors > 0 && !run.water) {
+    if (def.survivors > 0 && !run.handoff) {
       this.heli.winchWorld(this.winchPos);
       if (dt > 0) {
         this.winchVel = { x: (this.winchPos.x - this.winchPrev.x) / dt, z: (this.winchPos.z - this.winchPrev.z) / dt };
@@ -822,12 +863,12 @@ export class RescueGame {
     const ev = tickRun(run, where, dt, plan, this.hoisting);
     this.runEvents(ev);
     if (run.ops) this.fireEvents(ev.filter((e): e is FireEvent => FIRE_EVENTS.has(e)));
-    if (run.water) this.waterEvents(ev);
+    if (run.handoff) this.handoffEvents(ev);
     if (this.mode !== 'flight') return;
     if (run.ops) this.fireEffects(dt);
-    if (run.water) {
-      this.waterEffects(dt);
-      if (this.onWater && canDock(run.water, where)) {
+    if (run.handoff) {
+      this.handoffEffects(dt);
+      if (this.driving && canArrive(run.handoff, where)) {
         this.startDocking();
         return;
       }
@@ -836,7 +877,7 @@ export class RescueGame {
       this.autoExit -= dt;
       if (this.autoExit <= 0 && this.hoisting) this.leaveHover();
     }
-    if (!run.water && !this.hoisting && run.stage !== 'takeoff' && canLand(run, where)) {
+    if (!run.handoff && !this.hoisting && run.stage !== 'takeoff' && canLand(run, where)) {
       this.startLanding();
       return;
     }
@@ -863,7 +904,7 @@ export class RescueGame {
     this.updateHud(dt);
     this.updateCamera(dt);
     const load = this.hoisting ? 0.35 + Math.min(1, this.a.speed / HOVER_SPEED) * 0.2 : 0.3 + (this.a.speed / plan.perf.maxSpeed) * 0.5 + Math.max(0, this.a.pitch) * 0.6;
-    if (this.onWater) this.audio.updateBoat(this.a.throttle, where.speed);
+    if (this.driving) this.audio.updateBoat(this.a.throttle, where.speed, run.handoff?.spec.vehicle === 'bike');
     else if (plane) this.audio.updateFlight(this.a.throttle, this.a.speed, true, false);
     else this.audio.updateHeli(this.power, load, this.a.speed, this.wind.gust);
   }
@@ -925,7 +966,7 @@ export class RescueGame {
         const i = esc.result.lastIndexOf('passed');
         this.gates.flash(i, true);
         this.audio.ring();
-        if (!escapeDone(esc)) this.hud.toast(`${def.water ? 'ARCH' : 'GATE'} ${i + 1}/${esc.gates.length}`, 'good');
+        if (!escapeDone(esc)) this.hud.toast(`${def.handoff ? 'ARCH' : 'GATE'} ${i + 1}/${esc.gates.length}`, 'good');
       } else if (e === 'gate-missed') {
         const esc = this.run.escape!;
         const i = esc.result.lastIndexOf('missed');
@@ -936,16 +977,16 @@ export class RescueGame {
         const esc = this.run.escape!;
         const n = esc.result.filter((r) => r === 'passed').length;
         this.audio.phase('escape');
-        const home = def.water ? 'station' : 'hospital';
-        this.hud.banner(n === esc.gates.length ? 'CLEAN ESCAPE!' : 'WE\'RE OUT!', `${n} of ${esc.gates.length} ${def.water ? 'arches' : 'gates'} · now the ${home}`, 'good', 2.6);
-        this.say('CREW', n === esc.gates.length ? `Beautiful line. ${def.water ? 'Station' : 'Hospital'} next.` : `We're clear. ${def.water ? 'Station' : 'Hospital'} next.`);
+        const home = def.handoff ? (def.handoff.river ? 'station' : 'ambulance') : 'hospital';
+        this.hud.banner(n === esc.gates.length ? 'CLEAN ESCAPE!' : 'WE\'RE OUT!', `${n} of ${esc.gates.length} ${def.handoff ? 'arches' : 'gates'} · now the ${home}`, 'good', 2.6);
+        this.say('CREW', n === esc.gates.length ? `Beautiful line. ${home[0].toUpperCase() + home.slice(1)} next.` : `We're clear. ${home[0].toUpperCase() + home.slice(1)} next.`);
       } else if (e === 'off-route') {
         this.audio.warn();
-        this.crew(def.water ? 'Out of the channel! Back to the arches!' : pick(['Rough air out here! Back on the route!', "We're off the line! Get back to the gates!"]), true);
+        this.crew(def.handoff ? (def.handoff.river ? 'Out of the channel! Back to the arches!' : 'Off the trail! Back to the arches!') : pick(['Rough air out here! Back on the route!', "We're off the line! Get back to the gates!"]), true);
       } else if (e === 'spotted') {
         this.audio.spotted();
         this.audio.phase('execute');
-        this.hud.banner(def.contacts ? 'FOUND THEM!' : 'SPOTTED!', def.water ? `${def.survivors} in the water · low pass, drop the raft ahead of them` : def.survivors === 1 ? 'Fly over and come into a hover' : `${def.survivors} people · fly over and hover`, 'spot', 2.6);
+        this.hud.banner(def.contacts ? 'FOUND THEM!' : 'SPOTTED!', def.handoff?.river ? `${def.survivors} in the water · low pass, drop the raft ahead of them` : def.handoff ? 'Too thick to land · the Trail Bike is going in' : def.survivors === 1 ? 'Fly over and come into a hover' : `${def.survivors} people · fly over and hover`, 'spot', 2.6);
         this.say('CREW', def.radio.spotted);
       } else if (e === 'cabin-full') {
         this.hud.banner('CABIN FULL', 'Take them to the hospital', 'spot', 2.4);
@@ -953,7 +994,7 @@ export class RescueGame {
       } else if (e === 'all-aboard') {
         if (this.run.escape) {
           this.audio.phase('escape');
-          this.hud.banner(def.water ? 'BOTH ABOARD!' : 'ESCAPE!', `${this.run.escape.def.name} · ${def.water ? 'through the arches' : 'fly the gates'}`, 'spot', 2.8);
+          this.hud.banner(def.handoff ? (def.handoff.river ? 'BOTH ABOARD!' : "SHE'S ON!") : 'ESCAPE!', `${this.run.escape.def.name} · ${def.handoff ? 'through the arches' : 'fly the gates'}`, 'spot', 2.8);
           this.say('CREW', def.radio.allAboard);
           this.say('CREW', this.run.escape.def.reason);
         } else {
@@ -1095,64 +1136,91 @@ export class RescueGame {
     } else fv.showPreview(null, 0, 0, 0, 1, false);
   }
 
-  // ------------------------------------------------------------------ the water
-  private waterEvents(ev: RunEvent[]): void {
-    const w = this.run.water!;
+  // ------------------------------------------------------------------ the second vehicle: the boat or the bike
+  private get onBike(): boolean {
+    return this.run.handoff?.spec.vehicle === 'bike';
+  }
+
+  /** The boat or the bike, drawn where it is. */
+  private syncGround(dt: number): void {
+    if (this.onBike) this.bike.sync(this.a, dt, boatSpeed(this.a as BoatState));
+    else this.boat.sync(this.a, this.t);
+  }
+
+  private handoffEvents(ev: RunEvent[]): void {
+    const w = this.run.handoff!;
     const raft = w.dropped[w.dropped.length - 1];
     for (const e of ev) {
-      if (e === 'raft-landed') {
+      if (e === 'drop-landed') {
         const d = w.landings[w.landings.length - 1];
         this.audio.secured();
         this.waterView.spray.splash(new THREE.Vector3(raft.x, WATER_LEVEL + 0.3, raft.z), 16, 0.8);
         this.burst.fire(new THREE.Vector3(raft.x, WATER_LEVEL + 2, raft.z));
         this.hud.banner(d < w.spec.reach * 0.35 ? 'RIGHT ON THEM!' : 'RAFT DOWN!', `${Math.round(d)} m away · they're swimming for it`, 'good', 2.6);
-      } else if (e === 'raft-missed') {
+      } else if (e === 'drop-missed') {
         const d = w.landings[w.landings.length - 1];
         this.audio.splash();
         this.waterView.spray.splash(new THREE.Vector3(raft.x, WATER_LEVEL + 0.3, raft.z), 12, 0.7);
-        this.hud.banner('MISSED', w.rafts > 0 ? `${Math.round(d)} m off · ${w.rafts} raft left` : `${Math.round(d)} m off · the boat is coming`, 'bad', 2.4);
-        this.crew(w.rafts > 0 ? 'Too far, they cannot reach it. Come round again, lead them more.' : "That's the last raft. Boat's on its way.", true);
-      } else if (e === 'rafted') {
+        this.hud.banner('MISSED', w.drops > 0 ? `${Math.round(d)} m off · ${w.drops} raft left` : `${Math.round(d)} m off · the boat is coming`, 'bad', 2.4);
+        this.crew(w.drops > 0 ? 'Too far, they cannot reach it. Come round again, lead them more.' : "That's the last raft. Boat's on its way.", true);
+      } else if (e === 'caught') {
         this.say('CREW', "They're in the raft! Out of the water.");
-      } else if (e === 'cold-warn') {
+      } else if (e === 'clock-warn') {
         this.audio.warn();
         this.hud.banner('GETTING COLD', 'They cannot hold on much longer', 'bad', 2.4);
         this.crew("They're getting weak in that water. Hurry!", true);
-      } else if (e === 'too-cold') {
+      } else if (e === 'clock-out') {
         this.fail('TOO COLD', this.run.failReason ?? '');
       } else if (e === 'handoff') {
-        this.toBoat();
+        this.toGround();
       } else if (e === 'pulling') {
-        this.crew(pick(["Got a hand on them! Hold it there!", 'Alongside! Pulling them in!']), true);
+        this.crew(this.onBike ? pick(["She's climbing on. Hold it there!", 'Easy, let her get on.']) : pick(['Got a hand on them! Hold it there!', 'Alongside! Pulling them in!']), true);
       } else if (e === 'picked-up') {
         this.audio.secured();
-        this.boat.setAboard(this.run.survivors.length);
+        if (this.onBike) this.bike.setPillion(true);
+        else this.boat.setAboard(this.run.survivors.length);
         this.burst.fire(new THREE.Vector3(this.a.x, this.a.y + 2, this.a.z));
         this.shake = 0.15;
       }
     }
   }
 
-  /** The water each frame: spray off the boat, the raft preview, the rings, the people's raft. */
-  private waterEffects(dt: number): void {
-    const w = this.run.water!;
-    const v = this.waterView;
-    const g = swimmers(w);
-    // where a raft let go now would land, and how close it has to be
+  /** Each frame: the raft preview and rings on the river, the pickup ring on the trail, the spray or the dust. */
+  private handoffEffects(dt: number): void {
+    const w = this.run.handoff!;
+    const g = peopleAt(w);
     const m = this.mover();
-    const act = canDropRaft(w, m, this.run.spotted);
-    const near = !this.onWater && this.run.spotted && w.phase === 'air' && w.rafted < 0 && w.rafts > 0 && Math.hypot(m.x - g.x, m.z - g.z) < 420;
-    v.reach.visible = near || (this.onWater && w.pull < 1 && Math.hypot(m.x - g.x, m.z - g.z) < 200);
+    const b = this.a as BoatState;
+    const sp = boatSpeed(b);
+    if (this.onBike) {
+      // dust off the back wheel, thicker off the trail
+      if (this.driving && b.agl < 0.2 && sp > 4) {
+        const n = Math.min(3, sp * dt * (1.2 + 1.8 * (1 - trailAt(b.x, b.z))));
+        const rw = this.bike.rearWorld(new THREE.Vector3());
+        const fx = -Math.sin(b.yaw);
+        const fz = -Math.cos(b.yaw);
+        for (let i = 0; i < n; i++) {
+          if (Math.random() > n - i) break;
+          this.trailView.dust.emit(rw, -fx * sp * 0.15 + (Math.random() - 0.5) * 2, 0.8 + Math.random() * 1.5, -fz * sp * 0.15 + (Math.random() - 0.5) * 2, 0.4 + sp * 0.02, 0.9, 1.2);
+        }
+      }
+      return;
+    }
+    const v = this.waterView;
+    // where a raft let go now would land, and how close it has to be
+    const act = canDropItem(w, m, this.run.spotted);
+    const near = !this.driving && this.run.spotted && w.phase === 'air' && w.caught < 0 && w.drops > 0 && Math.hypot(m.x - g.x, m.z - g.z) < 420;
+    v.reach.visible = near || (this.driving && w.pull < 1 && Math.hypot(m.x - g.x, m.z - g.z) < 200);
     v.reach.position.set(g.x, WATER_LEVEL + 0.15, g.z);
-    if (this.onWater) {
-      v.reach.scale.setScalar(PULL_RANGE / w.spec.reach);
+    if (this.driving) {
+      v.reach.scale.setScalar(PICKUP.boat.range / w.spec.reach);
       (v.reach.material as THREE.MeshBasicMaterial).color.setHex(w.pull > 0 ? 0x6dff9a : 0xffffff);
     } else {
       v.reach.scale.setScalar(1);
       (v.reach.material as THREE.MeshBasicMaterial).color.setHex(0xffffff);
     }
     if (near && (act.ok || act.why === 'TOO HIGH')) {
-      const at = raftLanding(m);
+      const at = dropLanding(m);
       const hit = Math.hypot(at.x - g.x, at.z - g.z) <= w.spec.reach;
       v.aim.visible = true;
       v.aim.position.set(at.x, WATER_LEVEL + 0.2, at.z);
@@ -1161,34 +1229,30 @@ export class RescueGame {
       (v.aim.children[0] as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>).material.color.setHex(c);
     } else v.aim.visible = false;
     // spray: a rooster tail off the jet and a curl off the bow, more the faster it goes
-    if (this.onWater) {
-      const b = this.a as BoatState;
-      const sp = boatSpeed(b);
-      if (b.agl < 0.2 && sp > 2) {
-        const n = Math.min(4, sp * dt * 3.2);
-        const st = this.boat.sternWorld(new THREE.Vector3());
-        const bw = this.boat.bowWorld(new THREE.Vector3());
-        const fx = -Math.sin(b.yaw);
-        const fz = -Math.cos(b.yaw);
-        for (let i = 0; i < n; i++) {
-          if (Math.random() > n - i) break;
-          st.y = WATER_LEVEL + 0.3;
-          v.spray.emit(st, -fx * sp * 0.25 + (Math.random() - 0.5) * 2, 1 + sp * 0.18 * Math.random(), -fz * sp * 0.25 + (Math.random() - 0.5) * 2, 0.35 + sp * 0.02, 0.7, 1.1);
-          if (sp > 9) {
-            for (const side of [-1, 1]) {
-              bw.y = WATER_LEVEL + 0.25;
-              v.spray.emit(bw, fz * side * 3 + fx * 2, 1.5 + Math.random(), -fx * side * 3 + fz * 2, 0.35, 0.6, 1.8);
-            }
+    if (this.driving && b.agl < 0.2 && sp > 2) {
+      const n = Math.min(4, sp * dt * 3.2);
+      const st = this.boat.sternWorld(new THREE.Vector3());
+      const bw = this.boat.bowWorld(new THREE.Vector3());
+      const fx = -Math.sin(b.yaw);
+      const fz = -Math.cos(b.yaw);
+      for (let i = 0; i < n; i++) {
+        if (Math.random() > n - i) break;
+        st.y = WATER_LEVEL + 0.3;
+        v.spray.emit(st, -fx * sp * 0.25 + (Math.random() - 0.5) * 2, 1 + sp * 0.18 * Math.random(), -fz * sp * 0.25 + (Math.random() - 0.5) * 2, 0.35 + sp * 0.02, 0.7, 1.1);
+        if (sp > 9) {
+          for (const side of [-1, 1]) {
+            bw.y = WATER_LEVEL + 0.25;
+            v.spray.emit(bw, fz * side * 3 + fx * 2, 1.5 + Math.random(), -fx * side * 3 + fz * 2, 0.35, 0.6, 1.8);
           }
         }
       }
     }
   }
 
-  /** Once the boat has taken over, the Search Aircraft circles over the river, watching. */
+  /** Once the boat or the bike has taken over, the Search Aircraft circles overhead, watching. */
   private orbitPlane(dt: number): void {
-    const w = this.run.water!;
-    const c = w.pull < 1 ? swimmers(w) : { x: this.a.x, z: this.a.z };
+    const w = this.run.handoff!;
+    const c = w.pull < 1 ? peopleAt(w) : { x: this.a.x, z: this.a.z };
     this.orbitA += dt * 0.28;
     const r = 170;
     const p = this.plane;
@@ -1200,25 +1264,28 @@ export class RescueGame {
     p.sync({ x, y: Math.max(g, 0) + 120, z, yaw, pitch: 0, roll: -0.45, speed: 48, throttle: 0.5, agl: 120, terrainWarning: false, boundaryWarning: false }, this.t, dt);
   }
 
-  /** In to the jetty: the boat eases alongside, they climb out and walk to the ambulance. */
+  /** Home: the boat eases in to the jetty (the bike rolls up to the ambulance), they get off and walk to the ambulance. */
   private startDocking(): void {
-    const v = this.waterView.station;
     const hf = this.bundle.heightField;
+    const bike = this.onBike;
+    const to = bike ? new THREE.Vector3(this.a.x + (this.a.vx ?? 0) * 0.5, 0, this.a.z + (this.a.vz ?? 0) * 0.5) : this.waterView.station.jettyEnd.clone();
+    const amb = bike ? this.trailView.ambulance : this.waterView.station.ambulance;
+    const off = bike ? new THREE.Vector3(to.x + 1.2, hf.sample(to.x + 1.2, to.z), to.z) : this.waterView.station.jettyEnd;
     this.docking = {
       t: 0,
       from: new THREE.Vector3(this.a.x, this.a.y, this.a.z),
-      to: new THREE.Vector3(v.jettyEnd.x, this.a.y, v.jettyEnd.z),
+      to: new THREE.Vector3(to.x, this.a.y, to.z),
       yaw0: this.a.yaw,
       walkers: this.run.survivors.map((_s, k) => ({
         mesh: this.people[k],
-        from: new THREE.Vector3(v.jettyEnd.x + k * 1.2, v.jettyEnd.y, v.jettyEnd.z),
-        to: new THREE.Vector3(v.ambulance.x + k * 1.3, hf.sample(v.ambulance.x, v.ambulance.z), v.ambulance.z),
+        from: new THREE.Vector3(off.x + k * 1.2, off.y, off.z),
+        to: new THREE.Vector3(amb.x + k * 1.3, hf.sample(amb.x, amb.z), amb.z),
       })),
       done: false,
     };
     this.mode = 'landing';
     this.el['hud'].classList.add('cinematic');
-    this.hud.objective('⚓', 'TYING UP', 'Bringing them in');
+    this.hud.objective('', bike ? 'PULLING UP' : 'TYING UP', 'Bringing them in');
     this.hud.action({ kind: 'hidden' });
     this.hud.drop({ kind: 'hidden' });
   }
@@ -1226,6 +1293,7 @@ export class RescueGame {
   private updateDocking(dt: number): void {
     const D = this.docking!;
     const hf = this.bundle.heightField;
+    const bike = this.onBike;
     this.hud.tick(dt);
     D.t += dt;
     const k = Math.min(1, D.t / 2.2);
@@ -1233,16 +1301,21 @@ export class RescueGame {
     const b = this.a as BoatState;
     b.x = D.from.x + (D.to.x - D.from.x) * e;
     b.z = D.from.z + (D.to.z - D.from.z) * e;
+    if (bike) {
+      b.y = hf.sample(b.x, b.z);
+      b.agl = 0;
+    }
     b.speed = damp(b.speed, 0, 3, dt);
     b.vx = 0;
     b.vz = 0;
     b.pitch = damp(b.pitch, 0, 3, dt);
     b.roll = damp(b.roll, 0, 3, dt);
     b.throttle = 0;
-    this.boat.sync(b, this.t);
+    this.syncGround(dt);
     this.orbitPlane(dt);
     if (D.t > 2.4) {
-      this.boat.setAboard(0);
+      if (bike) this.bike.setPillion(false);
+      else this.boat.setAboard(0);
       const w = Math.min(1, (D.t - 2.4) / 3);
       for (const wk of D.walkers) {
         if (!wk.mesh) continue;
@@ -1260,7 +1333,7 @@ export class RescueGame {
       if (ev.includes('complete')) {
         this.audio.fanfare();
         this.radio.clear();
-        this.say('BOAT STATION', this.def.radio.landed);
+        this.say(bike ? 'GROUND' : 'BOAT STATION', this.def.radio.landed);
         const n = this.run.survivors.length;
         this.showCard(`${n === 1 ? 'SURVIVOR' : `${n} SURVIVORS`} HOME SAFE`, 'RESCUE COMPLETE', '', 'good', 4.4);
       }
@@ -1269,10 +1342,13 @@ export class RescueGame {
       this.showDebrief(debrief(this.run));
       return;
     }
-    this.waterView.spray.update(dt);
-    this.waterView.station.update(this.t, false);
+    if (bike) this.trailView.update(this.t, dt, false);
+    else {
+      this.waterView.spray.update(dt);
+      this.waterView.station.update(this.t, false);
+    }
     this.updateCamera(dt);
-    this.audio.updateBoat(0, 0);
+    this.audio.updateBoat(0, 0, bike);
   }
 
   private fail(title: string, line: string): void {
@@ -1316,7 +1392,7 @@ export class RescueGame {
     this.hud.tick(dt);
     if (this.ending) {
       // a failure (or the end of the rescue, or the fire beaten): hold, then the debrief
-      if (this.onWater) {
+      if (this.driving) {
         // the boat drifts to a stop
         const b = this.a as BoatState;
         b.vx = damp(b.vx ?? 0, 0, 1.5, dt);
@@ -1324,9 +1400,10 @@ export class RescueGame {
         b.x += (b.vx ?? 0) * dt;
         b.z += (b.vz ?? 0) * dt;
         b.speed = damp(b.speed, 0, 1.5, dt);
-        this.boat.sync(b, this.t);
+        if (this.onBike) b.y = this.bundle.heightField.sample(b.x, b.z);
+        this.syncGround(dt);
         this.orbitPlane(dt);
-        this.audio.updateBoat(0, b.speed);
+        this.audio.updateBoat(0, b.speed, this.onBike);
       } else if (this.plan.kind === 'plane') {
         // a plane cannot stop: it flies on, climbing gently away
         const ax = headingAxes(this.a.yaw);
@@ -1505,10 +1582,10 @@ export class RescueGame {
       if (!m) return;
       if (this.landing && this.landing.walkers.some((w) => w.mesh === m) && this.landing.t > 2.6) return;
       if (this.docking && this.docking.t > 2.4) return;
-      if (run.water) {
+      if (run.handoff?.spec.river) {
         // in the river: heads and waving arms above the water; in a raft, sitting in it
-        const w = run.water;
-        const raft = w.rafted >= 0 ? w.dropped[w.rafted] : null;
+        const w = run.handoff;
+        const raft = w.caught >= 0 ? w.dropped[w.caught] : null;
         const inRaft = !!raft && raft.state === 'floating' && Math.hypot(raft.x - s.x, raft.z - s.z) < 4;
         const face = Math.atan2(-(this.a.x - s.x), -(this.a.z - s.z));
         if (inRaft && s.state === 'waiting') {
@@ -1526,7 +1603,7 @@ export class RescueGame {
     });
     // the basket and its cable
     const g = hf.sample(this.basket.x, this.basket.z);
-    const rescue = def.survivors > 0 && !def.water;
+    const rescue = def.survivors > 0 && !def.handoff;
     this.basketMesh.group.visible = rescue;
     if (rescue) this.basketMesh.update(this.basket.x, this.basket.y, this.basket.z, this.a.yaw, this.winchPos, g, this.basket.len);
     else this.basketMesh.cable.visible = this.basketMesh.shadow.visible = false;
@@ -1539,11 +1616,13 @@ export class RescueGame {
       this.audio.updateFire(dt, this.mode === 'paused' ? 0 : Math.min(1, this.fireView.burning / 160) * near);
     }
     // the river: rafts, the canoe drifting with them, the rapids, the station's beam home, the spray
-    const water = run.water;
+    const water = run.handoff?.spec.river ? run.handoff : null;
+    const trail = run.handoff?.spec.vehicle === 'bike';
+    if (trail) this.trailView.update(this.t, dt, run.stage === 'return' && !escaping(run));
     if (water) {
       const wv = this.waterView;
-      wv.rafts.update(water.dropped, this.t);
-      const c = swimmers(water);
+      wv.drops.update(water.dropped, this.t);
+      const c = peopleAt(water);
       const up = currentAt(c.x, c.z);
       const ul = Math.hypot(up.x, up.z) || 1;
       wv.canoe.position.set(c.x - (up.x / ul) * 9 + 3, WATER_LEVEL + 0.1 + Math.sin(this.t * 1.6) * 0.08, c.z - (up.z / ul) * 9 - 2);
@@ -1558,15 +1637,20 @@ export class RescueGame {
     const spot = hoistSpot(run, this.a);
     const dSite = distToSpot(run, this.a);
     this.ring.position.set(spot.x, hf.sample(spot.x, spot.z) + 0.35, spot.z);
-    this.ring.visible = run.spotted && onMountain && dSite < 160 && !water;
+    this.ring.visible = run.spotted && onMountain && dSite < 160 && !run.handoff;
+    if (trail && this.driving && run.handoff!.pull < 1 && dSite < 140) {
+      // on the trail: stop inside this ring and she climbs on
+      this.ring.visible = true;
+      this.ring.scale.setScalar(PICKUP.bike.range);
+    }
     const pulse = 0.65 + 0.35 * Math.sin(this.t * 5);
     const ringMat = this.ring.material as THREE.MeshBasicMaterial;
     ringMat.opacity = pulse;
     const over = this.hoisting && Math.hypot(this.basket.x - spot.x, this.basket.z - spot.z) <= this.plan.hoist.reach + RING_PAD;
-    ringMat.color.setHex(over ? 0x22e070 : 0xffffff);
-    const pad = water ? water.spec.station : PADS[def.deliverTo];
+    ringMat.color.setHex(over || (trail && run.handoff!.pull > 0) ? 0x22e070 : 0xffffff);
+    const pad = run.handoff ? run.handoff.spec.home : PADS[def.deliverTo];
     const toHospital = aboard(run) > 0 && (run.stage === 'return' || cabinFull(run) || waiting(run) === 0);
-    this.rescueProps.padBeacon[def.deliverTo].visible = toHospital && !water;
+    this.rescueProps.padBeacon[def.deliverTo].visible = toHospital && !run.handoff;
     if (this.mode === 'landing' || run.stage === 'complete' || run.stage === 'failed') this.marker.group.visible = false;
     else if (toHospital) {
       this.marker.set('h');
@@ -1574,7 +1658,7 @@ export class RescueGame {
       this.marker.update(pad.x, Math.max(WATER_LEVEL, hf.sample(pad.x, pad.z)), pad.z, cam, this.t, 26);
     } else if (run.spotted && onMountain) {
       this.marker.set('person');
-      this.marker.group.visible = !(this.hoisting && dSite < 50) && !(water && this.onWater && dSite < 40);
+      this.marker.group.visible = !(this.hoisting && dSite < 50) && !(run.handoff && this.driving && dSite < 40);
       this.marker.update(spot.x, Math.max(WATER_LEVEL, hf.sample(spot.x, spot.z)), spot.z, cam, this.t, 16);
     } else if (def.survivors === 0) {
       // on a fire: a pin over the airfield when it is time to reload
@@ -1591,7 +1675,7 @@ export class RescueGame {
     } else this.marker.group.visible = false;
     // ambulance lights at the hospital
     for (const [i, l] of this.rescueProps.ambulanceLights.entries()) (l.material as THREE.MeshBasicMaterial).color.setHex(Math.floor(this.t * 4 + i) % 2 ? 0x3aa0ff : 0x0d2a55);
-    const smoke = def.signal === 'smoke' ? new THREE.Vector3(def.site.x + 3, hf.sample(def.site.x + 3, def.site.z + 2), def.site.z + 2) : null;
+    const smoke = def.signal === 'smoke' && waiting(run) > 0 ? new THREE.Vector3(def.site.x + 3, hf.sample(def.site.x + 3, def.site.z + 2), def.site.z + 2) : null;
     this.signals.update(dt, this.wind, smoke);
     this.burst.update(dt);
     // recon contacts, escape gates, the route ribbon and the shadow
@@ -1601,12 +1685,12 @@ export class RescueGame {
     const o = objective(run, this.hoisting, false, this.a);
     const tg = this.mode === 'flight' && !this.hoisting && run.stage !== 'takeoff' ? o.target : null;
     const gate = tg?.kind === 'gate' && esc ? esc.gates[esc.next] : null;
-    const ty = this.onWater ? WATER_LEVEL + 2.2 : gate ? gate.y : tg ? Math.max(hf.sample(tg.x, tg.z) + 30, Math.min(this.a.y, hf.sample(tg.x, tg.z) + 120)) : 0;
+    const ty = this.driving && tg ? Math.max(WATER_LEVEL, hf.sample(tg.x, tg.z)) + 2.2 : gate ? gate.y : tg ? Math.max(hf.sample(tg.x, tg.z) + 30, Math.min(this.a.y, hf.sample(tg.x, tg.z) + 120)) : 0;
     const col = tg?.kind === 'pad' ? 0x6dff9a : tg?.kind === 'gate' ? 0xffc35a : tg?.kind === 'fire' ? 0xff8a5a : 0x9fe4ff;
     this.ribbon.update(this.a, this.a.yaw, tg ? { x: tg.x, y: ty, z: tg.z } : null, this.t, col);
     const big = this.plan.kind === 'plane' ? (this.plan.style === 'tanker' ? 26 : 14) : this.plan.style === 'heavy' ? 16 : 12;
     this.shadow.update(this.a.x, this.a.z, this.a.agl, hf.sample(this.a.x, this.a.z), this.a.yaw, big);
-    if (this.onWater) this.shadow.mesh.visible = false;
+    if (this.driving) this.shadow.mesh.visible = false;
   }
 
   private updateHud(dt: number): void {
@@ -1649,21 +1733,23 @@ export class RescueGame {
       hud.drop(this.dropState());
     } else {
       hud.fire(null);
-      hud.drop(run.water && !this.onWater ? this.raftDropState() : { kind: 'hidden' });
+      hud.drop(run.handoff && !this.driving ? this.raftDropState() : { kind: 'hidden' });
     }
     const touch = this.input.isTouch;
     // the context button
-    const where = { x: this.a.x, z: this.a.z, agl: this.a.agl, speed: this.a.speed };
+    const where = { x: this.a.x, z: this.a.z, agl: this.a.agl, speed: this.driving ? boatSpeed(this.a as BoatState) : this.a.speed };
     let action: ActionState = { kind: 'hidden' };
     if (this.hoisting) action = this.reeling ? { kind: 'wait', label: 'REELING IN…' } : { kind: 'fly', label: 'FLY ▶' };
-    else if (run.water) {
-      const w = run.water;
-      if (this.onWater && w.pull < 1 && run.stage === 'rescue') {
-        const g = swimmers(w);
+    else if (run.handoff) {
+      const w = run.handoff;
+      if (this.driving && w.pull < 1 && run.stage === 'rescue') {
+        const g = peopleAt(w);
         const d = Math.hypot(this.a.x - g.x, this.a.z - g.z);
         const sp = boatSpeed(this.a as BoatState);
-        if (w.pull > 0) action = { kind: 'wait', label: `PULLING THEM IN ${Math.round(w.pull * 100)}%` };
-        else if (d < 60 && sp >= PULL_SPEED) action = { kind: 'wait', label: 'EASE OFF ALONGSIDE' };
+        const pk = PICKUP[w.spec.vehicle];
+        const bike = w.spec.vehicle === 'bike';
+        if (w.pull > 0) action = { kind: 'wait', label: `${bike ? 'CLIMBING ON' : 'PULLING THEM IN'} ${Math.round(w.pull * 100)}%` };
+        else if (d < 60 && sp >= pk.speed) action = { kind: 'wait', label: bike ? 'STOP NEXT TO HER' : 'EASE OFF ALONGSIDE' };
       }
     } else if (def.survivors > 0) {
       const ch = canHoist(run, where);
@@ -1678,18 +1764,18 @@ export class RescueGame {
       const label = this.basket.carrying !== null ? 'REEL IN!' : this.basket.grounded ? 'ON THE GROUND' : this.basket.len < 0.4 ? 'STOWED' : `${Math.round(above)} m TO GO`;
       hud.winch(this.winchCmd / max, this.basket.len / max, label);
       hud.stickLabel('MOVE');
-    } else if (this.onWater) {
+    } else if (this.driving) {
       hud.lever(this.a.throttle, true);
       hud.stickLabel('STEER · UP: FASTER');
     } else {
       hud.lever(this.a.throttle, plan.kind === 'plane');
       hud.stickLabel(this.prefs.verticalMode === 'standard' ? 'STEER · UP CLIMBS' : 'STEER · DOWN CLIMBS');
     }
-    hud.readout(this.hoisting ? `WIND ${Math.round(this.wind.speed * 3.6)} km/h` : this.onWater ? `${Math.round(where.speed * 3.6)} km/h` : `${Math.round(this.a.agl)} m · ${Math.round(this.a.speed * 3.6)} km/h`);
+    hud.readout(this.hoisting ? `WIND ${Math.round(this.wind.speed * 3.6)} km/h` : this.driving ? `${Math.round(where.speed * 3.6)} km/h` : `${Math.round(this.a.agl)} m · ${Math.round(this.a.speed * 3.6)} km/h`);
     // warnings
     const fuelLow = run.fuel < run.fuelMax * 0.2;
-    const w = run.water;
-    const cold = w && w.rafted < 0 && w.pull < 1 && w.cold < 60 ? `COLD WATER · ${Math.ceil(w.cold)} s` : '';
+    const w = run.handoff;
+    const cold = w && w.spec.clock > 0 && w.caught < 0 && w.pull < 1 && w.clock < 60 ? `COLD WATER · ${Math.ceil(w.clock)} s` : '';
     hud.warn(cold || (run.escape?.off && escaping(run) ? (w ? 'OFF THE CHANNEL' : 'OFF ROUTE · ROUGH AIR') : this.a.terrainWarning && !this.hoisting && this.a.speed > 15 ? 'TERRAIN · CLIMB' : fuelLow ? 'LOW FUEL' : ''));
     // the hint: always says what to do next, in a few words
     this.hintT += dt;
@@ -1706,7 +1792,7 @@ export class RescueGame {
       pads: w
         ? [
             { x: PADS.base.x, z: PADS.base.z, hospital: false },
-            { x: w.spec.station.x, z: w.spec.station.z, hospital: true },
+            { x: w.spec.home.x, z: w.spec.home.z, hospital: true },
           ]
         : [
             { x: PADS.base.x, z: PADS.base.z, hospital: false },
@@ -1759,7 +1845,7 @@ export class RescueGame {
       if (b.len < 1) return touch ? `Hold over the ring · slide the basket DOWN on the ${lever}` : 'Arrows: hold position · Ctrl / Z: lower the basket';
       return 'Keep the basket over the ring';
     }
-    if (run.water) return this.waterHint(touch, where);
+    if (run.handoff) return this.handoffHint(touch, where);
     if (this.hintT < 6 && run.t < 14) return touch ? `Lever UP to fly · drag on the ${steer} to steer` : 'Shift / Q: speed · arrows: steer and climb';
     // on a fire; with people trapped, the rescue's hints win once you are near them
     if (run.ops && (this.def.survivors === 0 || (!this.hoisting && run.stage !== 'return' && distToSite(run, where) > 160))) {
@@ -1788,41 +1874,52 @@ export class RescueGame {
     return '';
   }
 
-  /** The hint on a water rescue. */
-  private waterHint(touch: boolean, where: { x: number; z: number; agl: number; speed: number }): string {
+  /** The hint on a two-vehicle rescue. */
+  private handoffHint(touch: boolean, where: { x: number; z: number; agl: number; speed: number }): string {
     const run = this.run;
-    const w = run.water!;
+    const w = run.handoff!;
     const steer = this.prefs.steer === 'left' ? 'left' : 'right';
-    const g = swimmers(w);
+    const g = peopleAt(w);
     const d = Math.hypot(where.x - g.x, where.z - g.z);
-    if (this.onWater) {
+    if (this.driving && w.spec.vehicle === 'bike') {
+      if (this.hintT < 5) return touch ? `Lever UP for speed · drag on the ${steer} to steer` : 'Up / W: throttle · left and right: steer';
+      if (run.stage === 'rescue') {
+        if (w.pull > 0) return 'Hold still while she climbs on';
+        if (d < 50) return where.speed >= PICKUP.bike.speed ? 'Brake: stop inside the ring' : 'Into the ring, right next to her';
+        return trailAt(where.x, where.z) > 0.5 ? 'Up the forest track: follow the orange pin' : 'The track is quicker than the brush';
+      }
+      if (escaping(run)) return run.escape!.off ? 'Back onto the trail' : 'Through the arches · hit the ramps flat out';
+      const h = w.spec.home;
+      return Math.hypot(where.x - h.x, where.z - h.z) < 80 ? 'Slow down and pull up by the ambulance' : 'Follow the green beam to the ambulance';
+    }
+    if (this.driving) {
       if (this.hintT < 5) return touch ? `Lever UP for speed · drag on the ${steer} to steer` : 'Up / W: throttle · left and right: steer';
       if (run.stage === 'rescue') {
         if (w.pull > 0) return 'Stay right next to them';
-        if (d < 60) return where.speed >= PULL_SPEED ? 'Ease off: come alongside slowly' : 'Right alongside them, inside the ring';
+        if (d < 60) return where.speed >= PICKUP.boat.speed ? 'Ease off: come alongside slowly' : 'Right alongside them, inside the ring';
         return 'Up the river: follow the orange pin';
       }
       if (escaping(run)) return run.escape!.off ? 'Back into the channel' : 'Through the glowing arches · fly off the rapids';
-      const st = w.spec.station;
+      const st = w.spec.home;
       const ds = Math.hypot(where.x - st.x, where.z - st.z);
       return ds < 80 ? 'Ease off and slide in to the jetty' : 'Follow the green beam to the station';
     }
     if (this.hintT < 6 && run.t < 14) return touch ? `Lever UP for speed · drag on the ${steer} to steer` : 'Shift / Q: speed · arrows: steer and climb';
-    if (run.stage === 'search') return 'Fly low along the river: look for the red canoe';
-    if (run.stage !== 'rescue') return '';
-    if (w.rafted >= 0 || w.rafts === 0) return '';
+    if (run.stage === 'search') return w.spec.river ? 'Fly low along the river: look for the red canoe' : run.signalled ? 'Look for the smoke over the trees' : 'Head for the search area, low over the forest';
+    if (run.stage !== 'rescue' || !w.spec.river) return '';
+    if (w.caught >= 0 || w.drops === 0) return '';
     if (w.dropped.some((r) => r.state === 'falling')) return 'Watch it come down';
     if (d > 420) return 'Turn back toward them';
-    if (where.agl > RAFT_MAX_AGL) return 'Too high to drop: get down low';
+    if (where.agl > DROP_MAX_AGL) return 'Too high to drop: get down low';
     return touch ? 'Line up so the orange ring sits in theirs, then DROP RAFT' : 'Line up the orange ring with theirs · DROP (Space / F)';
   }
 
   /** What the raft button does right now. */
   private raftDropState(): DropState {
-    const w = this.run.water!;
-    if (this.run.stage !== 'rescue' || w.phase !== 'air' || w.rafted >= 0 || w.rafts === 0) return { kind: 'hidden' };
-    const act = canDropRaft(w, this.mover(), this.run.spotted);
-    if (act.ok) return { kind: 'ready', label: `DROP RAFT · ${w.rafts}` };
+    const w = this.run.handoff!;
+    if (this.run.stage !== 'rescue' || w.phase !== 'air' || w.caught >= 0 || w.drops === 0) return { kind: 'hidden' };
+    const act = canDropItem(w, this.mover(), this.run.spotted);
+    if (act.ok) return { kind: 'ready', label: `DROP RAFT · ${w.drops}` };
     if (act.why === 'TOO HIGH') return { kind: 'wait', label: 'TOO HIGH · DESCEND' };
     if (act.why) return { kind: 'wait', label: act.why };
     return { kind: 'hidden' };
@@ -1874,9 +1971,16 @@ export class RescueGame {
     const gy = hf.sample(spot.x, spot.z);
     const sep = Math.hypot(this.basket.x - spot.x, this.basket.z - spot.z);
     const look = this.hoisting ? new THREE.Vector3(this.basket.x * 0.5 + spot.x * 0.5, gy + 4 + Math.min(10, Math.max(0, this.basket.y - gy) * 0.25), this.basket.z * 0.5 + spot.z * 0.5) : undefined;
-    const dist = this.onWater ? 0.8 : this.plan.style === 'tanker' ? 2.1 : this.plan.style === 'spotter' || this.plan.style === 'search' ? 1.35 : 1;
+    const dist = this.driving ? (this.onBike ? 0.55 - 0.25 * forestAt(this.a.x, this.a.z) : 0.8) : this.plan.style === 'tanker' ? 2.1 : this.plan.style === 'spotter' || this.plan.style === 'search' ? 1.35 : 1;
     const lift = this.run.ops && this.def.survivors === 0 ? 5 : 0;
     this.chase.update(this.bundle.camera, this.a, dt, (x, z) => hf.sample(x, z), { hoist: this.hoisting ? 1 : 0, look, pull: Math.min(40, sep * 0.8), dist, lift, orbit: this.overview ?? undefined });
+    // on the bike in the forest: no trees between the camera and the rider
+    const cam = this.bundle.camera.position;
+    if (this.driving && this.onBike) {
+      const mx = (cam.x + this.a.x) / 2;
+      const mz = (cam.z + this.a.z) / 2;
+      this.clearance.update(mx, mz, Math.hypot(cam.x - this.a.x, cam.z - this.a.z) / 2 + 5);
+    } else this.clearance.update(0, 0, 0);
     if (this.shake > 0) {
       const amp = this.shake * this.shake * 1.6;
       const c = this.bundle.camera.position;
@@ -1985,13 +2089,13 @@ export class RescueGame {
       setFuel: (sec: number) => {
         this.run.fuel = sec;
       },
-      getWater: () => this.run.water,
-      isOnWater: () => this.onWater,
+      getHandoff: () => this.run.handoff,
+      isDriving: () => this.driving,
       /** Water rescue helper: the aircraft `back` metres upstream of the people, low, flying down the river at them. */
       skipToSwimmers: (back = 220, agl = 40) => {
-        const w = this.run.water;
+        const w = this.run.handoff;
         if (!w) return;
-        const g = swimmers(w);
+        const g = peopleAt(w);
         const c = currentAt(g.x, g.z);
         const l = Math.hypot(c.x, c.z) || 1;
         const fx = c.x / l;
@@ -2004,19 +2108,19 @@ export class RescueGame {
         this.a.vz = fz * this.a.speed;
         this.chase.reset();
       },
-      /** Water rescue helper: the raft is down on them and the boat takes over now. */
-      skipToBoat: () => {
-        const w = this.run.water;
+      /** Two-vehicle helper: the aircraft's part is done and the boat (or the bike) takes over now. */
+      skipToGround: () => {
+        const w = this.run.handoff;
         if (!w) return;
         this.run.spotted = true;
         this.run.stage = 'rescue';
         w.handoffIn = 0.01;
       },
-      /** Water rescue helper: the boat alongside them, stopped. */
-      boatAlongside: () => {
-        const w = this.run.water;
-        if (!w || !this.onWater) return;
-        const g = swimmers(w);
+      /** Two-vehicle helper: the boat (or the bike) alongside them, stopped. */
+      alongside: () => {
+        const w = this.run.handoff;
+        if (!w || !this.driving) return;
+        const g = peopleAt(w);
         const b = this.a as BoatState;
         b.x = g.x + 6;
         b.z = g.z + 6;

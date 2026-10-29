@@ -15,7 +15,7 @@ const DT = 1 / 30;
 
 describe('the escape route data', () => {
   // (the river run's arches sit on the water: tests/water.test.ts checks those)
-  for (const m of MISSIONS.filter((x) => x.ready && x.escape && !x.water)) {
+  for (const m of MISSIONS.filter((x) => x.ready && x.escape && !x.handoff)) {
     it(`${m.id}: every gate stands clear of the ground, and the line between them can be flown`, () => {
       const e = newEscape(m.escape!, ground);
       expect(e.gates.length).toBeGreaterThanOrEqual(5);
