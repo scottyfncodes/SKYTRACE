@@ -101,11 +101,11 @@ A wildfire call is not another precision drop. The fire is a living thing on the
 2. **Fly out.** The fire panel shows the place in danger, a threat bar (LOW → CRITICAL), what you have left, and the countdown to the crews.
 3. **Fight it.** Before you press DROP, the ground shows where it will land (a red strip for a line, a blue ring for a bucket). Tolerances are generous; the decision is what matters.
 4. **Watch it.** The front runs into your line and stops (THE LINE IS HOLDING!), or flanks round its end, or embers jump. Adapt: another line, reload, refill.
-5. **Consequence.** Hold it until the crews arrive (or cut it off from everything it threatens: CONTAINED). The camera circles the fire; the debrief shows the fire **without you** next to the fire **with you**, how much forest burned against how much would have, and up to three stars (job done, forest saved, fire kept well away). Let it reach a town and the mission fails.
+5. **Consequence.** Knock 80% of the flames down (the fire panel shows how far under control it is) and the crews mop up the rest: CONTAINED. Or cut it off from everything it threatens, or hold it until the crews arrive. The camera circles the fire; the debrief shows the fire **without you** next to the fire **with you**, how much forest burned against how much would have, and up to three stars (job done, forest saved, fire kept well away). Let it reach a town and the mission fails.
 
 | Aircraft | How it fights fire | The decision it creates |
 | --- | --- | --- |
-| ✈️ **Fire Tanker** | DROP lays a 230 m retardant line along the path you fly. 2 lines a load; reload low over the airfield | Where to lay the line ahead of the front, and anchoring both ends |
+| ✈️ **Fire Tanker** | DROP lays a 230 m retardant line along the path you fly, putting out the flames under it. 2 lines a load; scoop more by skimming the river or the lake low and fast (or reload low over the airfield) | Lines through the head, and the run back down to the water |
 | 🚁 **Fire Helicopter** | A bucket on a long line. DROP lets it go just ahead of you (knocks hotspots out); refill by hovering low over the river or a dip tank | Which hotspot first; the round trip to the water |
 | 🛩️ **Fire Spotter** | Fast; reads the fire (shows where it will be in a minute). MARK flies a line, and Tanker 42 drops a 320 m line along it 14 s later. 3 calls | Leading the fire: the drop comes after you mark it |
 

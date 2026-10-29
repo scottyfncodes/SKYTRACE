@@ -573,7 +573,7 @@ export const MISSIONS: readonly MissionDef[] = [
       hold: 280,
       water: [{ name: 'Varrow River', x: 40, z: 280, r: 45 }],
       goodSpread: 0.12,
-      advice: { retardant: 'Three fires and two lines a load: you will be reloading.' },
+      advice: { retardant: 'Three fires and two lines a load: you will be skimming the river a lot.' },
     },
     ready: true,
     unlockedBy: 'wind-fire',

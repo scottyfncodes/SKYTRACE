@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { BURNING, BURNT, breached, canReach, cellAt, createFire, dropRetardant, dropWater, fireStats, frontDistance, stepFire, timeToReach, UNBURNT, OUT, type FireSpec } from '../src/fire/fireSim';
-import { canFireAction, CALL_DELAY, CALL_LEN, fireAction, LINE_LEN, RELOAD, SCOOP_TIME, waterUnder } from '../src/fire/fireRun';
+import { canFireAction, CALL_DELAY, CALL_LEN, CONTROL, fireAction, LINE_LEN, nearestSkim, RELOAD, SCOOP_TIME, SKIM_TIME, waterUnder } from '../src/fire/fireRun';
 import { canLaunch, checkLoadout, defaultLoadout, planOf, type Loadout } from '../src/rescue/loadout';
 import { MISSIONS, MISSION_BY_ID, type MissionDef } from '../src/rescue/missions';
 import { isAvailable, newProgress, recordRescue } from '../src/rescue/progress';
@@ -321,7 +321,7 @@ describe('progression across the two families', () => {
 
 // ------------------------------------------------------------------ loads
 describe('loads: retardant, water and tanker calls run out', () => {
-  it('the tanker carries two lines, then has to reload at the airfield', () => {
+  it('the tanker carries two lines, then reloads at the airfield or by skimming the river', () => {
     const p = launch(MISSION_BY_ID['wind-fire'], L('tanker'));
     const ops = p.run.ops!;
     expect(ops.load).toBe(2);
@@ -333,7 +333,7 @@ describe('loads: retardant, water and tanker calls run out', () => {
     expect(p.ev).toContain('empty');
     const where = { x: p.x, z: p.z, agl: 60, speed: 50 };
     expect(canFireAction(ops, where)).toEqual({ ok: false, why: 'TANKS EMPTY' });
-    expect(objective(p.run, false, false, p).title).toMatch(/RELOAD/);
+    expect(objective(p.run, false, false, p).title).toMatch(/RELOAD|SKIM/);
     // too high over the airfield: nothing
     flyTo(p, RELOAD.x, RELOAD.z, 70, 200);
     wait(p, 4);
@@ -342,6 +342,64 @@ describe('loads: retardant, water and tanker calls run out', () => {
     wait(p, 4);
     expect(p.ev).toContain('reloaded');
     expect(ops.load).toBe(2);
+  });
+
+  it('the tanker scoops by skimming the river low and fast; too high, it does not', () => {
+    const p = launch(MISSION_BY_ID['wind-fire'], L('tanker'));
+    const ops = p.run.ops!;
+    ops.load = 0;
+    const s = nearestSkim({ x: 200, z: 200 });
+    flyTo(p, s.x - 300, s.z, 60, 80);
+    expect(objective(p.run, false, false, p).title).toBe('SKIM TO SCOOP');
+    // high over the water: nothing
+    p.agl = 60;
+    for (let i = 0; i < 40; i++) {
+      p.x += 5;
+      step(p, DT);
+    }
+    expect(ops.load).toBe(0);
+    // low and fast along it: a full load in a couple of seconds
+    const s2 = nearestSkim(p);
+    p.x = s2.x;
+    p.z = s2.z;
+    p.agl = 12;
+    p.speed = 50;
+    for (let i = 0; i < (SKIM_TIME + 0.5) / DT && ops.load === 0; i++) {
+      const q = nearestSkim({ x: p.x + 5, z: p.z });
+      p.x = q.x;
+      p.z = q.z;
+      step(p, DT);
+    }
+    expect(ops.load).toBe(2);
+    expect(p.ev).toContain('reloaded');
+  });
+
+  it('knock most of a fire down and the crews take over: no chasing the last embers', () => {
+    const p = launch(MISSION_BY_ID['mountain-fire'], L('fire-heli'));
+    waterUntilDone(p);
+    expect(p.run.stage).toBe('complete');
+    expect(p.run.ops!.outcome).toBe('contained');
+    expect(p.run.ops!.control).toBeGreaterThanOrEqual(CONTROL);
+    // flames are still burning: the crews mop them up
+    expect(fireStats(p.run.ops!.fire).burning).toBeGreaterThan(0);
+    expect(p.run.t).toBeLessThan(MISSION_BY_ID['mountain-fire'].fire!.hold * 0.6);
+  });
+
+  it('a retardant line puts out the flames under it', () => {
+    const f = createFire(spec(), flat);
+    for (let t = 0; t < 60; t++) stepFire(f, south, 1);
+    const before = fireStats(f).burning;
+    // straight down the middle of it, with the wind
+    let cx = 0;
+    let n = 0;
+    for (let k = 0; k < f.state.length; k++)
+      if (f.state[k] === BURNING) {
+        cx += f.x0 + ((k % f.n) + 0.5) * f.cell;
+        n++;
+      }
+    cx /= n;
+    dropRetardant(f, cx, -400, cx, 300, 40);
+    expect(fireStats(f).burning).toBeLessThan(before * 0.8);
   });
 
   it('too high, or away from the fire, the drop button does nothing', () => {
