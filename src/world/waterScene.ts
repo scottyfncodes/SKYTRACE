@@ -10,7 +10,7 @@ import { mat } from './props';
 import type { HeightField } from './terrain';
 import { WATER_LEVEL } from './worldData';
 import { riverPoint } from '../water/river';
-import type { Raft, WaterOps, WaterSpec } from '../water/waterRun';
+import type { Drop, HandoffOps, HandoffSpec } from '../rescue/handoff';
 
 const blk = (w: number, h: number, d: number, m: THREE.Material) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
 
@@ -55,7 +55,7 @@ export class RaftView {
     this.items = [];
   }
 
-  update(rafts: readonly Raft[], t: number): void {
+  update(rafts: readonly Drop[], t: number): void {
     while (this.items.length < rafts.length) {
       const m = raftMesh();
       this.items.push(m);
@@ -96,9 +96,9 @@ export class StationView {
   jettyEnd = new THREE.Vector3();
   jettyShore = new THREE.Vector3();
 
-  setup(spec: WaterSpec, hf: HeightField): void {
+  setup(spec: HandoffSpec, hf: HeightField): void {
     this.clear();
-    const st = spec.station;
+    const st = spec.home;
     // the shore: walk out from the station across the flow until the ground rises
     const right = { x: -Math.cos(st.yaw), z: Math.sin(st.yaw) };
     // `right` here is the right bank's side of the station when facing upstream: find whichever side is nearer land
@@ -194,11 +194,11 @@ export class RapidsView {
   readonly group = new THREE.Group();
   private foam: THREE.Mesh[] = [];
 
-  setup(spec: WaterSpec): void {
+  setup(spec: HandoffSpec): void {
     this.clear();
     const white = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.75, depthWrite: false });
     const rock = mat(0x6d6a63);
-    for (const s of spec.rapids) {
+    for (const s of spec.rapids ?? []) {
       const c = riverPoint(s, 0);
       const yaw = Math.atan2(c.dx, c.dz);
       for (let k = -2; k <= 2; k++) {
@@ -234,7 +234,11 @@ export class Spray {
   readonly group = new THREE.Group();
   private bits: { m: THREE.Mesh; v: THREE.Vector3; life: number; max: number; grow: number }[] = [];
   private geo = new THREE.IcosahedronGeometry(0.5, 0);
-  private matBase = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, depthWrite: false });
+  private matBase: THREE.MeshBasicMaterial;
+  /** `floor`: the bits settle on this height (the water; on land, the ground under them). */
+  constructor(color = 0xffffff, private floor: (x: number, z: number) => number = () => WATER_LEVEL) {
+    this.matBase = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6, depthWrite: false });
+  }
 
   emit(at: THREE.Vector3, vx: number, vy: number, vz: number, size = 1, life = 0.9, grow = 1.6): void {
     if (this.bits.length > 240) return;
@@ -260,8 +264,9 @@ export class Spray {
       b.life -= dt;
       b.v.y -= 9 * dt;
       b.m.position.addScaledVector(b.v, dt);
-      if (b.m.position.y < WATER_LEVEL) {
-        b.m.position.y = WATER_LEVEL;
+      const fl = this.floor(b.m.position.x, b.m.position.z);
+      if (b.m.position.y < fl) {
+        b.m.position.y = fl;
         b.v.set(b.v.x * 0.5, 0, b.v.z * 0.5);
       }
       if (b.m.scale.x < 2.5) b.m.scale.multiplyScalar(1 + b.grow * dt);
@@ -295,7 +300,7 @@ export function waterRing(color: number, r: number): THREE.Mesh {
 /** Everything the scene needs to show a water rescue, kept together so the game can set it up and clear it in one go. */
 export class WaterView {
   readonly group = new THREE.Group();
-  readonly rafts = new RaftView();
+  readonly drops = new RaftView();
   readonly station = new StationView();
   readonly rapids = new RapidsView();
   readonly spray = new Spray();
@@ -311,11 +316,11 @@ export class WaterView {
     this.aimDot.renderOrder = 10;
     this.aim.add(this.aimDot);
     this.aimDot.rotation.x = 0;
-    this.group.add(this.rafts.group, this.station.group, this.rapids.group, this.spray.group, this.canoe, this.aim, this.reach);
+    this.group.add(this.drops.group, this.station.group, this.rapids.group, this.spray.group, this.canoe, this.aim, this.reach);
     this.group.visible = false;
   }
 
-  setup(ops: WaterOps, hf: HeightField): void {
+  setup(ops: HandoffOps, hf: HeightField): void {
     this.clear();
     this.station.setup(ops.spec, hf);
     this.rapids.setup(ops.spec);
@@ -326,7 +331,7 @@ export class WaterView {
   }
 
   clear(): void {
-    this.rafts.clear();
+    this.drops.clear();
     this.station.clear();
     this.rapids.clear();
     this.spray.clear();

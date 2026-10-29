@@ -356,7 +356,7 @@ describe('every playable rescue site', () => {
     const { forestAt } = await import('../src/world/terrain');
     // (a fire with nobody trapped has no rescue site)
     // (on the river they are in the water: tests/water.test.ts checks that)
-    for (const m of MISSIONS.filter((x) => x.ready && x.survivors > 0 && !x.water)) {
+    for (const m of MISSIONS.filter((x) => x.ready && x.survivors > 0 && !x.handoff)) {
       for (const p of [m.site, ...(m.spots ?? [])]) {
         const h = ground(p.x, p.z);
         expect(h, m.id).toBeGreaterThan(5);
