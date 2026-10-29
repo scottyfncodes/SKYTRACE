@@ -14,7 +14,7 @@ import type { MissionDef } from './missions';
 import { PADS, type PadId } from '../world/worldData';
 import { forestAt, getHeightField } from '../world/terrain';
 import { cellX, cellZ, BURNING, type TerrainSampler } from '../fire/fireSim';
-import { newFireOps, nearestThreat, RELOAD, THREAT_WORDS, threatLevel, tickFire, type FireEvent, type FireOps } from '../fire/fireRun';
+import { nearestSkim, newFireOps, nearestThreat, RELOAD, THREAT_WORDS, threatLevel, tickFire, type FireEvent, type FireOps } from '../fire/fireRun';
 import { found, newHandoff, peopleAt, tickHandoff, type HandoffEvent, type HandoffOps } from './handoff';
 
 /**
@@ -388,7 +388,12 @@ export function fireObjective(r: RunState, p: { x: number; z: number }): Objecti
     const w = [...ops.spec.water].sort((a, b) => Math.hypot(p.x - a.x, p.z - a.z) - Math.hypot(p.x - b.x, p.z - b.z))[0];
     return { icon: '💧', title: 'FILL THE BUCKET', detail: `${w.name} · hover low over it`, target: { x: w.x, z: w.z, kind: 'water', label: w.name.toUpperCase() } };
   }
-  if (ops.attack === 'retardant' && ops.load === 0) return { icon: '⛽', title: 'RELOAD AT THE AIRFIELD', detail: 'Fly low over the runway', target: { x: RELOAD.x, z: RELOAD.z, kind: 'base', label: 'AIRFIELD' } };
+  if (ops.attack === 'retardant' && ops.load === 0) {
+    // scoop from the nearest water at speed, or reload at the airfield if that is closer
+    const s = nearestSkim(p);
+    if (Math.hypot(p.x - s.x, p.z - s.z) < Math.hypot(p.x - RELOAD.x, p.z - RELOAD.z)) return { icon: '💧', title: 'SKIM TO SCOOP', detail: `${s.name} · low and fast`, target: { x: s.x, z: s.z, kind: 'water', label: 'SCOOP' } };
+    return { icon: '⛽', title: 'RELOAD AT THE AIRFIELD', detail: 'Fly low over the runway', target: { x: RELOAD.x, z: RELOAD.z, kind: 'base', label: 'AIRFIELD' } };
+  }
   if (!ops.attack || (ops.attack === 'lead' && ops.load === 0)) {
     const left = ops.spec.hold > 0 ? `Crews in ${clockOf(ops.holdLeft)}` : status;
     return { icon: '👀', title: ops.calls.some((c) => c.painted < c.len) ? 'TANKER 42 INBOUND' : 'WATCH THE FIRE', detail: left, target: fireTarget };

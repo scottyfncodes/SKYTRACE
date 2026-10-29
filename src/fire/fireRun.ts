@@ -14,6 +14,8 @@
 import type { Attack } from '../rescue/catalog';
 import type { FireMission } from '../rescue/missions';
 import { windAt } from '../rescue/wind';
+import { riverAt, riverPoint } from '../water/river';
+import { LAKE } from '../world/worldData';
 import { breached, canReach, cloneFire, createFire, dropRetardant, dropWater, fireStats, frontDistance, inArea, stepFire, type FireState, type FireWind, type TerrainSampler, type Threat } from './fireSim';
 
 /** A retardant line is this long and this wide (m). */
@@ -22,16 +24,21 @@ export const LINE_LEN = 230;
 export const CALL_LEN = 320;
 export const LINE_WIDTH = 40;
 /** A bucket of water covers this radius (m) and takes this long to fall (s). */
-export const WATER_R = 24;
+export const WATER_R = 32;
 export const WATER_FALL = 0.9;
 /** Highest you can drop from (m above the ground). Generous: aim, not precision. */
 export const DROP_AGL: Record<Attack, number> = { retardant: 160, water: 80, lead: 320 };
 /** Fill the bucket: this low (m over the surface) and this slow (m/s), for this long (s). */
 export const SCOOP_AGL = 18;
 export const SCOOP_SPEED = 14;
-export const SCOOP_TIME = 3.5;
+export const SCOOP_TIME = 2.2;
 /** Reload the tanker: low over the airfield. */
 export const RELOAD = { x: -810, z: 730, r: 190, agl: 70, time: 3 } as const;
+/** Or skim it low over the river or a lake and scoop: this low (m over the river bed: the tanker flies no lower than 22), for this long (s), at any speed. */
+export const SKIM_AGL = 30;
+export const SKIM_TIME = 2;
+/** Knock this share of the flames down (from the most that ever burned) and the ground crews can take it from there. */
+export const CONTROL = 0.8;
 /** Tanker 42: how long after a mark it drops, and how fast it flies the line. */
 export const CALL_DELAY = 14;
 export const CALL_SPEED = 55;
@@ -84,6 +91,11 @@ export interface FireOps {
   threatLevel: number;
   checkIn: number;
   spotFires: number;
+  /** The most cells ever burning at once, and how much of that is out now (0..1). */
+  peak: number;
+  control: number;
+  /** Is there open water under this point (the tanker scoops from it)? */
+  isWater: (x: number, z: number) => boolean;
 }
 
 export type FireEvent =
@@ -151,6 +163,9 @@ export function newFireOps(spec: FireMission, wind: { speed: number; from: numbe
     threatLevel: 0,
     checkIn: 0,
     spotFires: 0,
+    peak: fireStats(fire).burning,
+    control: 0,
+    isWater: (x, z) => T.height(x, z) < -0.5,
   };
 }
 
@@ -188,9 +203,20 @@ export function waterUnder(ops: FireOps, p: { x: number; z: number }): { name: s
   return ops.spec.water.find((w) => Math.hypot(p.x - w.x, p.z - w.z) < w.r) ?? null;
 }
 
+/** The tanker skimming the river or a lake, low enough to scoop. */
+export const skimming = (ops: FireOps, p: FireWhere): boolean => ops.attack === 'retardant' && p.agl < SKIM_AGL && ops.isWater(p.x, p.z);
+
+/** Where the tanker can scoop nearest to `p`: the middle of the river, or the lake. */
+export function nearestSkim(p: { x: number; z: number }): { x: number; z: number; name: string } {
+  const r = riverAt(p.x, p.z);
+  const q = riverPoint(r.s, 0);
+  const lake = Math.hypot(p.x - LAKE.x, p.z - LAKE.z) - LAKE.r * 0.6;
+  return lake < Math.hypot(p.x - q.x, p.z - q.z) ? { x: LAKE.x, z: LAKE.z, name: 'Varrow Lake' } : { x: q.x, z: q.z, name: 'the river' };
+}
+
 export const canFill = (ops: FireOps, p: FireWhere): boolean => {
   if (ops.attack === 'water') return ops.load < ops.loadMax && !!waterUnder(ops, p) && p.agl < SCOOP_AGL && p.speed < SCOOP_SPEED;
-  if (ops.attack === 'retardant') return ops.load < ops.loadMax && Math.hypot(p.x - RELOAD.x, p.z - RELOAD.z) < RELOAD.r && p.agl < RELOAD.agl;
+  if (ops.attack === 'retardant') return ops.load < ops.loadMax && ((Math.hypot(p.x - RELOAD.x, p.z - RELOAD.z) < RELOAD.r && p.agl < RELOAD.agl) || skimming(ops, p));
   return false;
 };
 
@@ -293,12 +319,15 @@ export function tickFire(ops: FireOps, p: FireWhere, now: number, dt: number, wi
   // filling up
   if (canFill(ops, p)) {
     if (ops.fill === 0) ev.push('filling');
-    ops.fill += dt / ops.fillTime;
+    ops.fill += dt / (skimming(ops, p) ? SKIM_TIME : ops.fillTime);
     if (ops.fill >= 1) {
       ops.fill = 0;
       ops.load = ops.loadMax;
       ev.push(ops.attack === 'retardant' ? 'reloaded' : 'full');
     }
+  } else if (ops.attack === 'retardant') {
+    // off the water for a moment (the river bends): the scoop drains away slowly, it does not start over
+    ops.fill = Math.max(0, ops.fill - dt * 0.3);
   } else ops.fill = 0;
   // the fire moves (and so does the one nobody fought)
   const spots = stepFire(f, w, dt);
@@ -334,10 +363,17 @@ export function tickFire(ops: FireOps, p: FireWhere, now: number, dt: number, wi
     ops.checkIn -= dt;
     if (ops.checkIn <= 0) {
       ops.checkIn = 1;
-      ops.contained = fireStats(f).burning === 0 || ops.spec.threats.every((th) => !canReach(f, th));
+      const burning = fireStats(f).burning;
+      ops.peak = Math.max(ops.peak, burning);
+      // (two good drops at least: one lucky bucket on a young fire is not control)
+      ops.control = ops.drops >= 2 ? Math.max(0, 1 - burning / ops.peak) : 0;
+      // put out, cut off, or knocked down enough that the crews can mop up the rest
+      ops.contained = burning === 0 || ops.spec.threats.every((th) => !canReach(f, th)) || ops.control >= CONTROL;
     }
     if (ops.contained) {
       ops.outcome = 'contained';
+      // the fire nobody fought burns on until the crews would have come, so the debrief compares like with like
+      for (let t = now; t < ops.spec.hold; t += 1) stepFire(ops.shadow, fireWind(wind, t), 1);
       ev.push('contained');
     } else if (ops.holdLeft <= 0) {
       ops.outcome = 'held';

@@ -115,7 +115,7 @@ export function checkLoadout(def: MissionDef, l: Loadout): Note[] {
 
 /** On a fire call: how this plan will fight it, in one line. */
 export const ATTACK_PLAN: Record<Attack, string> = {
-  retardant: 'Plan: 2 long retardant lines ahead of the fire. Reload at the airfield.',
+  retardant: 'Plan: retardant lines through the head of the fire, 2 a load. Skim the river low to scoop more.',
   water: 'Plan: scoop water, drop it on the hottest spots. Refill and repeat.',
   lead: 'Plan: mark 3 lines; Tanker 42 drops on each 14 s later.',
 };

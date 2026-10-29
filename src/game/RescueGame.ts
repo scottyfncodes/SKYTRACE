@@ -18,7 +18,7 @@ import { boatSpeed, newBoat, stepBoat, type BoatEnv, type BoatState } from '../w
 import { currentAt } from '../water/river';
 import { canArrive, canDropItem, dropItem, PICKUP, DROP_MAX_AGL, dropLanding, rampAt, rapidAt, peopleAt, type Mover } from '../rescue/handoff';
 import { WaterView } from '../world/waterScene';
-import { CALL_LEN, canFireAction, canFill, fireAction, LINE_LEN, RELOAD, THREAT_WORDS, nearestThreat, waterUnder, type FireEvent } from '../fire/fireRun';
+import { CALL_LEN, canFireAction, canFill, CONTROL, fireAction, LINE_LEN, nearestSkim, RELOAD, skimming, THREAT_WORDS, nearestThreat, waterUnder, type FireEvent } from '../fire/fireRun';
 import { inArea, stepFire } from '../fire/fireSim';
 import { FireView } from '../world/fireScene';
 import { paintFire } from '../ui/fireMap';
@@ -1048,7 +1048,7 @@ export class RescueGame {
         this.crew('Missed the flames. Get right over them.');
       } else if (e === 'empty') {
         if (ops.attack === 'water') this.crew(pick(["Bucket's empty. Back to the water.", 'Empty. Go fill up and come straight back.']));
-        else if (ops.attack === 'retardant') this.crew('Tanks are dry. Back to the airfield to reload.');
+        else if (ops.attack === 'retardant') this.crew(pick(['Tanks are dry. Skim the river to scoop!', 'Empty. Get down on the water and scoop.']));
       } else if (e === 'filling') {
         this.audio.click();
       } else if (e === 'full') {
@@ -1056,7 +1056,8 @@ export class RescueGame {
         this.hud.banner('BUCKET FULL', 'Back to the fire', 'good', 1.8);
       } else if (e === 'reloaded') {
         this.audio.payload();
-        this.hud.banner('RELOADED', `${ops.loadMax} lines ready`, 'good', 2);
+        const scooped = skimming(ops, this.where());
+        this.hud.banner(scooped ? 'SCOOPED!' : 'RELOADED', `${ops.loadMax} lines ready`, 'good', 2);
         this.say('GROUND', 'Tanker One, loaded. Go get it.');
       } else if (e === 'mark-start') {
         this.audio.mark();
@@ -1121,6 +1122,12 @@ export class RescueGame {
     if (ops.fill > 0 && ops.attack === 'water' && Math.random() < dt * 30) {
       const b = this.heli.bucketWorld(new THREE.Vector3());
       b.y = Math.max(b.y - 1.4, 0);
+      fv.scoopSpray(b);
+    }
+    // the tanker skimming: a sheet of spray off the hull
+    if (ops.fill > 0 && skimming(ops, w) && Math.random() < dt * 40) {
+      const b = this.plane.bellyWorld(new THREE.Vector3());
+      b.y = WATER_LEVEL + 0.5;
       fv.scoopSpray(b);
     }
     // where the drop will land, before you press it
@@ -1661,8 +1668,8 @@ export class RescueGame {
       this.marker.group.visible = !(this.hoisting && dSite < 50) && !(run.handoff && this.driving && dSite < 40);
       this.marker.update(spot.x, Math.max(WATER_LEVEL, hf.sample(spot.x, spot.z)), spot.z, cam, this.t, 16);
     } else if (def.survivors === 0) {
-      // on a fire: a pin over the airfield when it is time to reload
-      const reload = run.ops?.attack === 'retardant' && run.ops.load === 0;
+      // on a fire: a pin over the airfield when it is time to reload there (scooping is shown by the arrow)
+      const reload = run.ops?.attack === 'retardant' && run.ops.load === 0 && objective(run, false, false, this.a).target?.kind === 'base';
       this.marker.set('h');
       this.marker.group.visible = reload;
       if (reload) this.marker.update(RELOAD.x, hf.sample(RELOAD.x, RELOAD.z), RELOAD.z, cam, this.t, 40);
@@ -1689,7 +1696,9 @@ export class RescueGame {
     const col = tg?.kind === 'pad' ? 0x6dff9a : tg?.kind === 'gate' ? 0xffc35a : tg?.kind === 'fire' ? 0xff8a5a : 0x9fe4ff;
     this.ribbon.update(this.a, this.a.yaw, tg ? { x: tg.x, y: ty, z: tg.z } : null, this.t, col);
     const big = this.plan.kind === 'plane' ? (this.plan.style === 'tanker' ? 26 : 14) : this.plan.style === 'heavy' ? 16 : 12;
-    this.shadow.update(this.a.x, this.a.z, this.a.agl, hf.sample(this.a.x, this.a.z), this.a.yaw, big);
+    // (over the river the shadow lies on the water, not the bed under it)
+    const under = hf.sample(this.a.x, this.a.z);
+    this.shadow.update(this.a.x, this.a.z, this.a.agl - Math.max(0, WATER_LEVEL - under), Math.max(WATER_LEVEL, under), this.a.yaw, big);
     if (this.driving) this.shadow.mesh.visible = false;
   }
 
@@ -1728,7 +1737,7 @@ export class RescueGame {
         loadMax: ops.loadMax,
         icon: ops.attack === 'water' ? '💧' : ops.attack === 'lead' ? '📍' : '🟥',
         fill: ops.fill,
-        hold: ops.spec.hold > 0 ? `CREWS ${clockOf(ops.holdLeft)}` : '',
+        hold: ops.spec.hold > 0 ? `${ops.drops >= 2 ? `${Math.round(Math.min(1, ops.control / CONTROL) * 100)}% UNDER CONTROL · ` : ''}CREWS ${clockOf(ops.holdLeft)}` : '',
       });
       hud.drop(this.dropState());
     } else {
@@ -1931,7 +1940,7 @@ export class RescueGame {
     if (!ops.attack || this.run.stage === 'takeoff') return { kind: 'hidden' };
     if (ops.dropping) return { kind: 'wait', label: 'DROPPING… HOLD STEADY' };
     if (ops.marking) return { kind: 'wait', label: 'MARKING… FLY THE LINE' };
-    if (ops.fill > 0) return { kind: 'wait', label: ops.attack === 'water' ? `FILLING ${Math.round(ops.fill * 100)}%` : `RELOADING ${Math.round(ops.fill * 100)}%` };
+    if (ops.fill > 0) return { kind: 'wait', label: ops.attack === 'water' ? `FILLING ${Math.round(ops.fill * 100)}%` : `${skimming(ops, this.where()) ? 'SCOOPING' : 'RELOADING'} ${Math.round(ops.fill * 100)}%` };
     const w = this.where();
     const act = canFireAction(ops, w, this.hoisting);
     if (act.ok) return { kind: 'ready', label: ops.attack === 'water' ? 'DROP WATER' : ops.attack === 'lead' ? 'MARK LINE' : 'DROP RETARDANT' };
@@ -1954,7 +1963,12 @@ export class RescueGame {
       if (w.speed > 14) return 'Slow right down to fill the bucket';
       return canFill(ops, w) ? 'Filling… hold it there' : '';
     }
-    if (ops.attack === 'retardant' && ops.load === 0) return Math.hypot(w.x - RELOAD.x, w.z - RELOAD.z) < RELOAD.r ? (w.agl > RELOAD.agl ? 'Lower over the runway to reload' : 'Reloading… hold it low') : 'Head back to the airfield to reload';
+    if (ops.attack === 'retardant' && ops.load === 0) {
+      if (Math.hypot(w.x - RELOAD.x, w.z - RELOAD.z) < RELOAD.r) return w.agl > RELOAD.agl ? 'Lower over the runway to reload' : 'Reloading… hold it low';
+      if (skimming(ops, w)) return 'Scooping! Hold it low over the water';
+      const s = nearestSkim(w);
+      return Math.hypot(w.x - s.x, w.z - s.z) < 120 ? 'Down low over the water: skim it to scoop' : `Tanks dry: skim ${s.name} low to scoop`;
+    }
     if (!ops.attack) return null;
     if (ops.attack === 'lead' && ops.load === 0) return ops.calls.some((c) => c.painted < c.len) ? 'Tanker 42 is on its way: watch the line go down' : 'All calls made · watch your lines hold';
     if (!inArea(ops.fire, w.x, w.z, 40)) return this.def.survivors > 0 ? null : 'Follow the arrow to the fire';

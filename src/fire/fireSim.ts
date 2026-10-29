@@ -314,8 +314,14 @@ export function dropRetardant(f: FireState, ax: number, az: number, bx: number, 
       f.retardant[k] = amt;
     }
     if (f.state[k] === BURNING) {
-      f.heat[k] *= 0.35;
-      f.life[k] *= 0.6;
+      // the heart of the line puts out what it lands on; its edges knock the flames down
+      if (d < half * 0.6) {
+        f.state[k] = OUT;
+        f.heat[k] = 0;
+      } else {
+        f.heat[k] *= 0.35;
+        f.life[k] *= 0.6;
+      }
     }
   });
   return coated;
@@ -328,7 +334,7 @@ export function dropWater(f: FireState, x: number, z: number, r: number): number
     const k1 = d < r * 0.6 ? 1 : 1 - (d - r * 0.6) / (r * 0.4);
     f.wet[k] = Math.max(f.wet[k], k1);
     if (f.state[k] === BURNING) {
-      f.heat[k] -= 1.3 * k1;
+      f.heat[k] -= 2.2 * k1;
       if (f.heat[k] <= 0.08) {
         f.state[k] = OUT;
         f.heat[k] = 0;
