@@ -140,8 +140,9 @@ export class PreflightView {
     if (!def) return;
     const r = def.recommended;
     const lockLine = (by?: string) => (by ? `Complete ${esc(MISSION_BY_ID[by as keyof typeof MISSION_BY_ID].title)}` : 'Locked');
-    // on a fire call the fire fleet comes first
-    const fleet = def.fire ? VEHICLES.filter((v) => v.ready).sort((a, b) => (b.caps.includes('fire') ? 1 : 0) - (a.caps.includes('fire') ? 1 : 0)) : VEHICLES.filter((v) => v.ready);
+    // on a fire call the fire fleet comes first; on the river, the Search Aircraft
+    const lead = (v: (typeof VEHICLES)[number]) => (def.fire ? v.caps.includes('fire') : def.water ? v.caps.includes('search') : false);
+    const fleet = VEHICLES.filter((v) => v.ready).sort((a, b) => (lead(b) ? 1 : 0) - (lead(a) ? 1 : 0));
     this.q('pf-vehicles').innerHTML = fleet.map((v) => {
       const open = isAvailable(p, v);
       const tags = def.fire && !v.caps.includes('fire') ? ['Needs the bucket', ...v.strengths.slice(0, 1)] : v.capacity > 0 && !def.fire ? [`Seats ${v.capacity}`, ...v.strengths.slice(0, 2)] : v.strengths.slice(0, 3);
@@ -155,7 +156,7 @@ export class PreflightView {
     const slots = veh.slots;
     this.q('pf-slots').textContent = slots === 0 ? `· built in: ${veh.attack === 'retardant' ? 'retardant tank' : veh.attack === 'lead' ? 'Tanker 42 on call' : 'nothing to carry'}` : veh.attack === 'water' ? `· bucket built in · ${l.equipment.length} of ${slots} slots` : `· ${l.equipment.length} of ${slots} slots`;
     // on a fire: the bucket (and the basket if people are trapped); nothing at all when the aircraft carries no kit
-    const shown = slots === 0 ? [] : def.fire ? EQUIPMENT.filter((e) => (e.id === 'bucket' && !veh.attack) || (e.id === 'basket' && def.survivors > 0) || (e.id === 'thermal' && def.survivors > 0)) : EQUIPMENT.filter((e) => e.ready);
+    const shown = slots === 0 ? [] : def.fire ? EQUIPMENT.filter((e) => (e.id === 'bucket' && !veh.attack) || (e.id === 'basket' && def.survivors > 0) || (e.id === 'thermal' && def.survivors > 0)) : def.water ? EQUIPMENT.filter((e) => e.ready && (e.id === 'raft' || e.id === 'thermal')) : EQUIPMENT.filter((e) => e.ready && e.id !== 'raft');
     this.q('pf-equip').innerHTML = shown
       .map((e) => {
         const open = isAvailable(p, e);

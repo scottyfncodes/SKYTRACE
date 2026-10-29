@@ -68,8 +68,8 @@ describe('Pre-Flight', () => {
     expect(isAvailable(p, mountain)).toBe(true);
     expect(isAvailable(p, hiker)).toBe(false);
     expect(defaultLoadout(mountain, p)).toEqual({ vehicle: 'rescue-heli', crew: 'winch', equipment: ['basket'] });
-    // the rescue helicopter, and the fire fleet's helicopter and tanker
-    expect(VEHICLES.filter((v) => isAvailable(p, v)).map((v) => v.id)).toEqual(['rescue-heli', 'fire-heli', 'tanker']);
+    // the rescue helicopter, the fire fleet's helicopter and tanker, and the Search Aircraft for the river
+    expect(VEHICLES.filter((v) => isAvailable(p, v)).map((v) => v.id)).toEqual(['rescue-heli', 'fire-heli', 'tanker', 'search-plane']);
   });
 
   it('forgetting the basket blocks the launch and says why', () => {
@@ -127,13 +127,16 @@ describe('progression', () => {
     expect(isOpen(p, CREW.find((c) => c.id === 'spotter')!)).toBe(true);
     expect(nextMission(p, mountain).id).toBe('canyon-crash');
     recordRescue(p, 'canyon-crash', { stars: 2, time: 200, rescued: 2 }, defaultLoadout(MISSION_BY_ID['canyon-crash'], p));
+    // the river rescue is open from the start, and comes next in the list
+    expect(nextMission(p).id).toBe('capsized-boat');
+    recordRescue(p, 'capsized-boat', { stars: 2, time: 200, rescued: 2 }, defaultLoadout(MISSION_BY_ID['capsized-boat'], p));
     expect(nextMission(p).id).toBe('lost-hiker');
     expect(isAvailable(p, storm)).toBe(false);
     const opened2 = recordRescue(p, 'lost-hiker', { stars: 1, time: 300, rescued: 1 }, defaultLoadout(hiker, p));
     expect(opened2.join(' ')).toMatch(/Storm on the Summit/);
     expect(opened2.join(' ')).toMatch(/Heavy Rescue Helicopter/);
     expect(defaultLoadout(storm, p).vehicle).toBe('heavy-heli');
-    expect(p.saved).toBe(5);
+    expect(p.saved).toBe(7);
   });
 
   it('a replay opens nothing new, keeps the best stars and time, and remembers the plan', () => {

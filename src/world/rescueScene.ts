@@ -241,8 +241,8 @@ export function buildCamp(hf: HeightField, x: number, z: number, look: SurvivorL
 }
 
 // ---------------------------------------------------------------- people
-const JACKETS: Record<SurvivorLook, number[]> = { climber: [0xff7a1a, 0x1fb5a8, 0xffd23f, 0xe23d6b], hiker: [0x8a5cff], skier: [0x2e7dd1, 0xff4d6d], driver: [0xd8ff2a, 0xff8a1f] };
-const HATS: Record<SurvivorLook, number[]> = { climber: [0xffd23f, 0xe23d28, 0x2e7dd1, 0xffffff], hiker: [0x3a8f3a], skier: [0xffffff, 0x222222], driver: [0xffffff, 0xffd23f] };
+const JACKETS: Record<SurvivorLook, number[]> = { climber: [0xff7a1a, 0x1fb5a8, 0xffd23f, 0xe23d6b], hiker: [0x8a5cff], skier: [0x2e7dd1, 0xff4d6d], driver: [0xd8ff2a, 0xff8a1f], paddler: [0xff7a1a, 0xffd23f] };
+const HATS: Record<SurvivorLook, number[]> = { climber: [0xffd23f, 0xe23d28, 0x2e7dd1, 0xffffff], hiker: [0x3a8f3a], skier: [0xffffff, 0x222222], driver: [0xffffff, 0xffd23f], paddler: [0x2e7dd1, 0xe23d28] };
 
 /**
  * A stranded person, built big and bright (a third over life size) so they

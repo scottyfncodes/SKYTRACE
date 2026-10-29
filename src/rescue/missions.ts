@@ -11,13 +11,15 @@ import type { FireSpec } from '../fire/fireSim';
 import type { EscapeDef } from './route';
 import type { Contact } from './recon';
 import { LEDGES, type PadId } from '../world/worldData';
+import { riverGates, riverPoint } from '../water/river';
+import type { WaterSpec } from '../water/waterRun';
 
 export type MissionId = 'canyon-crash' | 'mountain-rescue' | 'lost-hiker' | 'summit-storm' | 'spot-fire' | 'wind-fire' | 'mountain-fire' | 'hotspots' | 'forest-fire' | 'capsized-boat' | 'flood' | 'injured-skier' | 'distress-beacon';
 export type RescueType = 'mountain' | 'forest' | 'water' | 'fire' | 'flood' | 'snow' | 'beacon';
 export type Visibility = 'good' | 'fair' | 'poor';
 /** How the people waiting for you show where they are. */
 export type Signal = 'flare' | 'smoke' | 'none';
-export type SurvivorLook = 'climber' | 'hiker' | 'skier' | 'driver';
+export type SurvivorLook = 'climber' | 'hiker' | 'skier' | 'driver' | 'paddler';
 
 /** A wildfire call: the fire itself, and what the crews are up against. */
 export interface FireMission extends FireSpec {
@@ -86,6 +88,8 @@ export interface MissionDef {
   escape?: EscapeDef;
   /** A wildfire: the fire, the places it threatens, the water. */
   fire?: FireMission;
+  /** A water rescue: the river, the raft drop, then the Rescue Boat. */
+  water?: WaterSpec;
   /** Built and playable in this version. */
   ready: boolean;
   /** A clean rescue of this mission opens this one (none: open from the start). */
@@ -101,6 +105,12 @@ export interface MissionDef {
 const FIRE = { site: { x: 0, z: 0 }, survivors: 0, look: 'hiker', signal: 'none', signalRange: 0, spotRange: 0, reach: 6, startPad: 'base', deliverTo: 'hospital', visibility: 'fair' } as const;
 
 const COMING = { site: { x: 0, z: 0 }, search: { x: 0, z: 0, r: 0 }, signal: 'none', signalRange: 0, spotRange: 0, reach: 0, startPad: 'base', deliverTo: 'hospital', fuel: 0, par: 0, elevation: 0, look: 'hiker' } as const;
+/** The boat station: in the water by the right bank, facing upstream. */
+function stationAt(s: number, side: number): { x: number; z: number; yaw: number } {
+  const p = riverPoint(s, side);
+  return { x: p.x, z: p.z, yaw: Math.atan2(p.dx, p.dz) };
+}
+
 const NO_RADIO = { call: [], launch: '', signal: '', spotted: '', allAboard: '', landed: '' };
 
 export const MISSIONS: readonly MissionDef[] = [
@@ -159,6 +169,60 @@ export const MISSIONS: readonly MissionDef[] = [
       spotted: "That's the one! Two of them by the wreck. Bring us into a hover.",
       allAboard: 'Both aboard! The storm is on top of us. Out down the gorge!',
       landed: 'Both safe at Varrow. Textbook, Rescue One.',
+    },
+    ready: true,
+  },
+  {
+    // the plane finds them and drops a raft on a low pass; then the boat races out, pulls them in, and runs the river home
+    id: 'capsized-boat',
+    type: 'water',
+    title: 'Capsized Canoe',
+    icon: '🛶',
+    place: 'Varrow River · upper reach',
+    situation: 'A canoe has flipped. Two paddlers in cold, fast water.',
+    terrain: 'Fast river',
+    elevation: 0,
+    wind: { speed: 4, from: 290, gust: 0.2 },
+    visibility: 'good',
+    site: riverPoint(560, -6),
+    survivors: 2,
+    look: 'paddler',
+    search: { ...riverPoint(640), r: 210 },
+    signal: 'none',
+    signalRange: 0,
+    spotRange: 280,
+    reach: 30,
+    startPad: 'base',
+    deliverTo: 'hospital',
+    requires: ['search', 'water'],
+    recommended: { vehicle: 'search-plane', crew: 'medic', equipment: ['raft'] },
+    fuel: 300,
+    par: 200,
+    water: {
+      s: 560,
+      side: -6,
+      drift: 0.75,
+      cold: 240,
+      rafts: 2,
+      reach: 30,
+      station: { name: 'Varrow Boat Station', ...stationAt(1250, 18) },
+      rapids: [960, 1110],
+    },
+    escape: {
+      name: 'Down the river',
+      reason: 'They are freezing. Run the river to the station, through the arches.',
+      gates: riverGates(850, 1215, 8, 11, 4.5),
+      r: 11,
+      corridor: 40,
+      par: 24,
+    },
+    radio: {
+      call: ['Search One, a canoe has capsized on the upper Varrow River.', 'Two paddlers in the water, being swept downstream. The water is cold.'],
+      launch: 'Search One, cleared. Find them on the river and get a raft to them.',
+      signal: 'An upturned canoe on the river. They must be close.',
+      spotted: 'Two heads in the water! Come round low, raft ahead of them.',
+      allAboard: 'Both aboard and freezing. Down the river, flat out!',
+      landed: 'Both safe at the boat station. The ambulance has them.',
     },
     ready: true,
   },
@@ -555,7 +619,6 @@ export const MISSIONS: readonly MissionDef[] = [
     unlockedBy: 'spot-fire',
   },
   // Built on the same rails, waiting for their vehicles and kit.
-  { ...COMING, id: 'capsized-boat', type: 'water', title: 'Capsized Boat', icon: '🚤', place: 'Varrow Lake', situation: 'A sailing boat flipped. People in the water.', terrain: 'Open water', wind: { speed: 7, from: 270, gust: 0.4 }, visibility: 'good', survivors: 3, requires: ['water'], recommended: { vehicle: 'rescue-boat', crew: 'medic', equipment: ['swimmer'] }, radio: NO_RADIO, ready: false },
   { ...COMING, id: 'flood', type: 'flood', title: 'Flood Rescue', icon: '🌊', place: 'Varrow village', situation: 'Families on rooftops as the river rises.', terrain: 'Flooded streets', wind: { speed: 5, from: 180, gust: 0.3 }, visibility: 'fair', survivors: 5, requires: ['hover', 'hoist'], recommended: { vehicle: 'heavy-heli', crew: 'winch', equipment: ['basket'] }, radio: NO_RADIO, ready: false },
   { ...COMING, id: 'injured-skier', type: 'snow', title: 'Injured Skier', icon: '⛷️', place: 'Mount Kell · east bowl', situation: 'A skier hurt off-piste.', terrain: 'Snow bowl', wind: { speed: 6, from: 0, gust: 0.4 }, visibility: 'fair', survivors: 1, requires: ['hover', 'hoist'], recommended: { vehicle: 'rescue-heli', crew: 'medic', equipment: ['basket', 'medkit'] }, radio: NO_RADIO, ready: false },
   { ...COMING, id: 'distress-beacon', type: 'beacon', title: 'Distress Beacon', icon: '📡', place: 'Somewhere in the basin', situation: 'An emergency beacon is transmitting.', terrain: 'Unknown', wind: { speed: 4, from: 90, gust: 0.2 }, visibility: 'good', survivors: 1, requires: ['search'], recommended: { vehicle: 'search-plane', crew: 'spotter', equipment: ['beacon'] }, radio: NO_RADIO, ready: false },

@@ -163,6 +163,19 @@ export class AudioSystem {
     this.windFilter.frequency.setTargetAtTime(350 + speed * 6, t, tc);
   }
 
+  /** The Rescue Boat: a higher, rasping jet that climbs with the throttle, and the rush of water past the hull. */
+  updateBoat(throttle: number, speed: number): void {
+    if (!this.ctx || !this.engineGain || !this.engineOsc || !this.engineOsc2 || !this.engineFilter || !this.windGain || !this.windFilter) return;
+    const t = this.ctx.currentTime;
+    const tc = 0.1;
+    this.engineGain.gain.setTargetAtTime(0.06 + throttle * 0.11, t, tc);
+    this.engineOsc.frequency.setTargetAtTime(78 + throttle * 120 + speed * 1.2, t, tc);
+    this.engineOsc2.frequency.setTargetAtTime(39 + throttle * 60, t, tc);
+    this.engineFilter.frequency.setTargetAtTime(500 + throttle * 1100, t, tc);
+    this.windGain.gain.setTargetAtTime(0.03 + (speed / 26) * 0.16, t, tc);
+    this.windFilter.frequency.setTargetAtTime(900 + speed * 40, t, tc);
+  }
+
   /**
    * The helicopter: `power` 0..1 (rotor speed, 0 stopped), `load` 0..1 (how
    * hard it is working: climbing, flying fast), `wind` 0..1 (gusts in the mic).
@@ -533,6 +546,11 @@ export class AudioSystem {
   splash(): void {
     this.noise(1.4, 0.35, 4200, 'highpass', 1500);
     this.noise(0.5, 0.3, 300, 'lowpass', 90);
+  }
+
+  /** The boat leaving the water off a rapid: a rising rush of air and spray. */
+  whoosh(): void {
+    this.noise(0.7, 0.22, 700, 'bandpass', 2600);
   }
 
   warn(): void {
